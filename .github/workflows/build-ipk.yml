@@ -109,16 +109,23 @@ jobs:
           [ -f keys/usign.pub ] && cp keys/usign.pub "$FEED_DIR/keys/"
 
       - name: Sign feed (optional)
-        if: ${{ secrets.USIGN_SECRET != '' }}
         env:
           USIGN_SECRET: ${{ secrets.USIGN_SECRET }}
         shell: bash
         run: |
-          # usign из исходников (без git clone)
+          set -e
+          if [ -z "${USIGN_SECRET:-}" ]; then
+            echo "USIGN_SECRET is empty; skip signing."
+            exit 0
+          fi
+      
+          # собрать usign из исходников (без git clone)
           curl -fsSL https://github.com/openwrt/usign/archive/refs/heads/master.tar.gz -o usign.tar.gz
           mkdir usign-src && tar xzf usign.tar.gz -C usign-src --strip-components=1
           cmake -S usign-src -B usign-build
           cmake --build usign-build -j"$(nproc)"
+      
+          # подписать Packages
           echo "$USIGN_SECRET" | base64 -d > /tmp/usign.key
           chmod 600 /tmp/usign.key
           ./usign-build/usign -S -m "$FEED_DIR/Packages" -s /tmp/usign.key
