@@ -67,7 +67,7 @@ jobs:
           fi
           echo "pkg=$PKG" >> "$GITHUB_OUTPUT"
 
-      - name: Build IPK (manual, strict .gz, python AR)
+      - name: Build IPK (manual, strict)
         shell: bash
         run: |
           set -euo pipefail
@@ -77,50 +77,44 @@ jobs:
           OUTDIR="$PWD/dist"
           rm -rf build && mkdir -p build/control build/data "$OUTDIR"
       
+          # Разложим payload (всё кроме CONTROL) и метаданные
           rsync -a --delete --exclude 'CONTROL/' "$PKG_DIR/" build/data/
           rsync -a "$PKG_DIR/CONTROL/" build/control/
       
-          # normalize control (LF, no BOM)
+          # Нормализуем control (LF, без BOM)
           sed -i 's/\r$//' build/control/control || true
           perl -0777 -pe 's/^\xEF\xBB\xBF//' -i build/control/control || true
           test -s build/control/control
       
+          # debian-binary: ДОЛЖНО быть ровно "2.0\n"
           printf '2.0\n' > build/debian-binary
       
-          # control.tar.gz (без префикса ./)
-          CONTROL_FILES=$(cd build/control && ls -1 | tr '\n' ' ')
+          # Создаём control.tar.gz БЕЗ './' префиксов: кладём файлы в корень архива
+          CONTROL_FILES=$(cd build/control && ls -1)
           tar --format=ustar --owner=0 --group=0 --numeric-owner \
             -C build/control -czf build/control.tar.gz $CONTROL_FILES
       
-          # data.tar.gz
-          DATA_TOP=$(cd build/data && find . -mindepth 1 -maxdepth 1 -printf '%P\n' | tr '\n' ' ')
-          if [ -n "$DATA_TOP" ]; then
+          # Создаём data.tar.gz (можно с './', но нормализуем)
+          DATA_LIST=$(cd build/data && find . -mindepth 1 -maxdepth 1 -printf '%P\n' | tr '\n' ' ')
+          if [ -n "$DATA_LIST" ]; then
             tar --format=ustar --owner=0 --group=0 --numeric-owner \
-              -C build/data -czf build/data.tar.gz $DATA_TOP
+              -C build/data -czf build/data.tar.gz $DATA_LIST
           else
+            # пустой пакет тоже допустим
             tar --format=ustar --owner=0 --group=0 --numeric-owner \
               -C build/data -czf build/data.tar.gz .
           fi
       
-          # Сборка AR без завершающих '/' в именах
-          python3 - <<'PY'
-          import io, sys, os
-          def hdr(name, size):
-              def pad(s,n): return s.ljust(n, ' ')
-              return (pad(name,16)+pad('0',12)+pad('0',6)+pad('0',6)+
-                      pad('100644',8)+pad(str(size),10)+'`\\n').encode()
-          outdir = os.environ['PWD'] + '/dist'
-          with open('build/debian-binary','rb') as f: deb=f.read()
-          with open('build/control.tar.gz','rb') as f: ctrl=f.read()
-          with open('build/data.tar.gz','rb') as f: data=f.read()
-          ipk = io.BytesIO(); ipk.write(b'!<arch>\\n')
-          for name,blob in [('debian-binary',deb), ('control.tar.gz',ctrl), ('data.tar.gz',data)]:
-              ipk.write(hdr(name, len(blob))); ipk.write(blob)
-              if ipk.tell() % 2: ipk.write(b'\\n')
-          out = f"{outdir}/{os.environ['PKG']}_{os.environ['VER']}_all.ipk"
-          with open(out,'wb') as f: f.write(ipk.getvalue())
-          print(out)
-          PY
+          # ВАЖНО: собираем IPK изнутри build/, чтобы имена были без префиксов
+          ( cd build && ar -cr "$OUTDIR/${PKG}_${VER}_all.ipk" \
+              debian-binary control.tar.gz data.tar.gz )
+      
+          # Самопроверки
+          ar t "$OUTDIR/${PKG}_${VER}_all.ipk"
+          ar p "$OUTDIR/${PKG}_${VER}_all.ipk" control.tar.gz | gzip -t
+          ar p "$OUTDIR/${PKG}_${VER}_all.ipk" data.tar.gz   | gzip -t
+      
+          echo "Built: $OUTDIR/${PKG}_${VER}_all.ipk"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
