@@ -1,0 +1,22 @@
+- name: Make index.html (nice landing)
+  shell: bash
+  run: |
+    cat > "$FEED_DIR/index.html" <<'HTML'
+    <!doctype html>
+    <meta charset="utf-8">
+    <title>TPROXY-Manager feed</title>
+    <h2>TPROXY-Manager opkg feed</h2>
+    <p>Use this feed on your OpenWrt:</p>
+    <pre>
+    opkg-key add https://rico-x.github.io/tproxy-manager/keys/usign.pub
+    echo 'src/gz tproxy https://rico-x.github.io/tproxy-manager/' >> /etc/opkg/customfeeds.conf
+    opkg update
+    opkg install tproxy-manager
+    </pre>
+    <ul>
+      <li><a href="Packages">Packages</a></li>
+      <li><a href="Packages.gz">Packages.gz</a></li>
+      <li><a href="Packages.sig">Packages.sig</a> (if signing enabled)</li>
+      <li><a href="keys/usign.pub">keys/usign.pub</a></li>
+    </ul>
+    HTML
