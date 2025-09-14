@@ -1,0 +1,91 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TPROXY-Manager opkg feed</title>
+<style>
+  :root { --bg:#0b1220; --panel:#101a30; --text:#e6edf3; --muted:#93a1b1; --link:#8ab4f8; --ok:#19c37d; --warn:#f9ab00; --err:#ff6b6b; }
+  *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--text);font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,'Noto Sans','Helvetica Neue',Arial}
+  .wrap{max-width:980px;margin:40px auto;padding:0 16px}
+  h1{font-size:28px;margin:0 0 8px} h2{font-size:20px;margin:24px 0 8px}
+  a{color:var(--link);text-decoration:none} a:hover{text-decoration:underline}
+  .card{background:var(--panel);border:1px solid #203255;border-radius:16px;padding:16px;margin:14px 0;box-shadow:0 0 0 1px rgba(255,255,255,.02) inset}
+  pre{background:#0c1529;border:1px solid #1b2a4a;border-radius:12px;padding:12px;overflow:auto}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace}
+  .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+  .btn{display:inline-flex;align-items:center;gap:6px;border:1px solid #2a3f6d;background:#0f1a33;color:var(--text);padding:8px 12px;border-radius:10px;cursor:pointer}
+  .btn:hover{background:#122041} .tag{font-size:12px;color:var(--muted)}
+  .status{font-size:14px;color:var(--muted)}
+  .pill{display:inline-block;padding:2px 8px;border:1px solid #264a2f;border-radius:999px;background:#0f2a18;color:#7ae2a0;margin-left:8px}
+  .err{color:var(--err)}
+</style>
+
+<div class="wrap">
+  <h1>TPROXY-Manager opkg feed <span id="latest-pill" class="pill" style="display:none"></span></h1>
+  <div class="row">
+    <a class="btn" href="__REPO_URL__" target="_blank" rel="noopener">GitHub Repo</a>
+    <a class="btn" href="__REL_URL__"  target="_blank" rel="noopener">Releases</a>
+    <a id="latest-link" class="btn" href="#" style="display:none" download>⬇️ Download latest .ipk</a>
+  </div>
+
+  <div class="card">
+    <h2>Установка ключа и подключение фида</h2>
+    <p class="tag">Вариант через STDIN:</p>
+    <pre><code>wget -qO- __BASE__keys/usign.pub | opkg-key add -
+echo 'src/gz tproxy __BASE__' >> /etc/opkg/customfeeds.conf
+opkg update
+opkg install tproxy-manager</code></pre>
+
+    <p class="tag">Вариант со скачиванием файла:</p>
+    <pre><code>wget -O /tmp/usign.pub __BASE__keys/usign.pub && opkg-key add /tmp/usign.pub
+echo 'src/gz tproxy __BASE__' >> /etc/opkg/customfeeds.conf
+opkg update
+opkg install tproxy-manager</code></pre>
+
+    <p class="status">Если ругается на сертификаты, установите <code>ca-bundle</code> или временно используйте <code>wget --no-check-certificate</code>.</p>
+  </div>
+
+  <div class="card">
+    <h2>Содержимое фида</h2>
+    <ul>
+      <li><a href="Packages">Packages</a></li>
+      <li><a href="Packages.gz">Packages.gz</a></li>
+      <li><a href="Packages.sig">Packages.sig</a> <span class="tag">(если подпись включена)</span></li>
+      <li><a href="keys/usign.pub">keys/usign.pub</a></li>
+    </ul>
+    <p id="pkg-info" class="status">Читаю <code>Packages</code>…</p>
+  </div>
+</div>
+
+<script>
+(async function(){
+  const info = document.getElementById('pkg-info');
+  try {
+    const res = await fetch('Packages', { cache: 'no-cache' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const text = await res.text();
+    const blocks = text.split(/\n\s*\n/).map(b => b.trim()).filter(Boolean);
+    const entries = blocks.map(b => {
+      const pick = k => (b.match(new RegExp('^'+k+':\\s*(.+)$','m'))||[])[1]||'';
+      return { Package: pick('Package'), Version: pick('Version'), Filename: pick('Filename') };
+    }).filter(e => e.Package === 'tproxy-manager' && e.Filename);
+
+    if (!entries.length) { info.textContent='В индексе нет tproxy-manager.'; return; }
+    entries.sort((a,b)=> a.Version<b.Version?1:(a.Version>b.Version?-1:0));
+    const latest = entries[0];
+
+    const pill = document.getElementById('latest-pill');
+    pill.textContent = 'latest: ' + latest.Version;
+    pill.style.display = '';
+
+    const a = document.getElementById('latest-link');
+    a.href = latest.Filename;
+    a.style.display = '';
+    a.title = latest.Filename;
+
+    info.innerHTML = 'Доступно версий: ' + entries.length +
+      '. Последняя: <code>' + latest.Version + '</code> → <a href="' + latest.Filename + '">скачать .ipk</a>';
+  } catch (e) {
+    info.innerHTML = '<span class="err">Не удалось прочитать Packages:</span> ' + (e && e.message ? e.message : e);
+  }
+})();
+</script>

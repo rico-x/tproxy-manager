@@ -156,28 +156,22 @@ jobs:
           # 3) Публичный ключ (если добавлен)
           [ -f keys/usign.pub ] && cp keys/usign.pub "$FEED_DIR/keys/"
 
-      - name: Make index.html (nice landing)
+      - name: Render index.html from template
         shell: bash
         run: |
-          cat > "$FEED_DIR/index.html" <<'HTML'
-          <!doctype html>
-          <meta charset="utf-8">
-          <title>TPROXY-Manager feed</title>
-          <h2>TPROXY-Manager opkg feed</h2>
-          <p>Добавьте этот фид в OpenWrt:</p>
-          <pre>
-          opkg-key add https://rico-x.github.io/tproxy-manager/keys/usign.pub
-          echo 'src/gz tproxy https://rico-x.github.io/tproxy-manager/' >> /etc/opkg/customfeeds.conf
-          opkg update
-          opkg install tproxy-manager
-          </pre>
-          <ul>
-            <li><a href="Packages">Packages</a></li>
-            <li><a href="Packages.gz">Packages.gz</a></li>
-            <li><a href="Packages.sig">Packages.sig</a> (если подпись включена)</li>
-            <li><a href="keys/usign.pub">keys/usign.pub</a></li>
-          </ul>
-          HTML
+          set -e
+          OWNER="${GITHUB_REPOSITORY%%/*}"
+          REPO="${GITHUB_REPOSITORY##*/}"
+          BASE_URL="https://${OWNER}.github.io/${REPO}/"
+          REPO_URL="https://github.com/${OWNER}/${REPO}"
+          REL_URL="${REPO_URL}/releases"
+          mkdir -p "$FEED_DIR"
+          sed -e "s|__BASE__|${BASE_URL}|g" \
+              -e "s|__REPO_URL__|${REPO_URL}|g" \
+              -e "s|__REL_URL__|${REL_URL}|g" \
+              site/index.html > "$FEED_DIR/index.html"
+          # если есть CSS/картинки — скопируй
+          [ -f site/style.css ] && cp site/style.css "$FEED_DIR/"
 
       - name: Sign feed (optional)
         env:
