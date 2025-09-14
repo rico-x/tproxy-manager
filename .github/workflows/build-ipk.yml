@@ -67,6 +67,7 @@ jobs:
           # Права на исполняемые файлы
           find "$PKG_DIR" -type f -path '*/etc/init.d/*' -exec chmod 0755 {} +
           find "$PKG_DIR" -type f -path '*/etc/uci-defaults/*' -exec chmod 0755 {} +
+          [ -f "$PKG_DIR/CONTROL/preinst"  ] && chmod 0755 "$PKG_DIR/CONTROL/preinst"  || true
           [ -f "$PKG_DIR/CONTROL/postinst" ] && chmod 0755 "$PKG_DIR/CONTROL/postinst" || true
           [ -f "$PKG_DIR/CONTROL/prerm"    ] && chmod 0755 "$PKG_DIR/CONTROL/prerm"    || true
           # Дополнительные скрипты
@@ -102,12 +103,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-      
           # 1) Подготовим каталог фида
           rm -rf "$FEED_DIR"
           mkdir -p "$FEED_DIR/keys"
           cp dist/*.ipk "$FEED_DIR"/
-      
           # 2) Примитивный индексатор: Packages (+ Packages.gz)
           cat > "$FEED_DIR/.index_lite.sh" <<'SH'
           #!/usr/bin/env bash
@@ -115,39 +114,26 @@ jobs:
           dir="${1:-.}"
           cd "$dir"
           : > Packages
-      
-          # маленький помощник — безопасно получить control (поддерживаем .ipk и как tar.gz, и как ar)
           get_control() {
             local ipk="$1"
             local ctrl=""
-            # Попытка как tar.gz-контейнер (ipkg-build 24.10)
             if tar tzf "$ipk" >/dev/null 2>&1; then
               if tar tzf "$ipk" | grep -q '^./control.tar.gz$'; then
-                ctrl="$(tar -xOzf "$ipk" ./control.tar.gz \
-                       | tar -xOzf - ./control 2>/dev/null \
-                       || tar -xOzf - control 2>/dev/null || true)"
+                ctrl="$(tar -xOzf "$ipk" ./control.tar.gz | tar -xOzf - ./control 2>/dev/null || tar -xOzf - control 2>/dev/null || true)"
               elif tar tzf "$ipk" | grep -q '^./control.tar.xz$'; then
-                ctrl="$(tar -xOzf "$ipk" ./control.tar.xz \
-                       | tar -xOJf - ./control 2>/dev/null \
-                       || tar -xOJf - control 2>/dev/null || true)"
+                ctrl="$(tar -xOzf "$ipk" ./control.tar.xz | tar -xOJf - ./control 2>/dev/null || tar -xOJf - control 2>/dev/null || true)"
               fi
             fi
-            # Попытка как ar-контейнер (на всякий случай)
             if [ -z "$ctrl" ]; then
               if ar t "$ipk" 2>/dev/null | grep -q '^control.tar.gz$'; then
-                ctrl="$(ar p "$ipk" control.tar.gz \
-                       | tar -xOzf - ./control 2>/dev/null \
-                       || tar -xOzf - control 2>/dev/null || true)"
+                ctrl="$(ar p "$ipk" control.tar.gz | tar -xOzf - ./control 2>/dev/null || tar -xOzf - control 2>/dev/null || true)"
               elif ar t "$ipk" 2>/dev/null | grep -q '^control.tar.xz$'; then
-                ctrl="$(ar p "$ipk" control.tar.xz \
-                       | tar -xOJf - ./control 2>/dev/null \
-                       || tar -xOJf - control 2>/dev/null || true)"
+                ctrl="$(ar p "$ipk" control.tar.xz | tar -xOJf - ./control 2>/dev/null || tar -xOJf - control 2>/dev/null || true)"
               fi
             fi
             [ -n "$ctrl" ] && printf "%s" "$ctrl"
             return 0
           }
-      
           for ipk in *.ipk; do
             [ -f "$ipk" ] || continue
             ctrl="$(get_control "$ipk")" || true
@@ -155,27 +141,43 @@ jobs:
               echo "WARN: cannot read control from $ipk" >&2
               continue
             fi
-            # Нормализуем и пишем блок control как есть
             printf "%s\n" "$ctrl" >> Packages
-      
-            # Добавим стандартные поля фида
             size=$(stat -c%s "$ipk" 2>/dev/null || wc -c < "$ipk")
             sha256=$(sha256sum "$ipk" | awk '{print $1}')
-            echo "Filename: $ipk"   >> Packages
-            echo "Size: $size"      >> Packages
+            echo "Filename: $ipk"     >> Packages
+            echo "Size: $size"        >> Packages
             echo "SHA256sum: $sha256" >> Packages
             echo >> Packages
           done
-      
-          # Сжать индекс
           gzip -9fk Packages
           SH
-      
           chmod +x "$FEED_DIR/.index_lite.sh"
           "$FEED_DIR/.index_lite.sh" "$FEED_DIR"
-      
           # 3) Публичный ключ (если добавлен)
           [ -f keys/usign.pub ] && cp keys/usign.pub "$FEED_DIR/keys/"
+
+      - name: Make index.html (nice landing)
+        shell: bash
+        run: |
+          cat > "$FEED_DIR/index.html" <<'HTML'
+          <!doctype html>
+          <meta charset="utf-8">
+          <title>TPROXY-Manager feed</title>
+          <h2>TPROXY-Manager opkg feed</h2>
+          <p>Добавьте этот фид в OpenWrt:</p>
+          <pre>
+          opkg-key add https://rico-x.github.io/tproxy-manager/keys/usign.pub
+          echo 'src/gz tproxy https://rico-x.github.io/tproxy-manager/' >> /etc/opkg/customfeeds.conf
+          opkg update
+          opkg install tproxy-manager
+          </pre>
+          <ul>
+            <li><a href="Packages">Packages</a></li>
+            <li><a href="Packages.gz">Packages.gz</a></li>
+            <li><a href="Packages.sig">Packages.sig</a> (если подпись включена)</li>
+            <li><a href="keys/usign.pub">keys/usign.pub</a></li>
+          </ul>
+          HTML
 
       - name: Sign feed (optional)
         env:
@@ -187,14 +189,10 @@ jobs:
             echo "USIGN_SECRET is empty; skip signing."
             exit 0
           fi
-      
-          # собрать usign из исходников (без git clone)
           curl -fsSL https://github.com/openwrt/usign/archive/refs/heads/master.tar.gz -o usign.tar.gz
           mkdir usign-src && tar xzf usign.tar.gz -C usign-src --strip-components=1
           cmake -S usign-src -B usign-build
           cmake --build usign-build -j"$(nproc)"
-      
-          # подписать Packages
           echo "$USIGN_SECRET" | base64 -d > /tmp/usign.key
           chmod 600 /tmp/usign.key
           ./usign-build/usign -S -m "$FEED_DIR/Packages" -s /tmp/usign.key
@@ -257,8 +255,6 @@ jobs:
     steps:
       - name: Configure Pages
         uses: actions/configure-pages@v5
-  
-      # Разворачивает последний загруженный pages-артефакт (из шага выше в job "build")
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
