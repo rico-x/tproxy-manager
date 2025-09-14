@@ -241,18 +241,18 @@ jobs:
 
   pages-deploy:
     needs: build
+    permissions:
+      pages: write
+      id-token: write
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - name: Prepare Pages content
-        run: |
-          mkdir -p public
-          cp -r feed/* public/
-          echo "<h2>TPROXY-Manager feed</h2>" > public/index.html
       - name: Configure Pages
         uses: actions/configure-pages@v5
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: public
+  
+      # Берёт последний загруженный pages-артефакт из job "build"
       - name: Deploy to GitHub Pages
+        id: deployment
         uses: actions/deploy-pages@v4
