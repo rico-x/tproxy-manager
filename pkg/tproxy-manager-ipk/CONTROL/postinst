@@ -1,16 +1,40 @@
 #!/bin/sh
+# postinst for tproxy-manager
+# - выполняет uci-defaults (создание /etc/xray/* и UCI-значений, только если отсутствуют)
+# - безопасно запускает /usr/bin/optimize-sysctl.sh и /usr/bin/setup-bbr.sh (ошибки игнорируются)
+# - включает и стартует сервис /etc/init.d/xray-tproxy, если есть
+
 [ -n "$IPKG_INSTROOT" ] && exit 0
-# Прогнать uci-defaults (они сами себя удалят)
+
+LOGTAG="tproxy-manager-postinst"
+
+# 1) Прогнать uci-defaults нашего пакета (если есть), логировать и не валиться на ошибках
 if [ -d /etc/uci-defaults ]; then
   for f in /etc/uci-defaults/*tproxy_manager*; do
     [ -f "$f" ] || continue
-    (. "$f") && rm -f "$f"
+    ( . "$f" ) >"/tmp/$(basename "$f").log" 2>&1 \
+      || logger -t "$LOGTAG" "uci-defaults $(basename "$f") exited non-zero (ignored)"
+    rm -f "$f"
   done
 fi
 
-# Безопасно запустить «индифферентные» скрипты и проигнорировать ошибки —
-for s in /usr/bin/optimize-sysctl.sh /usr/bin/setup-bbr.sh; do
-  [ -x "$s" ] && /bin/sh "$s" >/tmp/$(basename "$s").postinst.log 2>&1 || true
-done
+# 2) Безопасно выполнить дополнительные скрипты без параметров (если существуют)
+run_safe() {
+  _s="$1"
+  if [ -x "$_s" ]; then
+    /bin/sh "$_s" >"/tmp/$(basename "$_s").postinst.log" 2>&1 \
+      || logger -t "$LOGTAG" "$(basename "$_s") exited non-zero (ignored)"
+  fi
+}
+run_safe /usr/bin/optimize-sysctl.sh
+run_safe /usr/bin/setup-bbr.sh
+
+# 3) Включить и запустить сервис (если есть), ошибки не фатальны
+if [ -x /etc/init.d/xray-tproxy ]; then
+  /etc/init.d/xray-tproxy enable >/dev/null 2>&1 \
+    || logger -t "$LOGTAG" "enable failed (ignored)"
+  /etc/init.d/xray-tproxy start  >/dev/null 2>&1 \
+    || logger -t "$LOGTAG" "start failed (ignored)"
+fi
 
 exit 0
