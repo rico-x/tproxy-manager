@@ -38,10 +38,27 @@ jobs:
           fi
           echo "version=$VER" >> $GITHUB_OUTPUT
 
-      - name: Install dependencies
+      # ⬇️ Больше НЕ ставим opkg-utils/usign из APT — собираем из исходников
+      - name: Install base build tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y opkg-utils usign xz-utils tar coreutils
+          sudo apt-get install -y build-essential cmake git xz-utils tar coreutils gzip python3
+
+      - name: Build & install opkg-utils (from source)
+        run: |
+          git clone --depth 1 https://github.com/openwrt/opkg-utils.git
+          sudo make -C opkg-utils install PREFIX=/usr/local
+          command -v opkg-build && opkg-build --help | head -n 1
+
+      - name: Build & install usign (from source)
+        run: |
+          git clone --depth 1 https://github.com/openwrt/usign.git
+          mkdir -p usign/build
+          cd usign/build
+          cmake ..
+          make -j$(nproc)
+          sudo make install
+          command -v usign && usign -h | head -n 1
 
       - name: Set permissions (safety)
         run: |
@@ -73,7 +90,7 @@ jobs:
           cp dist/*.ipk "$FEED_DIR"/
           (cd "$FEED_DIR" && opkg-make-index . > Packages)
           gzip -kf "$FEED_DIR/Packages"
-          # опубликуем публичные ключи, если они есть в репо
+          # Публичные ключи (если положили в репозиторий)
           if ls keys/*.pub >/dev/null 2>&1; then
             cp keys/*.pub "$FEED_DIR/keys/"
           elif [ -f keys/usign.pub ]; then
@@ -87,7 +104,6 @@ jobs:
             - keys/ (public usign keys)
           EOF
 
-      # безопасная проверка наличия секрета
       - name: Check if signing secret present
         id: has_secret
         shell: bash
