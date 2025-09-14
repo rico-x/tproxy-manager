@@ -1,4 +1,4 @@
-name: Build TPROXY-Manager (.ipk via ipkg-build + opkg-build)
+name: Build TPROXY-Manager via ipkg-build (OpenWrt 24.10)
 
 on:
   push:
@@ -37,35 +37,25 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            ca-certificates curl xz-utils gzip tar coreutils findutils gawk sed make
+            ca-certificates curl gzip tar coreutils findutils gawk sed perl zip
 
-      # ---------- ipkg-build (официальный скрипт 24.10, делает tar.gz-формат ipk)
-      - name: Fetch ipkg-build (OpenWrt 24.10)
+      - name: Fetch official ipkg-build (openwrt-24.10)
         run: |
           curl -fsSL https://raw.githubusercontent.com/openwrt/openwrt/openwrt-24.10/scripts/ipkg-build -o ipkg-build
           chmod +x ipkg-build
           ./ipkg-build -h || true
 
-      # ---------- opkg-build (из opkg-utils) — сборка в ar-формате, как многие фиды
-      - name: Fetch opkg-utils
-        uses: actions/checkout@v4
-        with:
-          repository: openwrt/opkg-utils
-          path: opkg-utils
-          fetch-depth: 1
-      - name: Install opkg-utils
+      - name: Normalize CONTROL/control and perms
+        shell: bash
         run: |
-          sudo make -C opkg-utils install PREFIX=/usr/local
-          command -v opkg-build
-
-      - name: Sanity & perms
-        run: |
+          set -e
           CTRL="$PKG_DIR/CONTROL/control"
           [[ -f "$CTRL" ]] || { echo "Missing $CTRL"; exit 1; }
-          # LF, без BOM
+          # Убрать CRLF и BOM, обеспечить завершающую пустую строку
           sed -i 's/\r$//' "$CTRL" || true
           perl -0777 -pe 's/^\xEF\xBB\xBF//' -i "$CTRL" || true
-          # Исполняемые биты на скриптах
+          tail -c1 "$CTRL" | od -An -t x1 | grep -q '0a' || echo >> "$CTRL"
+          # Проставить исполняемые биты на скриптах
           find "$PKG_DIR" -type f -path '*/etc/init.d/*' -exec chmod 0755 {} +
           find "$PKG_DIR" -type f -path '*/etc/uci-defaults/*' -exec chmod 0755 {} +
           [ -f "$PKG_DIR/CONTROL/postinst" ] && chmod 0755 "$PKG_DIR/CONTROL/postinst" || true
@@ -73,6 +63,7 @@ jobs:
           [ -f "$PKG_DIR/usr/bin/xray-tproxy.sh" ] && chmod 0755 "$PKG_DIR/usr/bin/xray-tproxy.sh" || true
 
       - name: Inject Version into control
+        shell: bash
         run: |
           CTRL="$PKG_DIR/CONTROL/control"
           if grep -q '^Version:' "$CTRL"; then
@@ -80,46 +71,39 @@ jobs:
           else
             echo "Version: v${{ steps.ver.outputs.version }}_1-1" >> "$CTRL"
           fi
+          # На всякий случай вновь гарантируем завершающую пустую строку
+          tail -c1 "$CTRL" | od -An -t x1 | grep -q '0a' || echo >> "$CTRL"
 
-      - name: Build with ipkg-build (tar.gz ipk)
+      - name: Build .ipk via ipkg-build (ABS dest)
         shell: bash
+        env:
+          LC_ALL: C
         run: |
-          DEST="$(pwd)/out-ipkg"
-          mkdir -p "$DEST" dist
+          set -e
+          DEST="$(pwd)/dist"     # абсолютный путь обязателен
+          mkdir -p "$DEST"
           ./ipkg-build "$PKG_DIR" "$DEST"
+          echo "--- dist content ---"
           ls -lah "$DEST"
-          # быстрый чек: ipk — это tar.gz с 3 файлами
+          echo "--- quick check (ipk is tar.gz with 3 files) ---"
           file "$DEST"/*.ipk
           tar tzf "$DEST"/*.ipk | sed -n '1,10p'
-          cp "$DEST"/*.ipk dist/
 
-      - name: Build with opkg-build (ar ipk)
+      - name: Create versioned ZIP bundle
         shell: bash
         run: |
-          DEST="$(pwd)/out-opkg"
-          mkdir -p "$DEST"
-          # -Z xz для меньшего размера; можно убрать, если не нужно
-          opkg-build -Z xz -o 0 -g 0 "$PKG_DIR" "$DEST"
-          ls -lah "$DEST"
-          cp "$DEST"/*.ipk dist/
-
-      - name: Package release zip with version
-        shell: bash
-        run: |
-          RELDIR="release"
+          set -e
           VER="${{ steps.ver.outputs.version }}"
-          mkdir -p "$RELDIR"
-          # контрольные суммы
+          mkdir -p release
           (cd dist && sha256sum *.ipk > "SHA256SUMS_${VER}.txt")
-          # zip c текущей версией
-          cd dist
-          zip -9 "../${RELDIR}/tproxy-manager_${VER}.zip" *.ipk "SHA256SUMS_${VER}.txt"
-          cd ..
+          (cd dist && zip -9 "../release/tproxy-manager_${VER}.zip" *.ipk "SHA256SUMS_${VER}.txt")
+          ls -lah release
 
-      - name: Upload IPK artifacts (versioned)
+      - name: Upload artifacts (versioned)
         uses: actions/upload-artifact@v4
         with:
           name: "tproxy-manager_${{ steps.ver.outputs.version }}"
           path: |
             dist/*.ipk
             release/*.zip
+          if-no-files-found: error
