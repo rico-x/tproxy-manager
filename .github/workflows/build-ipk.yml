@@ -73,27 +73,27 @@ jobs:
           set -euo pipefail
           PKG="${{ steps.meta.outputs.pkg }}"
           VER="${{ steps.ver.outputs.version }}-1"
-
+      
           OUTDIR="$PWD/dist"
           mkdir -p build/control build/data "$OUTDIR"
-
-          # Разложим payload (всё кроме CONTROL) в data/, а метаданные — в control/
+      
+          # Разложим payload и CONTROL
           rsync -a --delete --exclude 'CONTROL/' "$PKG_DIR/" build/data/
           rsync -a "$PKG_DIR/CONTROL/" build/control/
-
-          # Обязательный файл для IPK/DEB-формата
-          echo "2.0" > build/debian-binary
-
-          # Упаковать с uid/gid 0 (root:root)
+      
+          # Обязательный файл IPK/DEB-формата
+          printf '2.0\n' > build/debian-binary
+      
+          # Тары с uid/gid 0
           tar -C build/control --owner=0 --group=0 --numeric-owner -czf build/control.tar.gz .
           tar -C build/data    --owner=0 --group=0 --numeric-owner -czf build/data.tar.gz .
-
-          # Склеить .ipk (ar-архив из трёх файлов)
-          IPK="$OUTDIR/${PKG}_${VER}_all.ipk"
-          ar -cr "$IPK" build/debian-binary build/control.tar.gz build/data.tar.gz
-
-          echo "Built: $IPK"
-          ar t "$IPK"
+      
+          # ВАЖНО: вызывать ar из каталога build, чтобы имена внутри были без префикса
+          ( cd build && ar -cr "$OUTDIR/${PKG}_${VER}_all.ipk" \
+              debian-binary control.tar.gz data.tar.gz )
+      
+          echo "Built: $OUTDIR/${PKG}_${VER}_all.ipk"
+          ar t "$OUTDIR/${PKG}_${VER}_all.ipk"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
