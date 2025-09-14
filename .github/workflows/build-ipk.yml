@@ -37,7 +37,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            ca-certificates curl xz-utils gzip tar coreutils findutils gawk sed binutils
+            ca-certificates curl xz-utils gzip tar coreutils findutils gawk sed
 
       - name: Fetch ipkg-build (OpenWrt 24.10)
         run: |
@@ -45,13 +45,13 @@ jobs:
             https://raw.githubusercontent.com/openwrt/openwrt/openwrt-24.10/scripts/ipkg-build \
             -o ipkg-build
           chmod +x ipkg-build
-          ./ipkg-build --version || true
+          ./ipkg-build -h || true
 
       - name: Sanity & perms
         run: |
           CTRL="$PKG_DIR/CONTROL/control"
           [[ -f "$CTRL" ]] || { echo "Missing $CTRL"; exit 1; }
-          # нормализуем control (LF, без BOM), права на скрипты
+          # нормализуем control (LF, без BOM) и права на скрипты
           sed -i 's/\r$//' "$CTRL" || true
           perl -0777 -pe 's/^\xEF\xBB\xBF//' -i "$CTRL" || true
           find "$PKG_DIR" -type f -path '*/etc/init.d/*' -exec chmod 0755 {} +
@@ -69,11 +69,12 @@ jobs:
             echo "Version: ${{ steps.ver.outputs.version }}-1" >> "$CTRL"
           fi
 
-      - name: Build .ipk via ipkg-build
+      - name: Build .ipk via ipkg-build (no -o/-g)
         run: |
           mkdir -p dist
-          # по умолчанию ipkg-build использует gzip; хотите xz — добавьте: -Z xz
-          ./ipkg-build -o 0 -g 0 "$PKG_DIR" dist
+          # Ветка 24.10: ipkg-build поддерживает только [-v -h -m]
+          # Формат .ipk — tar|gzip из трёх файлов: debian-binary, data.tar.gz, control.tar.gz
+          ./ipkg-build "$PKG_DIR" dist
           ls -lah dist
 
       - name: Upload artifact
