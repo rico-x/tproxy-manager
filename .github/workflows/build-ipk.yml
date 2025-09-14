@@ -1,4 +1,4 @@
-name: Build .ipk via official ipkg-build (OpenWrt 24.10)
+name: Build TPROXY-Manager (.ipk via ipkg-build + opkg-build)
 
 on:
   push:
@@ -27,7 +27,7 @@ jobs:
         shell: bash
         run: |
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            VER="${GITHUB_REF_NAME}"
+            VER="${GITHUB_REF_NAME#v}"
           else
             VER="$(date -u +%Y.%m.%d)-${GITHUB_SHA::7}"
           fi
@@ -37,20 +37,35 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            ca-certificates curl xz-utils gzip tar coreutils findutils gawk sed
+            ca-certificates curl xz-utils gzip tar coreutils findutils gawk sed make
 
+      # ---------- ipkg-build (официальный скрипт 24.10, делает tar.gz-формат ipk)
       - name: Fetch ipkg-build (OpenWrt 24.10)
         run: |
           curl -fsSL https://raw.githubusercontent.com/openwrt/openwrt/openwrt-24.10/scripts/ipkg-build -o ipkg-build
           chmod +x ipkg-build
           ./ipkg-build -h || true
 
+      # ---------- opkg-build (из opkg-utils) — сборка в ar-формате, как многие фиды
+      - name: Fetch opkg-utils
+        uses: actions/checkout@v4
+        with:
+          repository: openwrt/opkg-utils
+          path: opkg-utils
+          fetch-depth: 1
+      - name: Install opkg-utils
+        run: |
+          sudo make -C opkg-utils install PREFIX=/usr/local
+          command -v opkg-build
+
       - name: Sanity & perms
         run: |
           CTRL="$PKG_DIR/CONTROL/control"
           [[ -f "$CTRL" ]] || { echo "Missing $CTRL"; exit 1; }
+          # LF, без BOM
           sed -i 's/\r$//' "$CTRL" || true
           perl -0777 -pe 's/^\xEF\xBB\xBF//' -i "$CTRL" || true
+          # Исполняемые биты на скриптах
           find "$PKG_DIR" -type f -path '*/etc/init.d/*' -exec chmod 0755 {} +
           find "$PKG_DIR" -type f -path '*/etc/uci-defaults/*' -exec chmod 0755 {} +
           [ -f "$PKG_DIR/CONTROL/postinst" ] && chmod 0755 "$PKG_DIR/CONTROL/postinst" || true
@@ -61,21 +76,50 @@ jobs:
         run: |
           CTRL="$PKG_DIR/CONTROL/control"
           if grep -q '^Version:' "$CTRL"; then
-            sed -i "s/^Version:.*/Version: ${{ steps.ver.outputs.version }}-1/" "$CTRL"
+            sed -i "s/^Version:.*/Version: v${{ steps.ver.outputs.version }}_1-1/" "$CTRL"
           else
-            echo "Version: ${{ steps.ver.outputs.version }}-1" >> "$CTRL"
+            echo "Version: v${{ steps.ver.outputs.version }}_1-1" >> "$CTRL"
           fi
 
-      - name: Build .ipk via ipkg-build (ABS dest)
+      - name: Build with ipkg-build (tar.gz ipk)
         shell: bash
         run: |
-          DEST="$(pwd)/dist"
-          mkdir -p "$DEST"
+          DEST="$(pwd)/out-ipkg"
+          mkdir -p "$DEST" dist
           ./ipkg-build "$PKG_DIR" "$DEST"
           ls -lah "$DEST"
+          # быстрый чек: ipk — это tar.gz с 3 файлами
+          file "$DEST"/*.ipk
+          tar tzf "$DEST"/*.ipk | sed -n '1,10p'
+          cp "$DEST"/*.ipk dist/
 
-      - name: Upload artifact
+      - name: Build with opkg-build (ar ipk)
+        shell: bash
+        run: |
+          DEST="$(pwd)/out-opkg"
+          mkdir -p "$DEST"
+          # -Z xz для меньшего размера; можно убрать, если не нужно
+          opkg-build -Z xz -o 0 -g 0 "$PKG_DIR" "$DEST"
+          ls -lah "$DEST"
+          cp "$DEST"/*.ipk dist/
+
+      - name: Package release zip with version
+        shell: bash
+        run: |
+          RELDIR="release"
+          VER="${{ steps.ver.outputs.version }}"
+          mkdir -p "$RELDIR"
+          # контрольные суммы
+          (cd dist && sha256sum *.ipk > "SHA256SUMS_${VER}.txt")
+          # zip c текущей версией
+          cd dist
+          zip -9 "../${RELDIR}/tproxy-manager_${VER}.zip" *.ipk "SHA256SUMS_${VER}.txt"
+          cd ..
+
+      - name: Upload IPK artifacts (versioned)
         uses: actions/upload-artifact@v4
         with:
-          name: ipk
-          path: dist/*.ipk
+          name: "tproxy-manager_${{ steps.ver.outputs.version }}"
+          path: |
+            dist/*.ipk
+            release/*.zip
