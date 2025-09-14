@@ -1,13 +1,15 @@
-name: Build OpenWrt .ipk (TPROXY-Manager)
+name: Build OpenWrt .ipk (TPROXY-Manager) + Feed + Pages
 
 on:
   push:
-    branches: [ main ]
+    branches: [ "main" ]
+    tags:
+      - "v*"
     paths:
-      - 'pkg/**'
-      - '.github/workflows/build-ipk.yml'
-  tag:
-    types: [ created ]
+      - "pkg/**"
+      - "keys/**"
+      - ".github/workflows/build-ipk.yml"
+      - "README.md"
   workflow_dispatch: {}
 
 permissions:
@@ -41,7 +43,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y opkg-utils usign xz-utils tar coreutils
 
-      - name: Set permissions
+      - name: Set permissions (safety)
         run: |
           find "$PKG_DIR" -type f -path '*/etc/init.d/*' -exec chmod 0755 {} +
           find "$PKG_DIR" -type f -path '*/etc/uci-defaults/*' -exec chmod 0755 {} +
@@ -67,13 +69,37 @@ jobs:
       - name: Prepare feed
         run: |
           rm -rf "$FEED_DIR"
-          mkdir -p "$FEED_DIR"
+          mkdir -p "$FEED_DIR/keys"
           cp dist/*.ipk "$FEED_DIR"/
           (cd "$FEED_DIR" && opkg-make-index . > Packages)
           gzip -kf "$FEED_DIR/Packages"
+          # опубликуем публичные ключи, если они есть в репо
+          if ls keys/*.pub >/dev/null 2>&1; then
+            cp keys/*.pub "$FEED_DIR/keys/"
+          elif [ -f keys/usign.pub ]; then
+            cp keys/usign.pub "$FEED_DIR/keys/"
+          fi
+          cat > "$FEED_DIR/README_FEED.txt" <<'EOF'
+          This is an OpenWrt package feed for TPROXY-Manager.
+          Files:
+            - Packages / Packages.gz / Packages.sig
+            - *.ipk
+            - keys/ (public usign keys)
+          EOF
+
+      # безопасная проверка наличия секрета
+      - name: Check if signing secret present
+        id: has_secret
+        shell: bash
+        run: |
+          if [ -n "${{ secrets.USIGN_SECRET }}" ]; then
+            echo "present=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=0" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Sign feed (optional)
-        if: ${{ secrets.USIGN_SECRET != '' }}
+        if: ${{ steps.has_secret.outputs.present == '1' }}
         env:
           USIGN_SECRET: ${{ secrets.USIGN_SECRET }}
         run: |
@@ -101,7 +127,9 @@ jobs:
         with:
           name: ipk-and-feed
           path: public
-      - name: Upload pages artifact
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+      - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: public
