@@ -98,18 +98,83 @@ jobs:
           file "$DEST"/*.ipk
           tar tzf "$DEST"/*.ipk | sed -n '1,10p'
 
-      - name: Prepare feed (Packages/Packages.gz + keys)
+      - name: Prepare feed (lite indexer, no ipkg-make-index.sh)
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
+      
+          # 1) Подготовим каталог фида
           rm -rf "$FEED_DIR"
           mkdir -p "$FEED_DIR/keys"
           cp dist/*.ipk "$FEED_DIR"/
       
-          # ВАЖНО: укажем утилиту для sha256
-          (cd "$FEED_DIR" && SHA256PROG=sha256sum ../ipkg-make-index.sh . > Packages)
+          # 2) Примитивный индексатор: Packages (+ Packages.gz)
+          cat > "$FEED_DIR/.index_lite.sh" <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          dir="${1:-.}"
+          cd "$dir"
+          : > Packages
       
-          gzip -kf "$FEED_DIR/Packages"
+          # маленький помощник — безопасно получить control (поддерживаем .ipk и как tar.gz, и как ar)
+          get_control() {
+            local ipk="$1"
+            local ctrl=""
+            # Попытка как tar.gz-контейнер (ipkg-build 24.10)
+            if tar tzf "$ipk" >/dev/null 2>&1; then
+              if tar tzf "$ipk" | grep -q '^./control.tar.gz$'; then
+                ctrl="$(tar -xOzf "$ipk" ./control.tar.gz \
+                       | tar -xOzf - ./control 2>/dev/null \
+                       || tar -xOzf - control 2>/dev/null || true)"
+              elif tar tzf "$ipk" | grep -q '^./control.tar.xz$'; then
+                ctrl="$(tar -xOzf "$ipk" ./control.tar.xz \
+                       | tar -xOJf - ./control 2>/dev/null \
+                       || tar -xOJf - control 2>/dev/null || true)"
+              fi
+            fi
+            # Попытка как ar-контейнер (на всякий случай)
+            if [ -z "$ctrl" ]; then
+              if ar t "$ipk" 2>/dev/null | grep -q '^control.tar.gz$'; then
+                ctrl="$(ar p "$ipk" control.tar.gz \
+                       | tar -xOzf - ./control 2>/dev/null \
+                       || tar -xOzf - control 2>/dev/null || true)"
+              elif ar t "$ipk" 2>/dev/null | grep -q '^control.tar.xz$'; then
+                ctrl="$(ar p "$ipk" control.tar.xz \
+                       | tar -xOJf - ./control 2>/dev/null \
+                       || tar -xOJf - control 2>/dev/null || true)"
+              fi
+            fi
+            [ -n "$ctrl" ] && printf "%s" "$ctrl"
+            return 0
+          }
+      
+          for ipk in *.ipk; do
+            [ -f "$ipk" ] || continue
+            ctrl="$(get_control "$ipk")" || true
+            if [ -z "$ctrl" ]; then
+              echo "WARN: cannot read control from $ipk" >&2
+              continue
+            fi
+            # Нормализуем и пишем блок control как есть
+            printf "%s\n" "$ctrl" >> Packages
+      
+            # Добавим стандартные поля фида
+            size=$(stat -c%s "$ipk" 2>/dev/null || wc -c < "$ipk")
+            sha256=$(sha256sum "$ipk" | awk '{print $1}')
+            echo "Filename: $ipk"   >> Packages
+            echo "Size: $size"      >> Packages
+            echo "SHA256sum: $sha256" >> Packages
+            echo >> Packages
+          done
+      
+          # Сжать индекс
+          gzip -9fk Packages
+          SH
+      
+          chmod +x "$FEED_DIR/.index_lite.sh"
+          "$FEED_DIR/.index_lite.sh" "$FEED_DIR"
+      
+          # 3) Публичный ключ (если добавлен)
           [ -f keys/usign.pub ] && cp keys/usign.pub "$FEED_DIR/keys/"
 
       - name: Sign feed (optional)
