@@ -1,13 +1,16 @@
 #!/bin/sh
 [ -n "$IPKG_INSTROOT" ] && exit 0
+# Прогнать uci-defaults (они сами себя удалят)
 if [ -d /etc/uci-defaults ]; then
   for f in /etc/uci-defaults/*tproxy_manager*; do
     [ -f "$f" ] || continue
     (. "$f") && rm -f "$f"
   done
 fi
-if [ -x /etc/init.d/xray-tproxy ]; then
-  /etc/init.d/xray-tproxy enable
-  /etc/init.d/xray-tproxy start
-fi
+
+# Безопасно запустить «индифферентные» скрипты и проигнорировать ошибки —
+for s in /usr/bin/optimize-sysctl.sh /usr/bin/setup-bbr.sh; do
+  [ -x "$s" ] && /bin/sh "$s" >/tmp/$(basename "$s").postinst.log 2>&1 || true
+done
+
 exit 0

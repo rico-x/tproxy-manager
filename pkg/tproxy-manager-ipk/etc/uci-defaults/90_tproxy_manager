@@ -1,22 +1,33 @@
 #!/bin/sh
-# One-time initialization for TPROXY-Manager
+set -e
 mkdir -p /etc/xray
-: > /etc/xray/xray-tproxy.ports
-: > /etc/xray/xray-tproxy.v4
-: > /etc/xray/xray-tproxy.v6
-: > /etc/xray/xray-tproxy.src4.only
-: > /etc/xray/xray-tproxy.src6.only
-: > /etc/xray/xray-tproxy.src4.bypass
-: > /etc/xray/xray-tproxy.src6.bypass
 
-uci -q batch <<'EOF'
+# создать только если отсутствуют
+for f in \
+  /etc/xray/xray-tproxy.ports \
+  /etc/xray/xray-tproxy.v4 \
+  /etc/xray/xray-tproxy.v6 \
+  /etc/xray/xray-tproxy.src4.only \
+  /etc/xray/xray-tproxy.src6.only \
+  /etc/xray/xray-tproxy.src4.bypass \
+  /etc/xray/xray-tproxy.src6.bypass \
+  /etc/xray/geo-sources.conf
+do
+  [ -e "$f" ] || : > "$f"
+done
+
+# UCI xray — только выставляем значения, которых ещё нет
+uci -q get xray.enabled.enabled >/dev/null 2>&1 || {
+  uci -q batch <<'EOF'
 set xray.enabled=enabled
 set xray.enabled.enabled='1'
-set xray.config=config
-set xray.config.confdir='/etc/xray'
-set xray.config.datadir='/usr/share/xray/'
-set xray.config.format='json'
-delete xray.config.conffiles
-commit xray
 EOF
+}
+uci -q get xray.config >/dev/null 2>&1 || uci set xray.config=config
+[ -n "$(uci -q get xray.config.confdir)" ] || uci set xray.config.confdir='/etc/xray'
+[ -n "$(uci -q get xray.config.datadir)" ] || uci set xray.config.datadir='/usr/share/xray/'
+[ -n "$(uci -q get xray.config.format)" ]  || uci set xray.config.format='json'
+uci -q delete xray.config.conffiles
+uci commit xray
+
 exit 0

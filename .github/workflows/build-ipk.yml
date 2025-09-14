@@ -1,4 +1,4 @@
-name: Build TPROXY-Manager via ipkg-build (OpenWrt 24.10)
+name: Build TPROXY-Manager via ipkg-build + Feed + Sign + Releases + Pages
 
 on:
   push:
@@ -6,18 +6,25 @@ on:
     tags: [ "v*" ]
     paths:
       - "pkg/**"
+      - "keys/**"
       - ".github/workflows/build-ipk.yml"
+      - "README.md"
   workflow_dispatch: {}
 
 permissions:
   contents: write
+  pages: write
+  id-token: write
 
 env:
   PKG_DIR: pkg/tproxy-manager-ipk
+  FEED_DIR: feed
 
 jobs:
-  build-ipk:
+  build:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -37,12 +44,14 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            ca-certificates curl gzip tar coreutils findutils gawk sed perl zip
+            ca-certificates curl gzip tar coreutils findutils gawk sed perl zip \
+            build-essential cmake xz-utils
 
-      - name: Fetch official ipkg-build (openwrt-24.10)
+      - name: Fetch ipkg-build & ipkg-make-index.sh (OpenWrt 24.10)
         run: |
           curl -fsSL https://raw.githubusercontent.com/openwrt/openwrt/openwrt-24.10/scripts/ipkg-build -o ipkg-build
-          chmod +x ipkg-build
+          curl -fsSL https://raw.githubusercontent.com/openwrt/openwrt/openwrt-24.10/scripts/ipkg-make-index.sh -o ipkg-make-index.sh
+          chmod +x ipkg-build ipkg-make-index.sh
           ./ipkg-build -h || true
 
       - name: Normalize CONTROL/control and perms
@@ -51,15 +60,19 @@ jobs:
           set -e
           CTRL="$PKG_DIR/CONTROL/control"
           [[ -f "$CTRL" ]] || { echo "Missing $CTRL"; exit 1; }
-          # Убрать CRLF и BOM, обеспечить завершающую пустую строку
+          # LF + без BOM + пустая строка в конце
           sed -i 's/\r$//' "$CTRL" || true
           perl -0777 -pe 's/^\xEF\xBB\xBF//' -i "$CTRL" || true
           tail -c1 "$CTRL" | od -An -t x1 | grep -q '0a' || echo >> "$CTRL"
-          # Проставить исполняемые биты на скриптах
+          # Права на исполняемые файлы
           find "$PKG_DIR" -type f -path '*/etc/init.d/*' -exec chmod 0755 {} +
           find "$PKG_DIR" -type f -path '*/etc/uci-defaults/*' -exec chmod 0755 {} +
           [ -f "$PKG_DIR/CONTROL/postinst" ] && chmod 0755 "$PKG_DIR/CONTROL/postinst" || true
-          [ -f "$PKG_DIR/CONTROL/prerm" ]    && chmod 0755 "$PKG_DIR/CONTROL/prerm"    || true
+          [ -f "$PKG_DIR/CONTROL/prerm"    ] && chmod 0755 "$PKG_DIR/CONTROL/prerm"    || true
+          # Дополнительные скрипты
+          [ -f "$PKG_DIR/usr/bin/optimize-sysctl.sh" ] && chmod 0755 "$PKG_DIR/usr/bin/optimize-sysctl.sh" || true
+          [ -f "$PKG_DIR/usr/bin/setup-bbr.sh"       ] && chmod 0755 "$PKG_DIR/usr/bin/setup-bbr.sh"       || true
+          # Основной бинарь
           [ -f "$PKG_DIR/usr/bin/xray-tproxy.sh" ] && chmod 0755 "$PKG_DIR/usr/bin/xray-tproxy.sh" || true
 
       - name: Inject Version into control
@@ -71,28 +84,49 @@ jobs:
           else
             echo "Version: v${{ steps.ver.outputs.version }}_1-1" >> "$CTRL"
           fi
-          # На всякий случай вновь гарантируем завершающую пустую строку
           tail -c1 "$CTRL" | od -An -t x1 | grep -q '0a' || echo >> "$CTRL"
 
       - name: Build .ipk via ipkg-build (ABS dest)
         shell: bash
-        env:
-          LC_ALL: C
         run: |
-          set -e
-          DEST="$(pwd)/dist"     # абсолютный путь обязателен
+          DEST="$(pwd)/dist"
           mkdir -p "$DEST"
           ./ipkg-build "$PKG_DIR" "$DEST"
           echo "--- dist content ---"
           ls -lah "$DEST"
-          echo "--- quick check (ipk is tar.gz with 3 files) ---"
+          echo "--- quick check ---"
           file "$DEST"/*.ipk
           tar tzf "$DEST"/*.ipk | sed -n '1,10p'
 
-      - name: Create versioned ZIP bundle
+      - name: Prepare feed (Packages/Packages.gz + keys)
         shell: bash
         run: |
-          set -e
+          rm -rf "$FEED_DIR"
+          mkdir -p "$FEED_DIR/keys"
+          cp dist/*.ipk "$FEED_DIR"/
+          (cd "$FEED_DIR" && ../ipkg-make-index.sh . > Packages)
+          gzip -kf "$FEED_DIR/Packages"
+          [ -f keys/usign.pub ] && cp keys/usign.pub "$FEED_DIR/keys/"
+
+      - name: Sign feed (optional)
+        if: ${{ secrets.USIGN_SECRET != '' }}
+        env:
+          USIGN_SECRET: ${{ secrets.USIGN_SECRET }}
+        shell: bash
+        run: |
+          # usign из исходников (без git clone)
+          curl -fsSL https://github.com/openwrt/usign/archive/refs/heads/master.tar.gz -o usign.tar.gz
+          mkdir usign-src && tar xzf usign.tar.gz -C usign-src --strip-components=1
+          cmake -S usign-src -B usign-build
+          cmake --build usign-build -j"$(nproc)"
+          echo "$USIGN_SECRET" | base64 -d > /tmp/usign.key
+          chmod 600 /tmp/usign.key
+          ./usign-build/usign -S -m "$FEED_DIR/Packages" -s /tmp/usign.key
+          ls -l "$FEED_DIR"/Packages*
+
+      - name: ZIP bundle (versioned)
+        shell: bash
+        run: |
           VER="${{ steps.ver.outputs.version }}"
           mkdir -p release
           (cd dist && sha256sum *.ipk > "SHA256SUMS_${VER}.txt")
@@ -106,4 +140,43 @@ jobs:
           path: |
             dist/*.ipk
             release/*.zip
-          if-no-files-found: error
+            feed/*
+
+  release:
+    needs: build
+    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dl
+      - name: Create GitHub Release and upload
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dl/**/dist/*.ipk
+            dl/**/release/*.zip
+            dl/**/feed/Packages
+            dl/**/feed/Packages.gz
+            dl/**/feed/Packages.sig
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  pages-deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prepare Pages content
+        run: |
+          mkdir -p public
+          cp -r feed/* public/
+          echo "<h2>TPROXY-Manager feed</h2>" > public/index.html
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+      - name: Deploy to GitHub Pages
+        uses: actions/deploy-pages@v4
