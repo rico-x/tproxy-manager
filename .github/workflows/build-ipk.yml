@@ -25,7 +25,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout this repo
         uses: actions/checkout@v4
 
       - name: Compute version
@@ -38,21 +38,36 @@ jobs:
           fi
           echo "version=$VER" >> $GITHUB_OUTPUT
 
-      # ⬇️ Больше НЕ ставим opkg-utils/usign из APT — собираем из исходников
       - name: Install base build tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake git xz-utils tar coreutils gzip python3
+          sudo apt-get install -y build-essential cmake xz-utils tar coreutils gzip
 
-      - name: Build & install opkg-utils (from source)
+      # ✅ ПОДТЯГИВАЕМ opkg-utils через actions/checkout (а не git clone)
+      - name: Fetch opkg-utils source
+        uses: actions/checkout@v4
+        with:
+          repository: openwrt/opkg-utils
+          path: opkg-utils
+          fetch-depth: 1
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install opkg-utils
         run: |
-          git clone --depth 1 https://github.com/openwrt/opkg-utils.git
           sudo make -C opkg-utils install PREFIX=/usr/local
           command -v opkg-build && opkg-build --help | head -n 1
 
-      - name: Build & install usign (from source)
+      # ✅ ПОДТЯГИВАЕМ usign через actions/checkout (а не git clone)
+      - name: Fetch usign source
+        uses: actions/checkout@v4
+        with:
+          repository: openwrt/usign
+          path: usign
+          fetch-depth: 1
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & install usign
         run: |
-          git clone --depth 1 https://github.com/openwrt/usign.git
           mkdir -p usign/build
           cd usign/build
           cmake ..
@@ -90,7 +105,6 @@ jobs:
           cp dist/*.ipk "$FEED_DIR"/
           (cd "$FEED_DIR" && opkg-make-index . > Packages)
           gzip -kf "$FEED_DIR/Packages"
-          # Публичные ключи (если положили в репозиторий)
           if ls keys/*.pub >/dev/null 2>&1; then
             cp keys/*.pub "$FEED_DIR/keys/"
           elif [ -f keys/usign.pub ]; then
