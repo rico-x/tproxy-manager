@@ -67,7 +67,7 @@ jobs:
           fi
           echo "pkg=$PKG" >> "$GITHUB_OUTPUT"
 
-      - name: Build IPK (manual)
+      - name: Build IPK (manual, strict)
         shell: bash
         run: |
           set -euo pipefail
@@ -75,25 +75,46 @@ jobs:
           VER="${{ steps.ver.outputs.version }}-1"
       
           OUTDIR="$PWD/dist"
-          mkdir -p build/control build/data "$OUTDIR"
+          rm -rf build && mkdir -p build/control build/data "$OUTDIR"
       
-          # Разложим payload и CONTROL
+          # Разложим payload (всё кроме CONTROL) и метаданные
           rsync -a --delete --exclude 'CONTROL/' "$PKG_DIR/" build/data/
           rsync -a "$PKG_DIR/CONTROL/" build/control/
       
-          # Обязательный файл IPK/DEB-формата
+          # Нормализуем control (LF, без BOM)
+          sed -i 's/\r$//' build/control/control || true
+          perl -0777 -pe 's/^\xEF\xBB\xBF//' -i build/control/control || true
+          test -s build/control/control
+      
+          # debian-binary: ДОЛЖНО быть ровно "2.0\n"
           printf '2.0\n' > build/debian-binary
       
-          # Тары с uid/gid 0
-          tar -C build/control --owner=0 --group=0 --numeric-owner -czf build/control.tar.gz .
-          tar -C build/data    --owner=0 --group=0 --numeric-owner -czf build/data.tar.gz .
+          # Создаём control.tar.gz БЕЗ './' префиксов: кладём файлы в корень архива
+          CONTROL_FILES=$(cd build/control && ls -1)
+          tar --format=ustar --owner=0 --group=0 --numeric-owner \
+            -C build/control -czf build/control.tar.gz $CONTROL_FILES
       
-          # ВАЖНО: вызывать ar из каталога build, чтобы имена внутри были без префикса
+          # Создаём data.tar.gz (можно с './', но нормализуем)
+          DATA_LIST=$(cd build/data && find . -mindepth 1 -maxdepth 1 -printf '%P\n' | tr '\n' ' ')
+          if [ -n "$DATA_LIST" ]; then
+            tar --format=ustar --owner=0 --group=0 --numeric-owner \
+              -C build/data -czf build/data.tar.gz $DATA_LIST
+          else
+            # пустой пакет тоже допустим
+            tar --format=ustar --owner=0 --group=0 --numeric-owner \
+              -C build/data -czf build/data.tar.gz .
+          fi
+      
+          # ВАЖНО: собираем IPK изнутри build/, чтобы имена были без префиксов
           ( cd build && ar -cr "$OUTDIR/${PKG}_${VER}_all.ipk" \
               debian-binary control.tar.gz data.tar.gz )
       
-          echo "Built: $OUTDIR/${PKG}_${VER}_all.ipk"
+          # Самопроверки
           ar t "$OUTDIR/${PKG}_${VER}_all.ipk"
+          ar p "$OUTDIR/${PKG}_${VER}_all.ipk" control.tar.gz | gzip -t
+          ar p "$OUTDIR/${PKG}_${VER}_all.ipk" data.tar.gz   | gzip -t
+      
+          echo "Built: $OUTDIR/${PKG}_${VER}_all.ipk"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
