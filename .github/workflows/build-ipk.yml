@@ -37,15 +37,15 @@ jobs:
       - name: Prepare tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y tar xz-utils coreutils binutils gzip
+          sudo apt-get install -y tar xz-utils coreutils binutils gzip rsync
 
       - name: Sanity & perms
         shell: bash
         run: |
+          set -e
           CTRL="$PKG_DIR/CONTROL/control"
           [[ -f "$CTRL" ]] || { echo "Missing $CTRL"; exit 1; }
 
-          # Ensure exec bits (если уже стоят — просто подтвердим)
           find "$PKG_DIR" -type f -path '*/etc/init.d/*' -exec chmod 0755 {} +
           find "$PKG_DIR" -type f -path '*/etc/uci-defaults/*' -exec chmod 0755 {} +
           if [[ -f "$PKG_DIR/CONTROL/postinst" ]]; then chmod 0755 "$PKG_DIR/CONTROL/postinst"; fi
@@ -56,10 +56,10 @@ jobs:
         id: meta
         shell: bash
         run: |
+          set -e
           CTRL="$PKG_DIR/CONTROL/control"
           PKG=$(awk -F': ' '/^Package:/ {print $2; exit}' "$CTRL")
           if [[ -z "$PKG" ]]; then echo "No Package field in control"; exit 1; fi
-          # Принудительно выставим версию из шага 'ver'
           if grep -q '^Version:' "$CTRL"; then
             sed -i "s/^Version:.*/Version: ${{ steps.ver.outputs.version }}-1/" "$CTRL"
           else
@@ -74,7 +74,8 @@ jobs:
           PKG="${{ steps.meta.outputs.pkg }}"
           VER="${{ steps.ver.outputs.version }}-1"
 
-          mkdir -p build/control build/data dist
+          OUTDIR="$PWD/dist"
+          mkdir -p build/control build/data "$OUTDIR"
 
           # Разложим payload (всё кроме CONTROL) в data/, а метаданные — в control/
           rsync -a --delete --exclude 'CONTROL/' "$PKG_DIR/" build/data/
@@ -83,15 +84,14 @@ jobs:
           # Обязательный файл для IPK/DEB-формата
           echo "2.0" > build/debian-binary
 
-          # Упаковываем с root:root (uid/gid 0)
+          # Упаковать с uid/gid 0 (root:root)
           tar -C build/control --owner=0 --group=0 --numeric-owner -czf build/control.tar.gz .
           tar -C build/data    --owner=0 --group=0 --numeric-owner -czf build/data.tar.gz .
 
-          # Склеиваем .ipk (ar-архив из 3 файлов)
-          IPK="dist/${PKG}_${VER}_all.ipk"
-          (cd build && ar -cr "$IPK" debian-binary control.tar.gz data.tar.gz)
+          # Склеить .ipk (ar-архив из трёх файлов)
+          IPK="$OUTDIR/${PKG}_${VER}_all.ipk"
+          ar -cr "$IPK" build/debian-binary build/control.tar.gz build/data.tar.gz
 
-          # Немного вывода для логов
           echo "Built: $IPK"
           ar t "$IPK"
 
