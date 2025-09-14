@@ -1,4 +1,4 @@
-name: Build OpenWrt .ipk (TPROXY-Manager) + Feed + Pages
+name: Build .ipk (manual, no SDK / no opkg-utils)
 
 on:
   push:
@@ -7,161 +7,96 @@ on:
       - "v*"
     paths:
       - "pkg/**"
-      - "keys/**"
       - ".github/workflows/build-ipk.yml"
-      - "README.md"
   workflow_dispatch: {}
 
 permissions:
   contents: write
-  pages: write
-  id-token: write
 
 env:
   PKG_DIR: pkg/tproxy-manager-ipk
-  FEED_DIR: feed
 
 jobs:
-  build:
+  build-ipk:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout this repo
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Compute version
         id: ver
+        shell: bash
         run: |
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             VER="${GITHUB_REF_NAME}"
           else
             VER="$(date -u +%Y.%m.%d)-${GITHUB_SHA::7}"
           fi
-          echo "version=$VER" >> $GITHUB_OUTPUT
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
 
-      - name: Install base build tools
+      - name: Prepare tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake xz-utils tar coreutils gzip
+          sudo apt-get install -y tar xz-utils coreutils binutils gzip
 
-      # ✅ ПОДТЯГИВАЕМ opkg-utils через actions/checkout (а не git clone)
-      - name: Fetch opkg-utils source
-        uses: actions/checkout@v4
-        with:
-          repository: openwrt/opkg-utils
-          path: opkg-utils
-          fetch-depth: 1
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Install opkg-utils
-        run: |
-          sudo make -C opkg-utils install PREFIX=/usr/local
-          command -v opkg-build && opkg-build --help | head -n 1
-
-      # ✅ ПОДТЯГИВАЕМ usign через actions/checkout (а не git clone)
-      - name: Fetch usign source
-        uses: actions/checkout@v4
-        with:
-          repository: openwrt/usign
-          path: usign
-          fetch-depth: 1
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build & install usign
-        run: |
-          mkdir -p usign/build
-          cd usign/build
-          cmake ..
-          make -j$(nproc)
-          sudo make install
-          command -v usign && usign -h | head -n 1
-
-      - name: Set permissions (safety)
-        run: |
-          find "$PKG_DIR" -type f -path '*/etc/init.d/*' -exec chmod 0755 {} +
-          find "$PKG_DIR" -type f -path '*/etc/uci-defaults/*' -exec chmod 0755 {} +
-          if [ -f "$PKG_DIR/CONTROL/postinst" ]; then chmod 0755 "$PKG_DIR/CONTROL/postinst"; fi
-          if [ -f "$PKG_DIR/CONTROL/prerm" ];   then chmod 0755 "$PKG_DIR/CONTROL/prerm";   fi
-          if [ -f "$PKG_DIR/usr/bin/xray-tproxy.sh" ]; then chmod 0755 "$PKG_DIR/usr/bin/xray-tproxy.sh"; fi
-
-      - name: Inject version into control
+      - name: Sanity & perms
+        shell: bash
         run: |
           CTRL="$PKG_DIR/CONTROL/control"
+          [[ -f "$CTRL" ]] || { echo "Missing $CTRL"; exit 1; }
+
+          # Ensure exec bits (если уже стоят — просто подтвердим)
+          find "$PKG_DIR" -type f -path '*/etc/init.d/*' -exec chmod 0755 {} +
+          find "$PKG_DIR" -type f -path '*/etc/uci-defaults/*' -exec chmod 0755 {} +
+          if [[ -f "$PKG_DIR/CONTROL/postinst" ]]; then chmod 0755 "$PKG_DIR/CONTROL/postinst"; fi
+          if [[ -f "$PKG_DIR/CONTROL/prerm"   ]]; then chmod 0755 "$PKG_DIR/CONTROL/prerm";   fi
+          if [[ -f "$PKG_DIR/usr/bin/xray-tproxy.sh" ]]; then chmod 0755 "$PKG_DIR/usr/bin/xray-tproxy.sh"; fi
+
+      - name: Read Package name & set Version
+        id: meta
+        shell: bash
+        run: |
+          CTRL="$PKG_DIR/CONTROL/control"
+          PKG=$(awk -F': ' '/^Package:/ {print $2; exit}' "$CTRL")
+          if [[ -z "$PKG" ]]; then echo "No Package field in control"; exit 1; fi
+          # Принудительно выставим версию из шага 'ver'
           if grep -q '^Version:' "$CTRL"; then
             sed -i "s/^Version:.*/Version: ${{ steps.ver.outputs.version }}-1/" "$CTRL"
           else
             echo "Version: ${{ steps.ver.outputs.version }}-1" >> "$CTRL"
           fi
+          echo "pkg=$PKG" >> "$GITHUB_OUTPUT"
 
-      - name: Build .ipk
-        run: |
-          mkdir -p dist
-          opkg-build -Z xz -o 0 -g 0 "$PKG_DIR" dist
-          ls -lah dist
-
-      - name: Prepare feed
-        run: |
-          rm -rf "$FEED_DIR"
-          mkdir -p "$FEED_DIR/keys"
-          cp dist/*.ipk "$FEED_DIR"/
-          (cd "$FEED_DIR" && opkg-make-index . > Packages)
-          gzip -kf "$FEED_DIR/Packages"
-          if ls keys/*.pub >/dev/null 2>&1; then
-            cp keys/*.pub "$FEED_DIR/keys/"
-          elif [ -f keys/usign.pub ]; then
-            cp keys/usign.pub "$FEED_DIR/keys/"
-          fi
-          cat > "$FEED_DIR/README_FEED.txt" <<'EOF'
-          This is an OpenWrt package feed for TPROXY-Manager.
-          Files:
-            - Packages / Packages.gz / Packages.sig
-            - *.ipk
-            - keys/ (public usign keys)
-          EOF
-
-      - name: Check if signing secret present
-        id: has_secret
+      - name: Build IPK (manual)
         shell: bash
         run: |
-          if [ -n "${{ secrets.USIGN_SECRET }}" ]; then
-            echo "present=1" >> "$GITHUB_OUTPUT"
-          else
-            echo "present=0" >> "$GITHUB_OUTPUT"
-          fi
+          set -euo pipefail
+          PKG="${{ steps.meta.outputs.pkg }}"
+          VER="${{ steps.ver.outputs.version }}-1"
 
-      - name: Sign feed (optional)
-        if: ${{ steps.has_secret.outputs.present == '1' }}
-        env:
-          USIGN_SECRET: ${{ secrets.USIGN_SECRET }}
-        run: |
-          echo "$USIGN_SECRET" | base64 -d > /tmp/usign.key
-          chmod 600 /tmp/usign.key
-          usign -S -m "$FEED_DIR/Packages" -s /tmp/usign.key
+          mkdir -p build/control build/data dist
 
-      - name: Upload artifacts
+          # Разложим payload (всё кроме CONTROL) в data/, а метаданные — в control/
+          rsync -a --delete --exclude 'CONTROL/' "$PKG_DIR/" build/data/
+          rsync -a "$PKG_DIR/CONTROL/" build/control/
+
+          # Обязательный файл для IPK/DEB-формата
+          echo "2.0" > build/debian-binary
+
+          # Упаковываем с root:root (uid/gid 0)
+          tar -C build/control --owner=0 --group=0 --numeric-owner -czf build/control.tar.gz .
+          tar -C build/data    --owner=0 --group=0 --numeric-owner -czf build/data.tar.gz .
+
+          # Склеиваем .ipk (ar-архив из 3 файлов)
+          IPK="dist/${PKG}_${VER}_all.ipk"
+          (cd build && ar -cr "$IPK" debian-binary control.tar.gz data.tar.gz)
+
+          # Немного вывода для логов
+          echo "Built: $IPK"
+          ar t "$IPK"
+
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ipk-and-feed
-          path: |
-            dist/*.ipk
-            feed/*
-
-  deploy-pages:
-    needs: build
-    runs-on: ubuntu-latest
-    if: ${{ github.ref_type == 'tag' || github.ref == 'refs/heads/main' }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: ipk-and-feed
-          path: public
-      - name: Configure Pages
-        uses: actions/configure-pages@v5
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: public
-      - name: Deploy to GitHub Pages
-        uses: actions/deploy-pages@v4
+          name: ipk
+          path: dist/*.ipk
