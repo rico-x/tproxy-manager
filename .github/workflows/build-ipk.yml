@@ -1,10 +1,9 @@
-name: Build .ipk (manual, no SDK / no opkg-utils)
+name: Build .ipk via official ipkg-build (OpenWrt 24.10)
 
 on:
   push:
     branches: [ "main" ]
-    tags:
-      - "v*"
+    tags: [ "v*" ]
     paths:
       - "pkg/**"
       - ".github/workflows/build-ipk.yml"
@@ -34,87 +33,48 @@ jobs:
           fi
           echo "version=$VER" >> "$GITHUB_OUTPUT"
 
-      - name: Prepare tools
+      - name: Install base tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y tar xz-utils coreutils binutils gzip rsync
+          sudo apt-get install -y --no-install-recommends \
+            ca-certificates curl xz-utils gzip tar coreutils findutils gawk sed binutils
+
+      - name: Fetch ipkg-build (OpenWrt 24.10)
+        run: |
+          curl -fsSL \
+            https://raw.githubusercontent.com/openwrt/openwrt/openwrt-24.10/scripts/ipkg-build \
+            -o ipkg-build
+          chmod +x ipkg-build
+          ./ipkg-build --version || true
 
       - name: Sanity & perms
-        shell: bash
         run: |
-          set -e
           CTRL="$PKG_DIR/CONTROL/control"
           [[ -f "$CTRL" ]] || { echo "Missing $CTRL"; exit 1; }
-
+          # нормализуем control (LF, без BOM), права на скрипты
+          sed -i 's/\r$//' "$CTRL" || true
+          perl -0777 -pe 's/^\xEF\xBB\xBF//' -i "$CTRL" || true
           find "$PKG_DIR" -type f -path '*/etc/init.d/*' -exec chmod 0755 {} +
           find "$PKG_DIR" -type f -path '*/etc/uci-defaults/*' -exec chmod 0755 {} +
-          if [[ -f "$PKG_DIR/CONTROL/postinst" ]]; then chmod 0755 "$PKG_DIR/CONTROL/postinst"; fi
-          if [[ -f "$PKG_DIR/CONTROL/prerm"   ]]; then chmod 0755 "$PKG_DIR/CONTROL/prerm";   fi
-          if [[ -f "$PKG_DIR/usr/bin/xray-tproxy.sh" ]]; then chmod 0755 "$PKG_DIR/usr/bin/xray-tproxy.sh"; fi
+          [ -f "$PKG_DIR/CONTROL/postinst" ] && chmod 0755 "$PKG_DIR/CONTROL/postinst" || true
+          [ -f "$PKG_DIR/CONTROL/prerm" ]    && chmod 0755 "$PKG_DIR/CONTROL/prerm"    || true
+          [ -f "$PKG_DIR/usr/bin/xray-tproxy.sh" ] && chmod 0755 "$PKG_DIR/usr/bin/xray-tproxy.sh" || true
 
-      - name: Read Package name & set Version
-        id: meta
-        shell: bash
+      - name: Inject Version into control
         run: |
-          set -e
           CTRL="$PKG_DIR/CONTROL/control"
-          PKG=$(awk -F': ' '/^Package:/ {print $2; exit}' "$CTRL")
-          if [[ -z "$PKG" ]]; then echo "No Package field in control"; exit 1; fi
           if grep -q '^Version:' "$CTRL"; then
             sed -i "s/^Version:.*/Version: ${{ steps.ver.outputs.version }}-1/" "$CTRL"
           else
             echo "Version: ${{ steps.ver.outputs.version }}-1" >> "$CTRL"
           fi
-          echo "pkg=$PKG" >> "$GITHUB_OUTPUT"
 
-      - name: Build IPK (manual, strict)
-        shell: bash
+      - name: Build .ipk via ipkg-build
         run: |
-          set -euo pipefail
-          PKG="${{ steps.meta.outputs.pkg }}"
-          VER="${{ steps.ver.outputs.version }}-1"
-      
-          OUTDIR="$PWD/dist"
-          rm -rf build && mkdir -p build/control build/data "$OUTDIR"
-      
-          # Разложим payload (всё кроме CONTROL) и метаданные
-          rsync -a --delete --exclude 'CONTROL/' "$PKG_DIR/" build/data/
-          rsync -a "$PKG_DIR/CONTROL/" build/control/
-      
-          # Нормализуем control (LF, без BOM)
-          sed -i 's/\r$//' build/control/control || true
-          perl -0777 -pe 's/^\xEF\xBB\xBF//' -i build/control/control || true
-          test -s build/control/control
-      
-          # debian-binary: ДОЛЖНО быть ровно "2.0\n"
-          printf '2.0\n' > build/debian-binary
-      
-          # Создаём control.tar.gz БЕЗ './' префиксов: кладём файлы в корень архива
-          CONTROL_FILES=$(cd build/control && ls -1)
-          tar --format=ustar --owner=0 --group=0 --numeric-owner \
-            -C build/control -czf build/control.tar.gz $CONTROL_FILES
-      
-          # Создаём data.tar.gz (можно с './', но нормализуем)
-          DATA_LIST=$(cd build/data && find . -mindepth 1 -maxdepth 1 -printf '%P\n' | tr '\n' ' ')
-          if [ -n "$DATA_LIST" ]; then
-            tar --format=ustar --owner=0 --group=0 --numeric-owner \
-              -C build/data -czf build/data.tar.gz $DATA_LIST
-          else
-            # пустой пакет тоже допустим
-            tar --format=ustar --owner=0 --group=0 --numeric-owner \
-              -C build/data -czf build/data.tar.gz .
-          fi
-      
-          # ВАЖНО: собираем IPK изнутри build/, чтобы имена были без префиксов
-          ( cd build && ar -cr "$OUTDIR/${PKG}_${VER}_all.ipk" \
-              debian-binary control.tar.gz data.tar.gz )
-      
-          # Самопроверки
-          ar t "$OUTDIR/${PKG}_${VER}_all.ipk"
-          ar p "$OUTDIR/${PKG}_${VER}_all.ipk" control.tar.gz | gzip -t
-          ar p "$OUTDIR/${PKG}_${VER}_all.ipk" data.tar.gz   | gzip -t
-      
-          echo "Built: $OUTDIR/${PKG}_${VER}_all.ipk"
+          mkdir -p dist
+          # по умолчанию ipkg-build использует gzip; хотите xz — добавьте: -Z xz
+          ./ipkg-build -o 0 -g 0 "$PKG_DIR" dist
+          ls -lah dist
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

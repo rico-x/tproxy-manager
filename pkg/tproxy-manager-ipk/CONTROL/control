@@ -5,4 +5,5 @@ Maintainer: Rico-X <ricox.sp@gmail.com>
 Section: net
 Priority: optional
 Depends: xray-core, ca-bundle, kmod-nft-tproxy, kmod-nft-socket, ip-full, lua, luci-base, luci-compat, luci-lib-jsonc, luci-lib-ip, uci, busybox
+Status: install ok installed
 Description: TPROXY-Manager — TProxy management (xray, geo, scripts, UCI, LuCI).
