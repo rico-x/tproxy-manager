@@ -41,9 +41,7 @@ jobs:
 
       - name: Fetch ipkg-build (OpenWrt 24.10)
         run: |
-          curl -fsSL \
-            https://raw.githubusercontent.com/openwrt/openwrt/openwrt-24.10/scripts/ipkg-build \
-            -o ipkg-build
+          curl -fsSL https://raw.githubusercontent.com/openwrt/openwrt/openwrt-24.10/scripts/ipkg-build -o ipkg-build
           chmod +x ipkg-build
           ./ipkg-build -h || true
 
@@ -51,7 +49,6 @@ jobs:
         run: |
           CTRL="$PKG_DIR/CONTROL/control"
           [[ -f "$CTRL" ]] || { echo "Missing $CTRL"; exit 1; }
-          # нормализуем control (LF, без BOM) и права на скрипты
           sed -i 's/\r$//' "$CTRL" || true
           perl -0777 -pe 's/^\xEF\xBB\xBF//' -i "$CTRL" || true
           find "$PKG_DIR" -type f -path '*/etc/init.d/*' -exec chmod 0755 {} +
@@ -69,13 +66,13 @@ jobs:
             echo "Version: ${{ steps.ver.outputs.version }}-1" >> "$CTRL"
           fi
 
-      - name: Build .ipk via ipkg-build (no -o/-g)
+      - name: Build .ipk via ipkg-build (ABS dest)
+        shell: bash
         run: |
-          mkdir -p dist
-          # Ветка 24.10: ipkg-build поддерживает только [-v -h -m]
-          # Формат .ipk — tar|gzip из трёх файлов: debian-binary, data.tar.gz, control.tar.gz
-          ./ipkg-build "$PKG_DIR" dist
-          ls -lah dist
+          DEST="$(pwd)/dist"
+          mkdir -p "$DEST"
+          ./ipkg-build "$PKG_DIR" "$DEST"
+          ls -lah "$DEST"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
