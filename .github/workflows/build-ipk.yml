@@ -209,6 +209,11 @@ jobs:
           (cd dist && zip -9 "../release/tproxy-manager_${VER}.zip" *.ipk "SHA256SUMS_${VER}.txt")
           ls -lah release
 
+      - name: Upload Pages artifact (feed/)
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: feed
+
       - name: Upload artifacts (versioned)
         uses: actions/upload-artifact@v4
         with:
@@ -241,10 +246,10 @@ jobs:
 
   pages-deploy:
     needs: build
+    runs-on: ubuntu-latest
     permissions:
       pages: write
       id-token: write
-    runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -252,7 +257,7 @@ jobs:
       - name: Configure Pages
         uses: actions/configure-pages@v5
   
-      # Берёт последний загруженный pages-артефакт из job "build"
+      # Разворачивает последний загруженный pages-артефакт (из шага выше в job "build")
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
