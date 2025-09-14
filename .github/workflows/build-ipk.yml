@@ -101,10 +101,14 @@ jobs:
       - name: Prepare feed (Packages/Packages.gz + keys)
         shell: bash
         run: |
+          set -e
           rm -rf "$FEED_DIR"
           mkdir -p "$FEED_DIR/keys"
           cp dist/*.ipk "$FEED_DIR"/
-          (cd "$FEED_DIR" && ../ipkg-make-index.sh . > Packages)
+      
+          # ВАЖНО: укажем утилиту для sha256
+          (cd "$FEED_DIR" && SHA256PROG=sha256sum ../ipkg-make-index.sh . > Packages)
+      
           gzip -kf "$FEED_DIR/Packages"
           [ -f keys/usign.pub ] && cp keys/usign.pub "$FEED_DIR/keys/"
 
