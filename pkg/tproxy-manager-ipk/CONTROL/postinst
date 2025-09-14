@@ -1,0 +1,13 @@
+#!/bin/sh
+[ -n "$IPKG_INSTROOT" ] && exit 0
+if [ -d /etc/uci-defaults ]; then
+  for f in /etc/uci-defaults/*tproxy_manager*; do
+    [ -f "$f" ] || continue
+    (. "$f") && rm -f "$f"
+  done
+fi
+if [ -x /etc/init.d/xray-tproxy ]; then
+  /etc/init.d/xray-tproxy enable
+  /etc/init.d/xray-tproxy start
+fi
+exit 0

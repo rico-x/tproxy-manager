@@ -1,0 +1,109 @@
+name: Build OpenWrt .ipk (TPROXY-Manager)
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'pkg/**'
+      - '.github/workflows/build-ipk.yml'
+  tag:
+    types: [ created ]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+env:
+  PKG_DIR: pkg/tproxy-manager-ipk
+  FEED_DIR: feed
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compute version
+        id: ver
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            VER="${GITHUB_REF_NAME}"
+          else
+            VER="$(date -u +%Y.%m.%d)-${GITHUB_SHA::7}"
+          fi
+          echo "version=$VER" >> $GITHUB_OUTPUT
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y opkg-utils usign xz-utils tar coreutils
+
+      - name: Set permissions
+        run: |
+          find "$PKG_DIR" -type f -path '*/etc/init.d/*' -exec chmod 0755 {} +
+          find "$PKG_DIR" -type f -path '*/etc/uci-defaults/*' -exec chmod 0755 {} +
+          if [ -f "$PKG_DIR/CONTROL/postinst" ]; then chmod 0755 "$PKG_DIR/CONTROL/postinst"; fi
+          if [ -f "$PKG_DIR/CONTROL/prerm" ];   then chmod 0755 "$PKG_DIR/CONTROL/prerm";   fi
+          if [ -f "$PKG_DIR/usr/bin/xray-tproxy.sh" ]; then chmod 0755 "$PKG_DIR/usr/bin/xray-tproxy.sh"; fi
+
+      - name: Inject version into control
+        run: |
+          CTRL="$PKG_DIR/CONTROL/control"
+          if grep -q '^Version:' "$CTRL"; then
+            sed -i "s/^Version:.*/Version: ${{ steps.ver.outputs.version }}-1/" "$CTRL"
+          else
+            echo "Version: ${{ steps.ver.outputs.version }}-1" >> "$CTRL"
+          fi
+
+      - name: Build .ipk
+        run: |
+          mkdir -p dist
+          opkg-build -Z xz -o 0 -g 0 "$PKG_DIR" dist
+          ls -lah dist
+
+      - name: Prepare feed
+        run: |
+          rm -rf "$FEED_DIR"
+          mkdir -p "$FEED_DIR"
+          cp dist/*.ipk "$FEED_DIR"/
+          (cd "$FEED_DIR" && opkg-make-index . > Packages)
+          gzip -kf "$FEED_DIR/Packages"
+
+      - name: Sign feed (optional)
+        if: ${{ secrets.USIGN_SECRET != '' }}
+        env:
+          USIGN_SECRET: ${{ secrets.USIGN_SECRET }}
+        run: |
+          echo "$USIGN_SECRET" | base64 -d > /tmp/usign.key
+          chmod 600 /tmp/usign.key
+          usign -S -m "$FEED_DIR/Packages" -s /tmp/usign.key
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ipk-and-feed
+          path: |
+            dist/*.ipk
+            feed/*
+
+  deploy-pages:
+    needs: build
+    runs-on: ubuntu-latest
+    if: ${{ github.ref_type == 'tag' || github.ref == 'refs/heads/main' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: ipk-and-feed
+          path: public
+      - name: Upload pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+      - name: Deploy to GitHub Pages
+        uses: actions/deploy-pages@v4

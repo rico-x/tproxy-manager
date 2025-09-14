@@ -1,0 +1,9 @@
+/etc/config/xray-proxy
+/etc/xray/geo-sources.conf
+/etc/xray/xray-tproxy.ports
+/etc/xray/xray-tproxy.v4
+/etc/xray/xray-tproxy.v6
+/etc/xray/xray-tproxy.src4.only
+/etc/xray/xray-tproxy.src6.only
+/etc/xray/xray-tproxy.src4.bypass
+/etc/xray/xray-tproxy.src6.bypass

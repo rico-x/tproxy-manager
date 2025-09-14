@@ -1,0 +1,22 @@
+#!/bin/sh
+# One-time initialization for TPROXY-Manager
+mkdir -p /etc/xray
+: > /etc/xray/xray-tproxy.ports
+: > /etc/xray/xray-tproxy.v4
+: > /etc/xray/xray-tproxy.v6
+: > /etc/xray/xray-tproxy.src4.only
+: > /etc/xray/xray-tproxy.src6.only
+: > /etc/xray/xray-tproxy.src4.bypass
+: > /etc/xray/xray-tproxy.src6.bypass
+
+uci -q batch <<'EOF'
+set xray.enabled=enabled
+set xray.enabled.enabled='1'
+set xray.config=config
+set xray.config.confdir='/etc/xray'
+set xray.config.datadir='/usr/share/xray/'
+set xray.config.format='json'
+delete xray.config.conffiles
+commit xray
+EOF
+exit 0
