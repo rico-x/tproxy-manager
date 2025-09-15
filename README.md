@@ -57,7 +57,7 @@
 - Метки состояния: **работает / остановлен** и **в автозапуске / не в автозапуске**.
 - Кнопки управления: **Запустить**, **Остановить**, **Добавить/Убрать из автозапуска**.
 
-`![Статус TPROXY](https://raw.githubusercontent.com/rico-x/tproxy-manager/main/docs/screenshots/01-tproxy-full.png)`
+![Статус TPROXY](https://raw.githubusercontent.com/rico-x/tproxy-manager/main/docs/screenshots/01-tproxy-full.png)
 
 ---
 
@@ -72,7 +72,7 @@
 - Валидация: допускаются только значения **1..65535**.  
   При включённом разделении оба поля обязательны.
 
-`![Порты TPROXY](https://raw.githubusercontent.com/rico-x/tproxy-manager/main/docs/screenshots/02-ports-split.png)`
+![Порты TPROXY](https://raw.githubusercontent.com/rico-x/tproxy-manager/main/docs/screenshots/02-ports-split.png)
 
 #### Режимы по портам и источникам
 - **Режим по портам (`port_mode`)**:
@@ -85,7 +85,7 @@
 
 Переключение селекторов перезагружает текущую вкладку с сохранением выбора файлов.
 
-`![Режимы портов и источников](https://raw.githubusercontent.com/rico-x/tproxy-manager/main/docs/screenshots/03-modes.png)`
+![Режимы портов и источников](https://raw.githubusercontent.com/rico-x/tproxy-manager/main/docs/screenshots/03-modes.png)
 
 ---
 
@@ -103,7 +103,7 @@
 - Кнопка **«Сохранить файл»** — мгновенная запись на диск (атомарно).
 - Краткое описание смысла выбранного файла.
 
-`![Редактор списков](https://raw.githubusercontent.com/rico-x/tproxy-manager/main/docs/screenshots/04-unified-editor.png)`
+![Редактор списков](https://raw.githubusercontent.com/rico-x/tproxy-manager/main/docs/screenshots/04-unified-editor.png)
 
 #### Подсказки по форматам файлов
 
@@ -118,7 +118,7 @@
 - Кнопки **`+ only`** / **`+ bypass`** моментально добавляют IP в соответствующий файл
   (`src_only_v4_file` или `src_bypass_v4_file`), без ручного редактирования.
 
-`![DHCP аренды — быстрое добавление](https://raw.githubusercontent.com/rico-x/tproxy-manager/main/docs/screenshots/05-dhcp-quick-add.png)`
+![DHCP аренды — быстрое добавление](https://raw.githubusercontent.com/rico-x/tproxy-manager/main/docs/screenshots/05-dhcp-quick-add.png)
 
 ---
 
@@ -130,7 +130,7 @@
 - **nft_table**, **fwmark_tcp/udp**, **rttab_tcp/udp** — системные параметры меток и таблиц маршрутизации.
 - Пути к используемым файлам списков: `ports_file`, `bypass_*`, `src_only_*`, `src_bypass_*`.
 
-`![Дополнительные настройки](https://raw.githubusercontent.com/rico-x/tproxy-manager/main/docs/screenshots/06-advanced.png)`
+![Дополнительные настройки](https://raw.githubusercontent.com/rico-x/tproxy-manager/main/docs/screenshots/06-advanced.png)
 
 ---
 
@@ -151,7 +151,7 @@
 
 Аналогично TPROXY: состояние, автозапуск, кнопки **Запустить / Остановить / Добавить/Убрать из автозапуска**.
 
-`![Статус Xray](https://raw.githubusercontent.com/rico-x/tproxy-manager/main/docs/screenshots/07-xray-status.png)`
+![Статус Xray](https://raw.githubusercontent.com/rico-x/tproxy-manager/main/docs/screenshots/07-xray-status.png)
 
 ### Общий системный лог
 
@@ -161,7 +161,7 @@
 - **Обновить** — перезагрузка блока лога.
 - **Очистить** — перезапуск системного лог-демона (`/etc/init.d/log restart`).
 
-`![Лог системы](https://raw.githubusercontent.com/rico-x/tproxy-manager/main/docs/screenshots/08-logread.png)`
+![Лог системы](https://raw.githubusercontent.com/rico-x/tproxy-manager/main/docs/screenshots/08-logread.png)
 
 ### Редактор JSON-конфигов Xray
 
@@ -187,7 +187,7 @@ xray -test -format json -confdir /etc/xray > /tmp/xray_test.log 2>&1
 
 Результат отображается в сворачиваемой панели «Результат последней проверки». Есть кнопка **Очистить** для этого журнала.
 
-`![Проверка конфигурации Xray](https://raw.githubusercontent.com/rico-x/tproxy-manager/main/docs/screenshots/09-xray-test.png)`
+![Проверка конфигурации Xray](https://raw.githubusercontent.com/rico-x/tproxy-manager/main/docs/screenshots/09-xray-test.png)
 
 ---
 
@@ -203,7 +203,7 @@ xray -test -format json -confdir /etc/xray > /tmp/xray_test.log 2>&1
 - **Редактировать** — открыть форму редактирования строки.
 - **Удалить** — удалить источник из списка.
 
-`![Список источников GEO](https://raw.githubusercontent.com/rico-x/tproxy-manager/main/docs/screenshots/10-geo-list.png)`
+![Список источников GEO](https://raw.githubusercontent.com/rico-x/tproxy-manager/main/docs/screenshots/10-geo-list.png)
 
 ### Добавление/редактирование/удаление
 
@@ -229,7 +229,7 @@ xray -test -format json -confdir /etc/xray > /tmp/xray_test.log 2>&1
 - **Сохранить список** — валидирует и сохраняет файл конфигурации источников.
 - **Пересоздать скрипт** — перегенерирует `/usr/bin/xray-geo-update.sh`.
 
-`![Глобальное редактирование GEO JSON](https://raw.githubusercontent.com/rico-x/tproxy-manager/main/docs/screenshots/11-geo-json.png)`
+![Глобальное редактирование GEO JSON](https://raw.githubusercontent.com/rico-x/tproxy-manager/main/docs/screenshots/11-geo-json.png)
 
 ---
 
