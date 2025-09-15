@@ -1,8 +1,9 @@
 #!/bin/sh
-# Idempotent defaults: создаём только отсутствующие секции/параметры.
+# Idempotent defaults for OpenWrt UCI
+
 set -e
 
-# --- /etc/xray: создать директорию и пустые файлы ТОЛЬКО если их нет ---
+# --- /etc/xray: каталог и пустые файлы только если их нет ---
 mkdir -p /etc/xray
 for f in \
   /etc/xray/xray-tproxy.ports \
@@ -17,27 +18,31 @@ do
   [ -e "$f" ] || : > "$f"
 done
 
+# --- UCI доступен? ---
+command -v uci >/dev/null 2>&1 || exit 0
+
+# На случай полностью отсутствующих файлов конфигов (безопасно):
+for c in xray xray-proxy; do
+  [ -f "/etc/config/$c" ] || touch "/etc/config/$c"
+done
+
 # --- UCI helpers ---
-# ensure_section <cfg> <section_name> <type>
-ensure_section() {
-  local cfg="$1" sec="$2" typ="$3"
-  if ! uci -q get "$cfg.$sec" >/dev/null 2>&1; then
-    uci set "$cfg.$sec=$typ"
-    CHANGED=1
-  fi
-}
 # set_default <cfg> <section> <option> <value>
 set_default() {
-  local cfg="$1" sec="$2" opt="$3" val="$4" cur
-  cur="$(uci -q get "$cfg.$sec.$opt" 2>/dev/null || true)"
-  if [ -z "$cur" ]; then
+  local cfg="$1" sec="$2" opt="$3" val="$4"
+  if ! uci -q get "$cfg.$sec.$opt" >/dev/null 2>&1; then
     uci set "$cfg.$sec.$opt=$val"
-    CHANGED=1
   fi
 }
 
-# --- xray (ядро): только заполняем недостающие ---
-CHANGED=0
+# ensure_section <cfg> <section_name> <type>
+ensure_section() {
+  local cfg="$1" sec="$2" typ="$3"
+  # Универсально: создаёт пакет и именованную секцию при отсутствии
+  uci set "$cfg.$sec=$typ"
+}
+
+# --- xray (ядро) ---
 ensure_section xray enabled enabled
 set_default   xray enabled enabled '1'
 
@@ -46,12 +51,10 @@ set_default   xray config  confdir '/etc/xray'
 set_default   xray config  datadir '/usr/share/xray/'
 set_default   xray config  format  'json'
 uci -q delete xray.config.conffiles || true
-[ "$CHANGED" -eq 1 ] && uci commit xray
+uci commit xray
 
-# --- xray-proxy (наш UCI): создаём секцию и каждое поле, если отсутствует ---
-CHANGED=0
+# --- xray-proxy (наш UCI) ---
 ensure_section xray-proxy main main
-
 set_default xray-proxy main log_enabled        '1'
 set_default xray-proxy main nft_table          'xray'
 set_default xray-proxy main ifaces             'br-lan'
@@ -69,7 +72,6 @@ set_default xray-proxy main src_only_v4_file   '/etc/xray/xray-tproxy.src4.only'
 set_default xray-proxy main src_only_v6_file   '/etc/xray/xray-tproxy.src6.only'
 set_default xray-proxy main src_bypass_v4_file '/etc/xray/xray-tproxy.src4.bypass'
 set_default xray-proxy main src_bypass_v6_file '/etc/xray/xray-tproxy.src6.bypass'
-
-[ "$CHANGED" -eq 1 ] && uci commit xray-proxy
+uci commit xray-proxy
 
 exit 0
