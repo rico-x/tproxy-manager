@@ -1,14 +1,13 @@
-name: Build TPROXY-Manager (tags only) → ipkg + Feed + Sign + Release + Pages
+name: Build TPROXY-Manager via ipkg-build
 
 on:
   push:
-    tags:
-      - 'v*'              # сборка только при пуше тега
+    tags: [ "v*" ]     # запуск только при пуше тега вида vYY.M.D
   workflow_dispatch:
     inputs:
-      version:
-        description: 'Version like 25.9.14'
-        required: true
+      tag:
+        description: 'Необязательно: задать тег (формат vYY.M.D). Если пусто — сгенерируется автоматически по UTC.'
+        required: false
         type: string
 
 permissions:
@@ -24,36 +23,36 @@ jobs:
   build:
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.ver.outputs.version }}
-      tag:     ${{ steps.ver.outputs.tag }}
+      tag:   ${{ steps.meta.outputs.tag }}   # v25.9.15
+      plain: ${{ steps.meta.outputs.plain }} # 25.9.15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Compute version (from tag or manual input)
-        id: ver
-        env:
-          MANUAL_VERSION: ${{ github.event.inputs.version }}
+      - name: Compute tag/version (vYY.M.D)
+        id: meta
         shell: bash
         run: |
           set -euo pipefail
-          if [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
-            RAW="${GITHUB_REF_NAME:-}"
-            VER="${RAW#v}"     # снять ведущую 'v'
-          elif [ -n "${MANUAL_VERSION:-}" ]; then
-            VER="${MANUAL_VERSION}"
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            TAG="${GITHUB_REF_NAME}"
           else
-            echo "::error ::Version is not provided. Run on tag vX.Y.Z or via workflow_dispatch with 'version'."
+            if [[ -n "${{ github.event.inputs.tag || '' }}" ]]; then
+              TAG="${{ github.event.inputs.tag }}"
+            else
+              # пример: v25.9.15 (UTC)
+              TAG="v$(date -u +%y.%-m.%-d)"
+            fi
+          fi
+
+          # Валидация формата
+          if [[ ! "$TAG" =~ ^v[0-9]{2}\.[0-9]{1,2}\.[0-9]{1,2}$ ]]; then
+            echo "Неверный формат тега: '$TAG'. Ожидается vYY.M.D, например v25.9.15" >&2
             exit 1
           fi
-          # Простейшая валидация вида 1.2.3 (минимум 3 числа)
-          if ! printf '%s' "$VER" | grep -Eq '^[0-9]+(\.[0-9]+){2,}$'; then
-            echo "::error ::Invalid version '$VER'. Use like 25.9.14"
-            exit 1
-          fi
-          echo "version=$VER" >> "$GITHUB_OUTPUT"
-          echo "tag=v$VER"    >> "$GITHUB_OUTPUT"
-          echo "Resolved version: $VER"
+
+          echo "tag=$TAG"     >> "$GITHUB_OUTPUT"
+          echo "plain=${TAG#v}" >> "$GITHUB_OUTPUT"
 
       - name: Install base tools
         run: |
@@ -62,10 +61,11 @@ jobs:
             ca-certificates curl gzip tar coreutils findutils gawk sed perl zip \
             build-essential cmake xz-utils
 
-      - name: Fetch ipkg-build (OpenWrt 24.10)
+      - name: Fetch ipkg-build & ipkg-make-index.sh (OpenWrt 24.10)
         run: |
           curl -fsSL https://raw.githubusercontent.com/openwrt/openwrt/openwrt-24.10/scripts/ipkg-build -o ipkg-build
-          chmod +x ipkg-build
+          curl -fsSL https://raw.githubusercontent.com/openwrt/openwrt/openwrt-24.10/scripts/ipkg-make-index.sh -o ipkg-make-index.sh
+          chmod +x ipkg-build ipkg-make-index.sh
           ./ipkg-build -h || true
 
       - name: Normalize CONTROL/control and perms
@@ -77,23 +77,23 @@ jobs:
           sed -i 's/\r$//' "$CTRL" || true
           perl -0777 -pe 's/^\xEF\xBB\xBF//' -i "$CTRL" || true
           tail -c1 "$CTRL" | od -An -t x1 | grep -q '0a' || echo >> "$CTRL"
-          find "$PKG_DIR" -type f -path '*/etc/init.d/*'       -exec chmod 0755 {} +
+          find "$PKG_DIR" -type f -path '*/etc/init.d/*' -exec chmod 0755 {} +
           find "$PKG_DIR" -type f -path '*/etc/uci-defaults/*' -exec chmod 0755 {} +
           [ -f "$PKG_DIR/CONTROL/preinst"  ] && chmod 0755 "$PKG_DIR/CONTROL/preinst"  || true
           [ -f "$PKG_DIR/CONTROL/postinst" ] && chmod 0755 "$PKG_DIR/CONTROL/postinst" || true
           [ -f "$PKG_DIR/CONTROL/prerm"    ] && chmod 0755 "$PKG_DIR/CONTROL/prerm"    || true
-          [ -f "$PKG_DIR/usr/bin/xray-tproxy.sh" ]     && chmod 0755 "$PKG_DIR/usr/bin/xray-tproxy.sh" || true
           [ -f "$PKG_DIR/usr/bin/optimize-sysctl.sh" ] && chmod 0755 "$PKG_DIR/usr/bin/optimize-sysctl.sh" || true
-          [ -f "$PKG_DIR/usr/bin/setup-bbr.sh" ]       && chmod 0755 "$PKG_DIR/usr/bin/setup-bbr.sh"       || true
+          [ -f "$PKG_DIR/usr/bin/setup-bbr.sh"       ] && chmod 0755 "$PKG_DIR/usr/bin/setup-bbr.sh"       || true
+          [ -f "$PKG_DIR/usr/bin/xray-tproxy.sh" ] && chmod 0755 "$PKG_DIR/usr/bin/xray-tproxy.sh" || true
 
       - name: Inject Version into control
         shell: bash
         run: |
           CTRL="$PKG_DIR/CONTROL/control"
           if grep -q '^Version:' "$CTRL"; then
-            sed -i "s/^Version:.*/Version: ${{ steps.ver.outputs.version }}_1-1/" "$CTRL"
+            sed -i "s/^Version:.*/Version: ${{ steps.meta.outputs.tag }}_1-1/" "$CTRL"
           else
-            echo "Version: ${{ steps.ver.outputs.version }}_1-1" >> "$CTRL"
+            echo "Version: ${{ steps.meta.outputs.tag }}_1-1" >> "$CTRL"
           fi
           tail -c1 "$CTRL" | od -An -t x1 | grep -q '0a' || echo >> "$CTRL"
 
@@ -103,11 +103,13 @@ jobs:
           DEST="$(pwd)/dist"
           mkdir -p "$DEST"
           ./ipkg-build "$PKG_DIR" "$DEST"
+          echo "--- dist content ---"
           ls -lah "$DEST"
+          echo "--- quick check ---"
           file "$DEST"/*.ipk
           tar tzf "$DEST"/*.ipk | sed -n '1,10p'
 
-      - name: Prepare feed (lite indexer)
+      - name: Prepare feed (lite indexer, no ipkg-make-index.sh)
         shell: bash
         run: |
           set -euo pipefail
@@ -135,11 +137,15 @@ jobs:
               fi
             fi
             [ -n "$ctrl" ] && printf "%s" "$ctrl"
+            return 0
           }
           for ipk in *.ipk; do
             [ -f "$ipk" ] || continue
             ctrl="$(get_control "$ipk")" || true
-            [ -n "$ctrl" ] || { echo "WARN: no control in $ipk" >&2; continue; }
+            if [ -z "$ctrl" ]; then
+              echo "WARN: cannot read control from $ipk" >&2
+              continue
+            fi
             printf "%s\n" "$ctrl" >> Packages
             size=$(stat -c%s "$ipk" 2>/dev/null || wc -c < "$ipk")
             sha256=$(sha256sum "$ipk" | awk '{print $1}')
@@ -154,49 +160,28 @@ jobs:
           "$FEED_DIR/.index_lite.sh" "$FEED_DIR"
           [ -f keys/usign.pub ] && cp keys/usign.pub "$FEED_DIR/keys/"
 
-      - name: Sanitize & validate usign.pub (if present)
+      - name: Make index.html (nice landing)
         shell: bash
         run: |
-          set -e
-          if [ -f keys/usign.pub ]; then
-            sed -i 's/\r$//' keys/usign.pub || true
-            perl -0777 -pe 's/^\xEF\xBB\xBF//' -i keys/usign.pub || true
-            awk 'NR==1 && $0 ~ /^untrusted comment:/ {ok1=1}
-                 NR==2 && $0 ~ /^[A-Za-z0-9+\/=]+$/ {ok2=1}
-                 END{if(!(ok1&&ok2)) {print "Invalid usign.pub format" > "/dev/stderr"; exit 1}}' keys/usign.pub
-            mkdir -p "$FEED_DIR/keys"
-            cp keys/usign.pub "$FEED_DIR/keys/"
-          else
-            echo "No keys/usign.pub — feed will be unsigned"
-          fi
-
-      - name: Render index.html from template (robust)
-        shell: bash
-        run: |
-          set -euo pipefail
-          OWNER="${GITHUB_REPOSITORY%%/*}"
-          REPO="${GITHUB_REPOSITORY##*/}"
-          BASE_URL="https://${OWNER}.github.io/${REPO}/"
-          REPO_URL="https://github.com/${OWNER}/${REPO}"
-          REL_URL="${REPO_URL}/releases"
-          mkdir -p "$FEED_DIR"
-          if [ ! -f site/index.html ]; then
-            mkdir -p site
-            cat > site/index.html <<'HTML'
-            <!doctype html><meta charset="utf-8"><title>TPROXY-Manager feed</title>
-            <pre>wget -qO- __BASE__keys/usign.pub | opkg-key add -
-            echo 'src/gz tproxy __BASE__' >> /etc/opkg/customfeeds.conf
-            opkg update
-            opkg install tproxy-manager</pre>
-            <p><a href="__REPO_URL__">GitHub</a> · <a href="__REL_URL__">Releases</a></p>
-            HTML
-          fi
-          sed -e "s|__BASE__|${BASE_URL}|g" \
-              -e "s|__REPO_URL__|${REPO_URL}|g" \
-              -e "s|__REL_URL__|${REL_URL}|g" \
-              site/index.html > "$FEED_DIR/index.html"
-          [ -f site/style.css ] && cp site/style.css "$FEED_DIR/" || true
-          [ -d site/assets ] && cp -a site/assets "$FEED_DIR/" || true
+          cat > "$FEED_DIR/index.html" <<'HTML'
+          <!doctype html>
+          <meta charset="utf-8">
+          <title>TPROXY-Manager feed</title>
+          <h2>TPROXY-Manager opkg feed</h2>
+          <p>Добавьте этот фид в OpenWrt:</p>
+          <pre>
+          wget -O /tmp/usign.pub https://rico-x.github.io/tproxy-manager/keys/usign.pub && opkg-key add /tmp/usign.pub
+          echo 'src/gz tproxy https://rico-x.github.io/tproxy-manager/' >> /etc/opkg/customfeeds.conf
+          opkg update
+          opkg install tproxy-manager
+          </pre>
+          <ul>
+            <li><a href="Packages">Packages</a></li>
+            <li><a href="Packages.gz">Packages.gz</a></li>
+            <li><a href="Packages.sig">Packages.sig</a></li>
+            <li><a href="keys/usign.pub">keys/usign.pub</a></li>
+          </ul>
+          HTML
 
       - name: Sign feed (optional)
         env:
@@ -205,7 +190,7 @@ jobs:
         run: |
           set -e
           if [ -z "${USIGN_SECRET:-}" ]; then
-            echo "USIGN_SECRET empty; skip signing."
+            echo "USIGN_SECRET is empty; skip signing."
             exit 0
           fi
           curl -fsSL https://github.com/openwrt/usign/archive/refs/heads/master.tar.gz -o usign.tar.gz
@@ -220,7 +205,7 @@ jobs:
       - name: ZIP bundle (versioned)
         shell: bash
         run: |
-          VER="${{ steps.ver.outputs.version }}"
+          VER="${{ steps.meta.outputs.tag }}"
           mkdir -p release
           (cd dist && sha256sum *.ipk > "SHA256SUMS_${VER}.txt")
           (cd dist && zip -9 "../release/tproxy-manager_${VER}.zip" *.ipk "SHA256SUMS_${VER}.txt")
@@ -234,7 +219,7 @@ jobs:
       - name: Upload artifacts (versioned)
         uses: actions/upload-artifact@v4
         with:
-          name: "tproxy-manager_${{ steps.ver.outputs.version }}"
+          name: "tproxy-manager_${{ steps.meta.outputs.tag }}"
           path: |
             dist/*.ipk
             release/*.zip
@@ -243,37 +228,19 @@ jobs:
   release:
     needs: build
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
           path: dl
 
-      # Для ручного запуска создадим тег v<version>, чтобы релиз был консистентным
-      - name: Ensure tag exists (manual run)
-        if: ${{ github.ref_type != 'tag' }}
-        shell: bash
-        run: |
-          git fetch --tags
-          if git rev-parse "${{ needs.build.outputs.tag }}" >/dev/null 2>&1; then
-            echo "Tag exists: ${{ needs.build.outputs.tag }}"
-          else
-            git tag "${{ needs.build.outputs.tag }}" "${{ github.sha }}"
-            git push origin "${{ needs.build.outputs.tag }}"
-          fi
-
-      - name: Create GitHub Release and upload
+      - name: Create/Update GitHub Release and upload assets
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ needs.build.outputs.tag }}
-          name: TPROXY-Manager v${{ needs.build.outputs.version }}
-          draft: false
-          prerelease: false
+          tag_name: ${{ needs.build.outputs.tag }}              # при ручном запуске тег будет создан автоматически
+          target_commitish: ${{ github.sha }}                   # коммит текущего запуска
+          make_latest: true
+          generate_release_notes: true
           files: |
             dl/**/dist/*.ipk
             dl/**/release/*.zip
