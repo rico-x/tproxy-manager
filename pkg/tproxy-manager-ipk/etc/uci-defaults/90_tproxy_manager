@@ -45,7 +45,7 @@ ensure_section() {
 # --- tproxy-manager (наш UCI) ---
 ensure_section tproxy-manager main main
 set_default tproxy-manager main log_enabled        '1'
-set_default tproxy-manager main nft_table          'tproxy'
+set_default tproxy-manager main nft_table          'tp_mgr'
 set_default tproxy-manager main ifaces             'br-lan'
 set_default tproxy-manager main ipv6_enabled       '1'
 set_default tproxy-manager main tproxy_port        '61219'

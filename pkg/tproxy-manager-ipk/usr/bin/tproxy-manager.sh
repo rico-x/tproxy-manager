@@ -18,7 +18,7 @@
 # --------------------------- UCI КОНФИГ (опционально) ---------------------------
 #   config main 'main'
 #     option log_enabled '1'
-#     option nft_table    'tproxy'
+#     option nft_table    'tp_mgr'
 #     option ifaces       'br-lan wg0'
 #     option ipv6_enabled '1'
 #     option tproxy_port      '61219'
@@ -71,7 +71,7 @@ RULE_PRIO_TCP="${RULE_PRIO_TCP:-10000}"
 RULE_PRIO_UDP="${RULE_PRIO_UDP:-10001}"
 
 # Имя nft-таблицы и список интерфейсов источника
-NFT_TABLE="${NFT_TABLE:-tproxy}"
+NFT_TABLE="${NFT_TABLE:-tp_mgr}"
 LAN_IFACES="${LAN_IFACES:-br-lan}"
 
 # Файлы с исключениями/портами
