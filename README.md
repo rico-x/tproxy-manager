@@ -277,4 +277,4 @@ xray -test -format json -confdir /etc/xray > /tmp/xray_test.log 2>&1
 
 ## Благодарности
 - За вдохновение проекту ![XKeen](https://github.com/Skrill0/XKeen)
-- За помощь в бетатестировании и полезные идеи, пользователю ![чата](https://t.me/c/2138190368/23) @grisha8777 
+- За помощь в бетатестировании и полезные идеи, пользователю TG чата https://t.me/c/2138190368/23 @grisha8777 
