@@ -12,8 +12,53 @@ local function render(ctx)
 
   do
     local ss = m:section(SimpleSection, "Статус и управление сервисом TPROXY")
-    -- renamed service to tproxy-manager
     service_block(ss, "tproxy-manager", "TPROXY", "tproxy")
+  end
+
+  do
+    local top = m:section(SimpleSection, ""); top.anonymous = true
+    local dv = top:option(DummyValue, "_pretitle_restart"); dv.rawhtml = true
+function dv.cfgvalue()
+  return [[
+<style>
+  /* тонкая кнопка как у остальных, ширина по тексту */
+  .tpx-btn-slim{ 
+    display:inline-block !important;
+    padding:.25rem .6rem !important;
+    line-height:1.15 !important;
+    height:auto !important;
+    width:auto !important;
+    min-width:unset !important;
+    white-space:nowrap !important;
+  }
+  .tpx-btn-slim > span{
+    color:#16a34a;          /* зелёный текст */
+    font-weight:700;        /* жирный */
+  }
+</style>
+<div class="inline-row" style="margin:.25rem 0 .25rem 0">
+  <button class="cbi-button cbi-button-reload tpx-btn-slim"
+          name="_tproxy_restart" value="1"
+          title="Сохранить и перезапустить TPROXY">
+    <span>Перезагрузка</span>
+  </button>
+</div>
+<script>
+(function(){
+  // На «Перезагрузка» — сохраняем и UCI, и редактор
+  var rb = document.querySelector('button[name="_tproxy_restart"]');
+  if (rb) rb.addEventListener('click', function(){
+    var form = this.form || document.querySelector('form'); if(!form) return;
+    var s1 = form.querySelector('input[name="_save_tproxy_main"]');
+    if(!s1){ s1 = document.createElement('input'); s1.type='hidden'; s1.name='_save_tproxy_main'; form.appendChild(s1); }
+    s1.value = '1';
+    var s2 = form.querySelector('input[name="_uniedit_save"]');
+    if(!s2){ s2 = document.createElement('input'); s2.type='hidden'; s2.name='_uniedit_save'; form.appendChild(s2); }
+    s2.value = '1';
+  }, {passive:true});
+})();
+</script>]]
+end
   end
 
   local main_s = m:section(SimpleSection, "TPROXY — основные настройки")
@@ -205,7 +250,7 @@ local function render(ctx)
     end
   end
 
-  -- Unified editor + DHCP picker (paths under /etc/tproxy-manager)
+  -- Unified editor + DHCP picker
   do
     local se = m:section(SimpleSection, "")
     local dv = se:option(DummyValue, "_uniedit"); dv.rawhtml = true
@@ -283,7 +328,7 @@ local function render(ctx)
 
       sel[#sel+1] = string.format("<textarea name='uniedit_text' rows='16' spellcheck='false'>%s</textarea>", pcdata(content))
 
-      sel[#sel+1] = [[
+      sel[#sel+1] = string.format([[
 <div id="uniedit_hint" style="margin-top:.35rem; color:#9ca3af"></div>
 <script>
 (function(){
@@ -292,6 +337,7 @@ local function render(ctx)
   var fileSel = qs('#unified-editor select[name="list_file"]');
   var hint = qs('#uniedit_hint');
   var key = 'uniedit:' + (fileSel ? fileSel.value : '');
+  var portsPath = %q; // UCI: main.ports_file
 
   function isIPv4(s){
     var m = s.match(/^(\d{1,3})(?:\.(\d{1,3})){3}$/); if(!m) return false;
@@ -304,23 +350,37 @@ local function render(ctx)
   function isIPv6(s){ return /:/.test(s); }
   function isIPv6CIDR(s){ return /:/.test(s) && /\/(\d|[1-9]\d|1[01]\d|12[0-8])$/.test(s); }
 
+  function isPortLine(ln){
+    var m = ln.match(/^(?:(tcp|udp|both):)?(\d{1,5})(?:-(\d{1,5}))?$/i);
+    if(!m) return false;
+    var from = +m[2], to = m[3] ? +m[3] : from;
+    if(!(from >= 1 && from <= 65535)) return false;
+    if(!(to   >= 1 && to   <= 65535)) return false;
+    if(from > to) return false;
+    return true;
+  }
+
   function validate(){
     if(!ta||!hint) return;
-    var bad = [];
+    var bad = [], portsMode = (fileSel && fileSel.value === portsPath);
     var lines = ta.value.split(/\r?\n/);
     for(var i=0;i<lines.length;i++){
-      var ln = lines[i].trim();
+      var ln = (lines[i]||'').trim();
       if(!ln || ln[0]=='#' || ln[0]==';') continue;
-      var ok = isIPv4(ln) || isIPv4CIDR(ln) || isIPv6(ln) || isIPv6CIDR(ln);
+      var ok = portsMode ? isPortLine(ln) : (isIPv4(ln) || isIPv4CIDR(ln) || isIPv6(ln) || isIPv6CIDR(ln));
       if(!ok) bad.push((i+1)+': '+ln);
     }
     if(bad.length){
       hint.style.color = '#b45309';
-      hint.innerHTML = 'Подозрительные строки ('+bad.length+'):<br><code style="white-space:pre-wrap">'+bad.slice(0,10).join('\n')+(bad.length>10?'\n…':'' )+'</code>';
+      hint.innerHTML = (portsMode
+        ? 'Подозрительные строки для файла портов ('+bad.length+'):<br><code style="white-space:pre-wrap">'+bad.slice(0,10).join('\\n')+(bad.length>10?'\\n…':'')+'</code><br>Ожидается: <code>80</code>, <code>tcp:443</code>, <code>udp:53</code>, <code>both:123</code>, <code>1000-2000</code>, <code>udp:6000-7000</code>.'
+        : 'Подозрительные строки ('+bad.length+'):<br><code style="white-space:pre-wrap">'+bad.slice(0,10).join('\\n')+(bad.length>10?'\\n…':'')+'</code>');
       ta.style.outline = '2px solid #f59e0b';
     }else{
       hint.style.color = '#9ca3af';
-      hint.textContent = 'Похоже корректно: IPv4/IPv6 (возможен CIDR). Строки с #/; игнорируются.';
+      hint.textContent = portsMode
+        ? 'Формат портов корректен: порт/диапазон, опционально с префиксом tcp:/udp:/both:.'
+        : 'Похоже корректно: IPv4/IPv6 (возможен CIDR). Строки с #/; игнорируются.';
       ta.style.outline = '';
     }
   }
@@ -365,8 +425,25 @@ local function render(ctx)
     location.href = url;
   });
   sel.setAttribute('data-prev', sel.value);
+
+  // На «Сохранить настройки TPROXY» — также сохранить текстовый файл редактора (как Перезагрузка, но без рестарта)
+  (function(){
+    var saveBtn = document.querySelector('button[name="_save_tproxy_main"]');
+    if(!saveBtn) return;
+    saveBtn.addEventListener('click', function(){
+      var form = this.form || document.querySelector('form'); if(!form) return;
+      // Явно проставим оба поля, как у «Перезагрузка»
+      var a = form.querySelector('input[name="_save_tproxy_main"]');
+      if(!a){ a = document.createElement('input'); a.type='hidden'; a.name='_save_tproxy_main'; form.appendChild(a); }
+      a.value = '1';
+      var b = form.querySelector('input[name="_uniedit_save"]');
+      if(!b){ b = document.createElement('input'); b.type='hidden'; b.name='_uniedit_save'; form.appendChild(b); }
+      b.value = '1';
+    }, {passive:true});
+  })();
+
 })();
-</script>]]
+</script>]], ports)
 
       -- DHCP leases picker
       local leases = {}
@@ -475,7 +552,10 @@ local function render(ctx)
       redirect_here("tproxy"); return
     end
 
-    local want_save = http.formvalue("_save_tproxy_main") == "1"
+    local want_save    = http.formvalue("_save_tproxy_main") == "1"
+    -- Сохраняем файл и при нажатии «Сохранить настройки», даже если _uniedit_save не пришёл
+    local want_file    = (http.formvalue("_uniedit_save") == "1") or (http.formvalue("_save_tproxy_main") == "1")
+    local want_restart = http.formvalue("_tproxy_restart") == "1"
 
     if want_save then
       local split = http.formvalue("tpx_split") ~= nil
@@ -544,14 +624,22 @@ local function render(ctx)
       set_info("Настройки TPROXY сохранены")
     end
 
-    if http.formvalue("_uniedit_save") == "1" then
-      local path = fval_last("list_file")
+    if want_file then
+      -- Берём текущий выбор из формы; если его нет — берём последний из истории
+      local path = http.formvalue("list_file") or fval_last("list_file")
       if path and path ~= "" then
         local text = http.formvalue("uniedit_text") or ""
         write_file(path, text)
         set_info("Файл списка сохранён: " .. path)
         set_err(nil)
       end
+    end
+
+    if want_restart then
+      sys.call("/etc/init.d/tproxy-manager stop >/dev/null 2>&1")
+      sys.call("/etc/init.d/tproxy-manager start >/dev/null 2>&1")
+      set_info("TPROXY: сервис перезапущен")
+      redirect_here("tproxy"); return
     end
   end
   save_tproxy_main()
