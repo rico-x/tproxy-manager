@@ -1,5 +1,5 @@
 #!/bin/sh
-# Xray TPROXY via nftables (IPv4+IPv6, multi-iface, SRC only/bypass) — OpenWrt friendly
+# TPROXY via nftables (IPv4+IPv6, multi-iface, SRC only/bypass) — OpenWrt friendly
 #
 # Описание:
 #   Скрипт настраивает прозрачное проксирование (TPROXY) трафика через nftables
@@ -18,7 +18,7 @@
 # --------------------------- UCI КОНФИГ (опционально) ---------------------------
 #   config main 'main'
 #     option log_enabled '1'
-#     option nft_table    'xray'
+#     option nft_table    'tproxy'
 #     option ifaces       'br-lan wg0'
 #     option ipv6_enabled '1'
 #     option tproxy_port      '61219'
@@ -29,14 +29,14 @@
 #     option rttab_tcp   '100'
 #     option rttab_udp   '101'
 #     option port_mode   'bypass'    # bypass|only
-#     option ports_file  '/etc/xray/xray-tproxy.ports'
-#     option bypass_v4_file '/etc/xray/xray-tproxy.v4'
-#     option bypass_v6_file '/etc/xray/xray-tproxy.v6'
+#     option ports_file  '/etc/tproxy-manager/tproxy-manager.ports'
+#     option bypass_v4_file '/etc/tproxy-manager/tproxy-manager.v4'
+#     option bypass_v6_file '/etc/tproxy-manager/tproxy-manager.v6'
 #     option src_mode          'off' # off|only|bypass
-#     option src_only_v4_file  '/etc/xray/xray-tproxy.src4.only'
-#     option src_only_v6_file  '/etc/xray/xray-tproxy.src6.only'
-#     option src_bypass_v4_file '/etc/xray/xray-tproxy.src4.bypass'
-#     option src_bypass_v6_file '/etc/xray/xray-tproxy.src6.bypass'
+#     option src_only_v4_file  '/etc/tproxy-manager/tproxy-manager.src4.only'
+#     option src_only_v6_file  '/etc/tproxy-manager/tproxy-manager.src6.only'
+#     option src_bypass_v4_file '/etc/tproxy-manager/tproxy-manager.src4.bypass'
+#     option src_bypass_v6_file '/etc/tproxy-manager/tproxy-manager.src6.bypass'
 #
 # ПОРТ-ФАЙЛ (пример):
 #   80
@@ -47,9 +47,9 @@
 #   udp:6000-7000
 #
 # Запуск:
-#   xray-tproxy start [-q] [bypass|only]
-#   xray-tproxy restart [-q] [bypass|only]
-#   xray-tproxy stop|status|diag [-q]
+#   tproxy-manager start [-q] [bypass|only]
+#   tproxy-manager restart [-q] [bypass|only]
+#   tproxy-manager stop|status|diag [-q]
 
 set -eu
 # set -e : падать при ошибке любой команды
@@ -71,20 +71,20 @@ RULE_PRIO_TCP="${RULE_PRIO_TCP:-10000}"
 RULE_PRIO_UDP="${RULE_PRIO_UDP:-10001}"
 
 # Имя nft-таблицы и список интерфейсов источника
-NFT_TABLE="${NFT_TABLE:-xray}"
+NFT_TABLE="${NFT_TABLE:-tproxy}"
 LAN_IFACES="${LAN_IFACES:-br-lan}"
 
 # Файлы с исключениями/портами
-BYPASS_V4_FILE="${BYPASS_V4_FILE:-/etc/xray/xray-tproxy.v4}"
-BYPASS_V6_FILE="${BYPASS_V6_FILE:-/etc/xray/xray-tproxy.v6}"
-BYPASS_PORTS_FILE="${BYPASS_PORTS_FILE:-/etc/xray/xray-tproxy.ports}"
+BYPASS_V4_FILE="${BYPASS_V4_FILE:-/etc/tproxy-manager/tproxy-manager.v4}"
+BYPASS_V6_FILE="${BYPASS_V6_FILE:-/etc/tproxy-manager/tproxy-manager.v6}"
+BYPASS_PORTS_FILE="${BYPASS_PORTS_FILE:-/etc/tproxy-manager/tproxy-manager.ports}"
 
 # Режимы по источникам: off|only|bypass и файлы для них
 SRC_MODE="${SRC_MODE:-off}"  # off|only|bypass
-SRC_ONLY_V4_FILE="${SRC_ONLY_V4_FILE:-/etc/xray/xray-tproxy.src4.only}"
-SRC_ONLY_V6_FILE="${SRC_ONLY_V6_FILE:-/etc/xray/xray-tproxy.src6.only}"
-SRC_BYPASS_V4_FILE="${SRC_BYPASS_V4_FILE:-/etc/xray/xray-tproxy.src4.bypass}"
-SRC_BYPASS_V6_FILE="${SRC_BYPASS_V6_FILE:-/etc/xray/xray-tproxy.src6.bypass}"
+SRC_ONLY_V4_FILE="${SRC_ONLY_V4_FILE:-/etc/tproxy-manager/tproxy-manager.src4.only}"
+SRC_ONLY_V6_FILE="${SRC_ONLY_V6_FILE:-/etc/tproxy-manager/tproxy-manager.src6.only}"
+SRC_BYPASS_V4_FILE="${SRC_BYPASS_V4_FILE:-/etc/tproxy-manager/tproxy-manager.src4.bypass}"
+SRC_BYPASS_V6_FILE="${SRC_BYPASS_V6_FILE:-/etc/tproxy-manager/tproxy-manager.src6.bypass}"
 
 # Режим портов по умолчанию
 PORT_MODE_DEFAULT="${PORT_MODE_DEFAULT:-bypass}"  # bypass|only
@@ -94,7 +94,7 @@ BYPASS_CIDRS4_DEFAULT="10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 127.0.0.0/8 169.2
 BYPASS_CIDRS6_DEFAULT="::1/128 fc00::/7 fe80::/10 ff00::/8"
 
 # Логирование
-LOGGER_TAG="${LOGGER_TAG:-xray-tproxy}"
+LOGGER_TAG="${LOGGER_TAG:-tproxy-manager}"
 LOG_ENABLED="${LOG_ENABLED:-1}"
 QUIET="${QUIET:-0}"
 
@@ -149,48 +149,48 @@ parse_args(){
 }
 
 # ===== UCI =====
-# load_uci: подстановка конфигурации из UCI (если есть секция xray-proxy.main)
+# load_uci: подстановка конфигурации из UCI (если есть секция tproxy-manager.main)
 load_uci(){
-  u_table="$(uci -q get xray-proxy.main.nft_table 2>/dev/null || echo "")"
-  u_ifaces="$(uci -q get xray-proxy.main.ifaces 2>/dev/null || echo "")"
-  u_log="$(uci -q get xray-proxy.main.log_enabled 2>/dev/null || echo "")"
-  u_ipv6="$(uci -q get xray-proxy.main.ipv6_enabled 2>/dev/null || echo "")"
+  u_table="$(uci -q get tproxy-manager.main.nft_table 2>/dev/null || echo "")"
+  u_ifaces="$(uci -q get tproxy-manager.main.ifaces 2>/dev/null || echo "")"
+  u_log="$(uci -q get tproxy-manager.main.log_enabled 2>/dev/null || echo "")"
+  u_ipv6="$(uci -q get tproxy-manager.main.ipv6_enabled 2>/dev/null || echo "")"
   [ -n "$u_table" ]  && NFT_TABLE="$u_table"
   [ -n "$u_ifaces" ] && LAN_IFACES="$u_ifaces"
   case "$u_log" in 0|1) LOG_ENABLED="$u_log" ;; esac
   case "$u_ipv6" in 0|1) IPV6_ENABLED="$u_ipv6" ;; esac
 
-  u_tport="$(uci -q get xray-proxy.main.tproxy_port 2>/dev/null || echo "")"
-  u_tport_tcp="$(uci -q get xray-proxy.main.tproxy_port_tcp 2>/dev/null || echo "")"
-  u_tport_udp="$(uci -q get xray-proxy.main.tproxy_port_udp 2>/dev/null || echo "")"
+  u_tport="$(uci -q get tproxy-manager.main.tproxy_port 2>/dev/null || echo "")"
+  u_tport_tcp="$(uci -q get tproxy-manager.main.tproxy_port_tcp 2>/dev/null || echo "")"
+  u_tport_udp="$(uci -q get tproxy-manager.main.tproxy_port_udp 2>/dev/null || echo "")"
   if [ -n "$u_tport" ]; then TPORT_TCP="$u_tport"; TPORT_UDP="$u_tport"; fi
   [ -n "$u_tport_tcp" ] && TPORT_TCP="$u_tport_tcp"
   [ -n "$u_tport_udp" ] && TPORT_UDP="$u_tport_udp"
 
-  u_fwmark_tcp="$(uci -q get xray-proxy.main.fwmark_tcp 2>/dev/null || echo "")"
-  u_fwmark_udp="$(uci -q get xray-proxy.main.fwmark_udp 2>/dev/null || echo "")"
-  u_rttab_tcp="$(uci -q get xray-proxy.main.rttab_tcp 2>/dev/null || echo "")"
-  u_rttab_udp="$(uci -q get xray-proxy.main.rttab_udp 2>/dev/null || echo "")"
+  u_fwmark_tcp="$(uci -q get tproxy-manager.main.fwmark_tcp 2>/dev/null || echo "")"
+  u_fwmark_udp="$(uci -q get tproxy-manager.main.fwmark_udp 2>/dev/null || echo "")"
+  u_rttab_tcp="$(uci -q get tproxy-manager.main.rttab_tcp 2>/dev/null || echo "")"
+  u_rttab_udp="$(uci -q get tproxy-manager.main.rttab_udp 2>/dev/null || echo "")"
   [ -n "$u_fwmark_tcp" ] && FWMARK_TCP="$u_fwmark_tcp"
   [ -n "$u_fwmark_udp" ] && FWMARK_UDP="$u_fwmark_udp"
   [ -n "$u_rttab_tcp" ] && RTTAB_TCP="$u_rttab_tcp"
   [ -n "$u_rttab_udp" ] && RTTAB_UDP="$u_rttab_udp"
 
-  u_mode="$(uci -q get xray-proxy.main.port_mode 2>/dev/null || echo "")"
-  u_ports_file="$(uci -q get xray-proxy.main.ports_file 2>/dev/null || echo "")"
+  u_mode="$(uci -q get tproxy-manager.main.port_mode 2>/dev/null || echo "")"
+  u_ports_file="$(uci -q get tproxy-manager.main.ports_file 2>/dev/null || echo "")"
   case "$u_mode" in bypass|only) PORT_MODE_DEFAULT="$u_mode" ;; esac
   [ -n "$u_ports_file" ] && BYPASS_PORTS_FILE="$u_ports_file"
 
-  u_bypass_v4="$(uci -q get xray-proxy.main.bypass_v4_file 2>/dev/null || echo "")"
-  u_bypass_v6="$(uci -q get xray-proxy.main.bypass_v6_file 2>/dev/null || echo "")"
+  u_bypass_v4="$(uci -q get tproxy-manager.main.bypass_v4_file 2>/dev/null || echo "")"
+  u_bypass_v6="$(uci -q get tproxy-manager.main.bypass_v6_file 2>/dev/null || echo "")"
   [ -n "$u_bypass_v4" ] && BYPASS_V4_FILE="$u_bypass_v4"
   [ -n "$u_bypass_v6" ] && BYPASS_V6_FILE="$u_bypass_v6"
 
-  u_srcmode="$(uci -q get xray-proxy.main.src_mode 2>/dev/null || echo "")"
-  u_src_only4="$(uci -q get xray-proxy.main.src_only_v4_file 2>/dev/null || echo "")"
-  u_src_only6="$(uci -q get xray-proxy.main.src_only_v6_file 2>/dev/null || echo "")"
-  u_src_byp4="$(uci -q get xray-proxy.main.src_bypass_v4_file 2>/dev/null || echo "")"
-  u_src_byp6="$(uci -q get xray-proxy.main.src_bypass_v6_file 2>/dev/null || echo "")"
+  u_srcmode="$(uci -q get tproxy-manager.main.src_mode 2>/dev/null || echo "")"
+  u_src_only4="$(uci -q get tproxy-manager.main.src_only_v4_file 2>/dev/null || echo "")"
+  u_src_only6="$(uci -q get tproxy-manager.main.src_only_v6_file 2>/dev/null || echo "")"
+  u_src_byp4="$(uci -q get tproxy-manager.main.src_bypass_v4_file 2>/dev/null || echo "")"
+  u_src_byp6="$(uci -q get tproxy-manager.main.src_bypass_v6_file 2>/dev/null || echo "")"
   case "$u_srcmode" in off|only|bypass) SRC_MODE="$u_srcmode" ;; esac
   [ -n "$u_src_only4" ] && SRC_ONLY_V4_FILE="$u_src_only4"
   [ -n "$u_src_only6" ] && SRC_ONLY_V6_FILE="$u_src_only6"
@@ -561,7 +561,7 @@ diag(){
   # Обновим парсинг портов для корректного вывода
   parse_ports_file
 
-  say "=== XRAY/TPROXY DIAG ==="
+  say "=== TPROXY DIAG ==="
   say "[ifaces]        $LAN_IFACES"
   say "[src_mode]      $SRC_MODE"
   say "[port_mode]     ${SET_MODE:-$PORT_MODE_DEFAULT}"
@@ -665,9 +665,9 @@ stop(){ remove_nft; remove_iprules; diag; }
 restart(){ start "${1:-$PORT_MODE_DEFAULT}"; }
 
 # ===== MAIN =====
-# Загрузка UCI-конфига (если есть точная секция xray-proxy.main) — без grep по всему uci show
+# Загрузка UCI-конфига (если есть точная секция tproxy-manager.main) — без grep по всему uci show
 if command -v uci >/dev/null 2>&1; then
-  if uci -q show xray-proxy.main >/dev/null 2>&1; then
+  if uci -q show tproxy-manager.main >/dev/null 2>&1; then
     load_uci
   fi
 fi

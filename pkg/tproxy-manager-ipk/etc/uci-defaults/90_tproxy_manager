@@ -3,17 +3,17 @@
 
 set -e
 
-# --- /etc/xray: каталог и пустые файлы только если их нет ---
-mkdir -p /etc/xray
+# --- /etc/tproxy-manager: каталог и пустые файлы только если их нет ---
+mkdir -p /etc/tproxy-manager
 for f in \
-  /etc/xray/xray-tproxy.ports \
-  /etc/xray/xray-tproxy.v4 \
-  /etc/xray/xray-tproxy.v6 \
-  /etc/xray/xray-tproxy.src4.only \
-  /etc/xray/xray-tproxy.src6.only \
-  /etc/xray/xray-tproxy.src4.bypass \
-  /etc/xray/xray-tproxy.src6.bypass \
-  /etc/xray/geo-sources.conf
+  /etc/tproxy-manager/tproxy-manager.ports \
+  /etc/tproxy-manager/tproxy-manager.v4 \
+  /etc/tproxy-manager/tproxy-manager.v6 \
+  /etc/tproxy-manager/tproxy-manager.src4.only \
+  /etc/tproxy-manager/tproxy-manager.src6.only \
+  /etc/tproxy-manager/tproxy-manager.src4.bypass \
+  /etc/tproxy-manager/tproxy-manager.src6.bypass \
+  /etc/tproxy-manager/geo-sources.conf
 do
   [ -e "$f" ] || : > "$f"
 done
@@ -22,7 +22,7 @@ done
 command -v uci >/dev/null 2>&1 || exit 0
 
 # На случай полностью отсутствующих файлов конфигов (безопасно):
-for c in xray xray-proxy; do
+for c in tproxy-manager tproxy-manager; do
   [ -f "/etc/config/$c" ] || touch "/etc/config/$c"
 done
 
@@ -42,36 +42,26 @@ ensure_section() {
   uci set "$cfg.$sec=$typ"
 }
 
-# --- xray (ядро) ---
-ensure_section xray enabled enabled
-set_default   xray enabled enabled '1'
-
-ensure_section xray config  config
-set_default   xray config  confdir '/etc/xray'
-set_default   xray config  datadir '/usr/share/xray/'
-set_default   xray config  format  'json'
-uci -q delete xray.config.conffiles || true
-uci commit xray
-
-# --- xray-proxy (наш UCI) ---
-ensure_section xray-proxy main main
-set_default xray-proxy main log_enabled        '1'
-set_default xray-proxy main nft_table          'xray'
-set_default xray-proxy main ifaces             'br-lan'
-set_default xray-proxy main ipv6_enabled       '1'
-set_default xray-proxy main fwmark_tcp         '0x1'
-set_default xray-proxy main fwmark_udp         '0x2'
-set_default xray-proxy main rttab_tcp          '100'
-set_default xray-proxy main rttab_udp          '101'
-set_default xray-proxy main port_mode          'bypass'
-set_default xray-proxy main ports_file         '/etc/xray/xray-tproxy.ports'
-set_default xray-proxy main bypass_v4_file     '/etc/xray/xray-tproxy.v4'
-set_default xray-proxy main bypass_v6_file     '/etc/xray/xray-tproxy.v6'
-set_default xray-proxy main src_mode           'off'
-set_default xray-proxy main src_only_v4_file   '/etc/xray/xray-tproxy.src4.only'
-set_default xray-proxy main src_only_v6_file   '/etc/xray/xray-tproxy.src6.only'
-set_default xray-proxy main src_bypass_v4_file '/etc/xray/xray-tproxy.src4.bypass'
-set_default xray-proxy main src_bypass_v6_file '/etc/xray/xray-tproxy.src6.bypass'
-uci commit xray-proxy
+# --- tproxy-manager (наш UCI) ---
+ensure_section tproxy-manager main main
+set_default tproxy-manager main log_enabled        '1'
+set_default tproxy-manager main nft_table          'tproxy'
+set_default tproxy-manager main ifaces             'br-lan'
+set_default tproxy-manager main ipv6_enabled       '1'
+set_default tproxy-manager main tproxy_port        '61219'
+set_default tproxy-manager main fwmark_tcp         '0x1'
+set_default tproxy-manager main fwmark_udp         '0x2'
+set_default tproxy-manager main rttab_tcp          '100'
+set_default tproxy-manager main rttab_udp          '101'
+set_default tproxy-manager main port_mode          'bypass'
+set_default tproxy-manager main ports_file         '/etc/tproxy-manager/tproxy-manager.ports'
+set_default tproxy-manager main bypass_v4_file     '/etc/tproxy-manager/tproxy-manager.v4'
+set_default tproxy-manager main bypass_v6_file     '/etc/tproxy-manager/tproxy-manager.v6'
+set_default tproxy-manager main src_mode           'off'
+set_default tproxy-manager main src_only_v4_file   '/etc/tproxy-manager/tproxy-manager.src4.only'
+set_default tproxy-manager main src_only_v6_file   '/etc/tproxy-manager/tproxy-manager.src6.only'
+set_default tproxy-manager main src_bypass_v4_file '/etc/tproxy-manager/tproxy-manager.src4.bypass'
+set_default tproxy-manager main src_bypass_v6_file '/etc/tproxy-manager/tproxy-manager.src6.bypass'
+uci commit tproxy-manager
 
 exit 0

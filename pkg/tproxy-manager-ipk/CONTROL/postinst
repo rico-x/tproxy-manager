@@ -1,8 +1,8 @@
 #!/bin/sh
 # postinst for tproxy-manager
-# - выполняет uci-defaults (создание /etc/xray/* и UCI-значений, только если отсутствуют)
+# - выполняет uci-defaults (создание /etc/tproxy-manager/* и UCI-значений, только если отсутствуют)
 # - безопасно запускает /usr/bin/optimize-sysctl.sh и /usr/bin/setup-bbr.sh (ошибки игнорируются)
-# - включает и стартует сервис /etc/init.d/xray-tproxy, если есть
+# - включает и стартует сервис /etc/init.d/tproxy-manager, если есть
 
 [ -n "$IPKG_INSTROOT" ] && exit 0
 
@@ -30,10 +30,10 @@ run_safe /usr/bin/optimize-sysctl.sh
 run_safe /usr/bin/setup-bbr.sh
 
 # 3) Включить и запустить сервис (если есть), ошибки не фатальны
-if [ -x /etc/init.d/xray-tproxy ]; then
-  /etc/init.d/xray-tproxy enable >/dev/null 2>&1 \
+if [ -x /etc/init.d/tproxy-manager ]; then
+  /etc/init.d/tproxy-manager enable >/dev/null 2>&1 \
     || logger -t "$LOGTAG" "enable failed (ignored)"
-  /etc/init.d/xray-tproxy start  >/dev/null 2>&1 \
+  /etc/init.d/tproxy-manager start  >/dev/null 2>&1 \
     || logger -t "$LOGTAG" "start failed (ignored)"
 fi
 

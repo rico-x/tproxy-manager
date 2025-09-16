@@ -1,7 +1,7 @@
 #!/bin/sh
 [ "$PKG_UPGRADE" = "1" ] && exit 0
-if [ -x /etc/init.d/xray-tproxy ]; then
-  /etc/init.d/xray-tproxy stop
-  /etc/init.d/xray-tproxy disable
+if [ -x /etc/init.d/tproxy-manager ]; then
+  /etc/init.d/tproxy-manager stop
+  /etc/init.d/tproxy-manager disable
 fi
 exit 0

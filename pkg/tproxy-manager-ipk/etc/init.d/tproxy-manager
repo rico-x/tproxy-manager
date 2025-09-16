@@ -1,14 +1,14 @@
 #!/bin/sh /etc/rc.common
-# Простая init.d-обёртка для xray-tproxy.sh (без procd/oneshot трюков)
+# Простая init.d-обёртка для tproxy-manager.sh (без procd/oneshot трюков)
 # Установка:
-#   cp этот файл в /etc/init.d/xray-tproxy
-#   chmod +x /etc/init.d/xray-tproxy
-#   /etc/init.d/xray-tproxy enable
-#   /etc/init.d/xray-tproxy start
+#   cp этот файл в /etc/init.d/tproxy-manager
+#   chmod +x /etc/init.d/tproxy-manager
+#   /etc/init.d/tproxy-manager enable
+#   /etc/init.d/tproxy-manager start
 # Проверка состояния:
-#   /etc/init.d/xray-tproxy status
+#   /etc/init.d/tproxy-manager status
 #
-# Скрипт делегирует все действия основному файлу /usr/bin/xray-tproxy.sh
+# Скрипт делегирует все действия основному файлу /usr/bin/tproxy-manager.sh
 # и возвращает тот же код возврата, что и базовый скрипт.
 # Поддерживается необязательный аргумент режима портов: [bypass|only]
 # в командах start/restart — он перекрывает UCI на один запуск.
@@ -17,7 +17,7 @@ START=99
 STOP=15
 
 # Путь к основному скрипту
-XRAY_TPROXY="/usr/bin/xray-tproxy.sh"
+TPROXY_MANAGER="/usr/bin/tproxy-manager.sh"
 
 # Доп. команды
 EXTRA_COMMANDS="status diag usage"
@@ -28,8 +28,8 @@ EXTRA_HELP="        status  Показать running|inactive и вернуть 
 # --- Вспомогательные функции -------------------------------------------------
 
 _need_prog() {
-    [ -x "$XRAY_TPROXY" ] && return 0
-    echo "ОШИБКА: не найден исполняемый файл: $XRAY_TPROXY" >&2
+    [ -x "$TPROXY_MANAGER" ] && return 0
+    echo "ОШИБКА: не найден исполняемый файл: $TPROXY_MANAGER" >&2
     return 1
 }
 
@@ -46,24 +46,24 @@ start() {
     _need_prog || return 1
     local mode="$(_pick_mode_arg "$1")"
     if [ -n "$mode" ]; then
-        "$XRAY_TPROXY" start "$mode"
+        "$TPROXY_MANAGER" start "$mode"
     else
-        "$XRAY_TPROXY" start
+        "$TPROXY_MANAGER" start
     fi
 }
 
 stop() {
     _need_prog || return 1
-    "$XRAY_TPROXY" stop
+    "$TPROXY_MANAGER" stop
 }
 
 restart() {
     _need_prog || return 1
     local mode="$(_pick_mode_arg "$1")"
     if [ -n "$mode" ]; then
-        "$XRAY_TPROXY" restart "$mode"
+        "$TPROXY_MANAGER" restart "$mode"
     else
-        "$XRAY_TPROXY" restart
+        "$TPROXY_MANAGER" restart
     fi
 }
 
@@ -74,7 +74,7 @@ reload() {
 
 status() {
     _need_prog || { echo "inactive"; return 1; }
-    "$XRAY_TPROXY" status >/dev/null 2>&1
+    "$TPROXY_MANAGER" status >/dev/null 2>&1
     rc=$?
     if [ $rc -eq 0 ]; then
         echo "running"
@@ -86,13 +86,13 @@ status() {
 
 diag() {
     _need_prog || return 1
-    "$XRAY_TPROXY" diag
+    "$TPROXY_MANAGER" diag
 }
 
 usage() {
     cat <<'EOF'
 Использование:
-  /etc/init.d/xray-tproxy {start|stop|restart|reload|status|diag} [bypass|only]
+  /etc/init.d/tproxy-manager {start|stop|restart|reload|status|diag} [bypass|only]
 
 Описание команд:
   start [bypass|only]   — применить правила TPROXY/nft. Не запускает демон.
@@ -107,7 +107,7 @@ usage() {
 
 Примечания:
   • Аргумент [bypass|only] перекрывает UCI port_mode только для этого запуска.
-  • Для автозапуска при старте системы выполните: /etc/init.d/xray-tproxy enable
-  • Проверять реальное состояние лучше так: /etc/init.d/xray-tproxy status
+  • Для автозапуска при старте системы выполните: /etc/init.d/tproxy-manager enable
+  • Проверять реальное состояние лучше так: /etc/init.d/tproxy-manager status
 EOF
 }

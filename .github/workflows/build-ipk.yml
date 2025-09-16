@@ -84,7 +84,7 @@ jobs:
           [ -f "$PKG_DIR/CONTROL/prerm"    ] && chmod 0755 "$PKG_DIR/CONTROL/prerm"    || true
           [ -f "$PKG_DIR/usr/bin/optimize-sysctl.sh" ] && chmod 0755 "$PKG_DIR/usr/bin/optimize-sysctl.sh" || true
           [ -f "$PKG_DIR/usr/bin/setup-bbr.sh"       ] && chmod 0755 "$PKG_DIR/usr/bin/setup-bbr.sh"       || true
-          [ -f "$PKG_DIR/usr/bin/xray-tproxy.sh" ] && chmod 0755 "$PKG_DIR/usr/bin/xray-tproxy.sh" || true
+          [ -f "$PKG_DIR/usr/bin/tproxy-manager.sh" ] && chmod 0755 "$PKG_DIR/usr/bin/tproxy-manager.sh" || true
 
       - name: Inject Version into control
         shell: bash
