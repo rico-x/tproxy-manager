@@ -7,22 +7,33 @@ local function render(ctx)
   local self_url, redirect_here = ctx.self_url, ctx.redirect_here
   local service_block, set_err, get_err, set_info, get_info = ctx.service_block, ctx.set_err, ctx.get_err, ctx.set_info, ctx.get_info
   local write_file, read_file, is_port, append_line_unique = ctx.write_file, ctx.read_file, ctx.is_port, ctx.append_line_unique
+  local combined_log = ctx.combined_log
   local netm_init = ctx.netm_init
   local PKG = ctx.PKG
 
+  -- Toolbar handlers for log
+  if http.formvalue("_refreshlog_tproxy") then
+    set_err(nil); redirect_here("tproxy"); return m
+  end
+  if http.formvalue("_clearlog_tproxy") then
+    sys.call("/etc/init.d/log restart >/dev/null 2>&1")
+    set_err(nil); redirect_here("tproxy"); return m
+  end
+
+  -- Сервис TPROXY
   do
     local ss = m:section(SimpleSection, "Статус и управление сервисом TPROXY")
     service_block(ss, "tproxy-manager", "TPROXY", "tproxy")
   end
 
+  -- Кнопка «Перезагрузка» (сохраняет UCI + файл и рестартует сервис)
   do
     local top = m:section(SimpleSection, ""); top.anonymous = true
     local dv = top:option(DummyValue, "_pretitle_restart"); dv.rawhtml = true
-function dv.cfgvalue()
-  return [[
+    function dv.cfgvalue()
+      return [[
 <style>
-  /* тонкая кнопка как у остальных, ширина по тексту */
-  .tpx-btn-slim{ 
+  .tpx-btn-slim{
     display:inline-block !important;
     padding:.25rem .6rem !important;
     line-height:1.15 !important;
@@ -32,8 +43,8 @@ function dv.cfgvalue()
     white-space:nowrap !important;
   }
   .tpx-btn-slim > span{
-    color:#16a34a;          /* зелёный текст */
-    font-weight:700;        /* жирный */
+    color:#16a34a;
+    font-weight:700;
   }
 </style>
 <div class="inline-row" style="margin:.25rem 0 .25rem 0">
@@ -45,7 +56,6 @@ function dv.cfgvalue()
 </div>
 <script>
 (function(){
-  // На «Перезагрузка» — сохраняем и UCI, и редактор
   var rb = document.querySelector('button[name="_tproxy_restart"]');
   if (rb) rb.addEventListener('click', function(){
     var form = this.form || document.querySelector('form'); if(!form) return;
@@ -58,7 +68,29 @@ function dv.cfgvalue()
   }, {passive:true});
 })();
 </script>]]
-end
+    end
+  end
+
+  -- Общий лог (logread) — теперь ПОД кнопкой «Перезагрузка»
+  do
+    local sl  = m:section(SimpleSection)
+    local log = sl:option(DummyValue, "_log_tproxy"); log.rawhtml = true
+    function log.cfgvalue()
+      return "<details><summary><strong>Общий лог (logread)</strong></summary>" ..
+             "<div class='box editor-wrap'><pre style='white-space:pre-wrap;max-height:30rem;overflow:auto'>" ..
+             pcdata(combined_log()) .. "</pre>" ..
+             "<div style='margin-top:.5rem'>" ..
+             "<button class='cbi-button cbi-button-action small-btn' style='margin-right:4px; padding:0; border:0' name='_refreshlog_tproxy' value='1'>Обновить</button> " ..
+             "<button class='cbi-button cbi-button-remove small-btn' style='padding:0; border:0' name='_clearlog_tproxy' value='1'>Очистить</button>" ..
+             "</div></div></details>"
+    end
+    -- невидимые кнопки для POST
+    local rfr = sl:option(Button, "_refreshlog_tproxy"); rfr.title = ""; rfr.inputtitle = "Refresh"
+    rfr.inputstyle = "action"; function rfr.render() end
+    function rfr.write(self, section) if not self.map:formvalue(self:cbid(section)) then return end; redirect_here("tproxy") end
+    local clr = sl:option(Button, "_clearlog_tproxy"); clr.title = ""; clr.inputtitle = "Clear log"
+    clr.inputstyle = "remove"; function clr.render() end
+    function clr.write(self, section) if not self.map:formvalue(self:cbid(section)) then return end; sys.call("/etc/init.d/log restart >/dev/null 2>&1"); redirect_here("tproxy") end
   end
 
   local main_s = m:section(SimpleSection, "TPROXY — основные настройки")
@@ -250,7 +282,7 @@ end
     end
   end
 
-  -- Unified editor + DHCP picker
+  -- Unified editor + DHCP picker (ширина 520px)
   do
     local se = m:section(SimpleSection, "")
     local dv = se:option(DummyValue, "_uniedit"); dv.rawhtml = true
@@ -313,8 +345,8 @@ end
       elseif chosen == sb6 then desc = "IPv6 источники, которые будут идти напрямую." end
 
       local sel = {}
-      sel[#sel+1] = "<div id='unified-editor' class='editor-wrap editor-wide'>"
-      sel[#sel+1] = "<div class='inline-row'><label>Файл для редактирования:</label><select name='list_file'>"
+      sel[#sel+1] = "<div id='unified-editor' class='editor-wrap' style='width:520px; max-width:100%'>"
+      sel[#sel+1] = "<div class='inline-row'><label>Файл для редактирования:</label><select name='list_file' style='max-width:260px'>"
       for _,o in ipairs(options) do
         local path, label, kind = o[1], o[2], o[3]
         local selattr = (path == chosen) and " selected" or ""
@@ -326,7 +358,7 @@ end
       sel[#sel+1] = "</select><button class=\"cbi-button cbi-button-apply small-btn\" name=\"_uniedit_save\" value=\"1\">Сохранить файл</button></div>"
       sel[#sel+1] = "<div style='margin:.2rem 0 .5rem 0; color:#6b7280'>" .. pcdata(desc) .. "</div>"
 
-      sel[#sel+1] = string.format("<textarea name='uniedit_text' rows='16' spellcheck='false'>%s</textarea>", pcdata(content))
+      sel[#sel+1] = string.format("<textarea name='uniedit_text' rows='16' spellcheck='false' style='width:520px'>%s</textarea>", pcdata(content))
 
       sel[#sel+1] = string.format([[
 <div id="uniedit_hint" style="margin-top:.35rem; color:#9ca3af"></div>
@@ -426,13 +458,11 @@ end
   });
   sel.setAttribute('data-prev', sel.value);
 
-  // На «Сохранить настройки TPROXY» — также сохранить текстовый файл редактора (как Перезагрузка, но без рестарта)
   (function(){
     var saveBtn = document.querySelector('button[name="_save_tproxy_main"]');
     if(!saveBtn) return;
     saveBtn.addEventListener('click', function(){
       var form = this.form || document.querySelector('form'); if(!form) return;
-      // Явно проставим оба поля, как у «Перезагрузка»
       var a = form.querySelector('input[name="_save_tproxy_main"]');
       if(!a){ a = document.createElement('input'); a.type='hidden'; a.name='_save_tproxy_main'; form.appendChild(a); }
       a.value = '1';
@@ -528,7 +558,7 @@ end
     end
   end
 
-  -- Save handlers (TPROXY) + DHCP info + сообщения
+  -- Save handlers (TPROXY) + DHCP quick add + restart
   local function save_tproxy_main()
     -- DHCP quick add
     local ip_only  = http.formvalue("_dhcp_add_only")
@@ -553,7 +583,6 @@ end
     end
 
     local want_save    = http.formvalue("_save_tproxy_main") == "1"
-    -- Сохраняем файл и при нажатии «Сохранить настройки», даже если _uniedit_save не пришёл
     local want_file    = (http.formvalue("_uniedit_save") == "1") or (http.formvalue("_save_tproxy_main") == "1")
     local want_restart = http.formvalue("_tproxy_restart") == "1"
 
@@ -625,7 +654,6 @@ end
     end
 
     if want_file then
-      -- Берём текущий выбор из формы; если его нет — берём последний из истории
       local path = http.formvalue("list_file") or fval_last("list_file")
       if path and path ~= "" then
         local text = http.formvalue("uniedit_text") or ""
