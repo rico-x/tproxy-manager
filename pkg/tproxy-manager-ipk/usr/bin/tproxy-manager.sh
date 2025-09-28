@@ -299,7 +299,7 @@ parse_ports_file(){
   PORTS_TCP_FLAGS=""; PORTS_UDP_FLAGS=""
   [ -f "$BYPASS_PORTS_FILE" ] || { PORTS_TCP_SET=""; PORTS_UDP_SET=""; return 0; }
 
-  while IFS= read -r raw; do
+  while IFS= read -r raw || [ -n "$raw" ]; do
     line="${raw%%#*}"; line="$(printf "%s" "$line" | tr -d '\r')"
     line="$(printf "%s" "$line" | sed -e 's/^[[:space:]]\+//' -e 's/[[:space:]]\+$//')"
     [ -z "$line" ] && continue
@@ -348,7 +348,7 @@ build_sets(){
   # v4 dst bypass
   CIDR4_LIST="$BYPASS_CIDRS4_DEFAULT"; HOST4_LIST=""
   if [ -f "$BYPASS_V4_FILE" ]; then
-    while IFS= read -r it; do
+    while IFS= read -r it || [ -n "$it" ]; do
       it="${it%%#*}"
       it="$(printf "%s" "$it" | tr -d '\r' | sed -e 's/^[[:space:]]\+//' -e 's/[[:space:]]\+$//')"
       [ -z "$it" ] && continue
@@ -366,7 +366,7 @@ build_sets(){
   if [ "$IPV6_ENABLED" -eq 1 ]; then
     CIDR6_LIST="$BYPASS_CIDRS6_DEFAULT"
     if [ -f "$BYPASS_V6_FILE" ]; then
-      while IFS= read -r it; do
+      while IFS= read -r it || [ -n "$it" ]; do
         it="${it%%#*}"
         it="$(printf "%s" "$it" | tr -d '\r' | sed -e 's/^[[:space:]]\+//' -e 's/[[:space:]]\+$//')"
         [ -z "$it" ] && continue
@@ -392,26 +392,26 @@ build_sets(){
   # SRC only/bypass lists
   SRC_ONLY4_LIST=""; SRC_ONLY6_LIST=""; SRC_BYP4_LIST=""; SRC_BYP6_LIST=""
   if [ -f "$SRC_ONLY_V4_FILE" ]; then
-    while IFS= read -r it; do
+    while IFS= read -r it || [ -n "$it" ]; do
       it="${it%%#*}"; it="$(printf "%s" "$it" | tr -d '\r' | sed -e 's/^[[:space:]]\+//' -e 's/[[:space:]]\+$//')"
       [ -z "$it" ] || SRC_ONLY4_LIST="$SRC_ONLY4_LIST $it"
     done < "$SRC_ONLY_V4_FILE"
   fi
   if [ "$IPV6_ENABLED" -eq 1 ] && [ -f "$SRC_ONLY_V6_FILE" ]; then
-    while IFS= read -r it; do
+    while IFS= read -r it || [ -n "$it" ]; do
       it="${it%%#*}"; it="$(printf "%s" "$it" | tr -d '\r' | sed -e 's/^[[:space:]]\+//' -e 's/[[:space:]]\+$//')"
       [ -z "$it" ] || SRC_ONLY6_LIST="$SRC_ONLY6_LIST $it"
     done < "$SRC_ONLY_V6_FILE"
   fi
   if [ -f "$SRC_BYPASS_V4_FILE" ]; then
-    while IFS= read -r it; do
+    while IFS= read -r it || [ -n "$it" ]; do
       it="${it%%#*}"; it="$(printf "%s" "$it" | tr -d '\r' | sed -e 's/^[[:space:]]\+//' -e 's/[[:space:]]\+$//')"
       [ -z "$it" ] || SRC_BYP4_LIST="$SRC_BYP4_LIST $it"
     done < "$SRC_BYPASS_V4_FILE"
   fi
   if [ "$IPV6_ENABLED" -eq 1 ] && [ -f "$SRC_BYPASS_V6_FILE" ]; then
-    while IFS= read -r it; do
-      it="${it%%#*}"; it="$(printf "%s" "$it" | tr -d '\r' | sed -e 's/^[[:space:]]\+//' -e 's/[[:space:]]\+$//')"
+    while IFS= read -r it || [ -n "$it" ]; do
+      it="${it%%#*}"; it="$(printf "%s" "$it" | tr -d '\r' | sed -e 's/^[[:space:]]\+//' -е 's/[[:space:]]\+$//')"
       [ -z "$it" ] || SRC_BYP6_LIST="$SRC_BYP6_LIST $it"
     done < "$SRC_BYPASS_V6_FILE"
   fi
@@ -649,6 +649,10 @@ start(){
   MODE="${1:-$PORT_MODE_DEFAULT}" # bypass|only
   case "$MODE" in bypass|only) ;; *) say "invalid port mode: $MODE (use bypass|only)"; exit 1;; esac
   preflight
+  # Жёсткая проверка: LAN_IFACES не должен быть пустым/состоять из одних пробелов/переводов строки.
+  if [ -z "$(printf '%s' "$LAN_IFACES" | tr -d '[:space:]')" ]; then
+    say "error: LAN_IFACES is empty (set e.g. LAN_IFACES='br-lan' or via UCI option ifaces)"; exit 1
+  fi
   validate_marks     # (п.4)
   validate_tports    # (п.8)
   remove_nft

@@ -8,7 +8,7 @@
 ---
 
 ## Содержание
-
+- [Установка](#установка)
 - [Навигация и общие элементы](#навигация-и-общие-элементы)
 - [Вкладка **TPROXY**](#вкладка-tproxy)
   - [Статус сервиса](#статус-сервиса)
@@ -37,6 +37,19 @@
 - [Благодарности](#Благодарности)
 
 ---
+## Установка
+
+Ручная:
+Скачать актуальный пакет https://github.com/rico-x/tproxy-manager/releases/latest и установить любым удобным способом через ssh или luci.
+
+Автоматическая:
+Зайти через ssh и выполнить
+```
+wget -O /tmp/usign.pub https://rico-x.github.io/tproxy-manager/keys/usign.pub && opkg-key add /tmp/usign.pub
+echo 'src/gz tproxy https://rico-x.github.io/tproxy-manager/' >> /etc/opkg/customfeeds.conf
+opkg update
+opkg install tproxy-manager
+```
 
 ## Навигация и общие элементы
 
