@@ -4,5 +4,5 @@ Architecture: all
 Maintainer: Rico-X <ricox.sp@gmail.com>
 Section: net
 Priority: optional
-Depends: ca-bundle, kmod-nft-tproxy, kmod-nft-socket, ip-full, lua, luci-base, luci-compat, luci-lib-jsonc, luci-lib-ip, uci, busybox
+Depends: ca-bundle, kmod-nft-tproxy, kmod-nft-socket, kmod-tcp-bbr, ip-full, lua, luci-base, luci-compat, luci-lib-jsonc, luci-lib-ip, uci, busybox
 Description: TPROXY-Manager — Router traffic management and rule-based routing through various proxies.

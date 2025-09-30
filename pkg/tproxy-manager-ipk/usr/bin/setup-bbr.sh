@@ -11,15 +11,16 @@ set -eu
 msg() { echo "[BBR] $*"; }
 
 # 1) Установка модуля (если ещё не установлен)
-if ! lsmod | grep -q '^tcp_bbr'; then
-  if opkg list-installed | grep -q '^kmod-tcp-bbr'; then
-    msg "kmod-tcp-bbr уже установлен."
-  else
-    msg "Устанавливаю kmod-tcp-bbr…"
-    opkg update >/dev/null 2>&1 || true
-    opkg install kmod-tcp-bbr
-  fi
-fi
+### Перенесен в зависимости, чтоб не ломался при первом запуске
+#if ! lsmod | grep -q '^tcp_bbr'; then
+#  if opkg list-installed | grep -q '^kmod-tcp-bbr'; then
+#    msg "kmod-tcp-bbr уже установлен."
+#  else
+#    msg "Устанавливаю kmod-tcp-bbr…"
+#    opkg update >/dev/null 2>&1 || true
+#    opkg install kmod-tcp-bbr
+#  fi
+#fi
 
 # 2) Загрузка модуля
 if ! lsmod | grep -q '^tcp_bbr'; then
