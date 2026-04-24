@@ -174,6 +174,7 @@ do
   ensure("enable_xray",    "0")
   ensure("enable_mihomo",  "0")
   ensure("enable_updates", "0")
+  ensure("enable_watchdog","0")
 
   -- Базовые TPROXY-параметры
   ensure("log_enabled", "1")
@@ -195,6 +196,29 @@ do
   ensure("src_bypass_v4_file",BASE_DIR.."/tproxy-manager.src4.bypass")
   ensure("src_bypass_v6_file",BASE_DIR.."/tproxy-manager.src6.bypass")
 
+  -- Watchdog-параметры
+  ensure("watchdog_check_url", "https://ifconfig.me/ip")
+  ensure("watchdog_proxy_url", "socks5h://127.0.0.1:10808")
+  ensure("watchdog_interval", "60")
+  ensure("watchdog_fail_threshold", "3")
+  ensure("watchdog_connect_timeout", "15")
+  ensure("watchdog_max_time", "20")
+  ensure("watchdog_links_file", BASE_DIR.."/watchdog.links")
+  ensure("watchdog_template_file", BASE_DIR.."/watchdog-outbound.template.jsonc")
+  ensure("watchdog_outbound_file", "/etc/xray/04_outbounds.json")
+  ensure("watchdog_vless2json", "/usr/bin/vless2json.sh")
+  ensure("watchdog_service_path", "/etc/init.d/xray")
+  ensure("watchdog_restart_cmd", "restart")
+  ensure("watchdog_test_command", "/usr/bin/xray -c {config}")
+  ensure("watchdog_test_template_file", BASE_DIR.."/watchdog-test-config.template.jsonc")
+  ensure("watchdog_selection_mode", "random")
+  ensure("watchdog_exclude_dead", "0")
+  ensure("watchdog_dead_cooldown_hours", "0")
+  ensure("watchdog_dead_cooldown_minutes", "0")
+  ensure("watchdog_test_port", "10881")
+  ensure("watchdog_background_check_enabled", "0")
+  ensure("watchdog_background_check_interval", "1800")
+
   if changed then uci:commit(PKG) end
 end
 
@@ -202,6 +226,7 @@ end
 local ENABLE_XRAY    = (uci:get(PKG,"main","enable_xray")    == "1")
 local ENABLE_MIHOMO  = (uci:get(PKG,"main","enable_mihomo")  == "1")
 local ENABLE_UPDATES = (uci:get(PKG,"main","enable_updates") == "1")
+local ENABLE_WATCHDOG = (uci:get(PKG,"main","enable_watchdog") == "1")
 
 -- Попробуем сетевую модель (ядру TPROXY может пригодиться)
 local netm_init = nil
@@ -271,7 +296,7 @@ do
   window.__xray_dirty = false;
   document.addEventListener('input', function(e){
     var n = e && e.target && e.target.name;
-    if (n === 'uniedit_text' || n === 'json_text' || n === 'clash_text' || n === 'mihomo_text' || n === 'geo_sources') window.__xray_dirty = true;
+    if (n === 'uniedit_text' || n === 'json_text' || n === 'clash_text' || n === 'mihomo_text' || n === 'geo_sources' || n === 'watchdog_template_text' || n === 'watchdog_test_template_text' || n === 'watchdog_links_text' || n === 'wd_add_link' || n === 'wd_edit_link') window.__xray_dirty = true;
   }, true);
   window.__xray_guard = function(){ return (!window.__xray_dirty) || confirm('Есть несохранённые изменения. Перейти без сохранения?'); };
   setTimeout(function(){
@@ -304,6 +329,7 @@ do
     out[#out+1] = link("xray",   "XRAY",   (uci:get(PKG,"main","enable_xray") == "1"))
     out[#out+1] = link("mihomo", "MIHOMO", (uci:get(PKG,"main","enable_mihomo") == "1"))
     out[#out+1] = link("updates","Обновление геобаз", (uci:get(PKG,"main","enable_updates") == "1"))
+    out[#out+1] = link("watchdog","WATCHDOG", (uci:get(PKG,"main","enable_watchdog") == "1"))
     return "<div style='margin:.2rem 0 .2rem 0'>" .. table.concat(out, "") .. "</div>"
   end
 end
@@ -313,9 +339,11 @@ if http.formvalue("_save_modules") == "1" then
   local ex = http.formvalue("enable_xray") == "1" and "1" or "0"
   local em = http.formvalue("enable_mihomo") == "1" and "1" or "0"
   local eu = http.formvalue("enable_updates") == "1" and "1" or "0"
+  local ew = http.formvalue("enable_watchdog") == "1" and "1" or "0"
   uci:set(PKG,"main","enable_xray",    ex)
   uci:set(PKG,"main","enable_mihomo",  em)
   uci:set(PKG,"main","enable_updates", eu)
+  uci:set(PKG,"main","enable_watchdog", ew)
   uci:commit(PKG)
   set_info("Настройки модулей сохранены.")
   redirect_here(fval("tab") or "tproxy")
@@ -331,6 +359,7 @@ do
     local ex = (uci:get(PKG,"main","enable_xray")    == "1") and "checked" or ""
     local em = (uci:get(PKG,"main","enable_mihomo")  == "1") and "checked" or ""
     local eu = (uci:get(PKG,"main","enable_updates") == "1") and "checked" or ""
+    local ew = (uci:get(PKG,"main","enable_watchdog") == "1") and "checked" or ""
     return string.format([[
 <details id="extra-mods">
   <summary style="cursor:pointer">Дополнительные настройки</summary>
@@ -339,6 +368,7 @@ do
       <label><input type="checkbox" name="enable_xray" value="1" %s> Вкладка XRAY</label>
       <label><input type="checkbox" name="enable_mihomo" value="1" %s> Вкладка MIHOMO</label>
       <label><input type="checkbox" name="enable_updates" value="1" %s> Вкладка Обновления геобаз</label>
+      <label><input type="checkbox" name="enable_watchdog" value="1" %s> Вкладка Watchdog</label>
     </div>
     <div style="margin-top:.5rem">
       <button class="cbi-button cbi-button-apply" name="_save_modules" value="1">Сохранить</button>
@@ -346,7 +376,7 @@ do
     </div>
   </div>
 </details>]],
-      ex, em, eu, pcdata(cur)
+      ex, em, eu, ew, pcdata(cur)
     )
   end
 end
@@ -385,6 +415,8 @@ elseif cur_tab == "mihomo" and (uci:get(PKG,"main","enable_mihomo") == "1") then
   require("luci.model.cbi.tproxy_manager.modules.mihomo").render(ctx)
 elseif cur_tab == "updates" and (uci:get(PKG,"main","enable_updates") == "1") then
   require("luci.model.cbi.tproxy_manager.modules.updates").render(ctx)
+elseif cur_tab == "watchdog" and (uci:get(PKG,"main","enable_watchdog") == "1") then
+  require("luci.model.cbi.tproxy_manager.modules.watchdog").render(ctx)
 else
   http.redirect(self_url({ tab = "tproxy" }))
   return m

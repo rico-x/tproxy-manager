@@ -1,188 +1,162 @@
-# Xray TPROXY via nftables (OpenWrt, nft v1.1.1)
+# TPROXY engine: low-level reference
 
-Документация по пользовательскому скрипту прозрачного проксирования (TPROXY) IPv4/IPv6-трафика через `nftables` на OpenWrt. Скрипт рассчитан на **nft v1.1.1** и ограниченную среду роутера (BusyBox, без дополнительных зависимостей).
+Этот документ описывает низкоуровневый TPROXY-движок проекта:
 
-> Ключевые свойства:
-> - Поддержка нескольких LAN-интерфейсов-источников.
-> - Два режима портов: `bypass` (исключить перечисленные) и `only` (проксировать только перечисленные).
-> - Режимы отбора источников (SRC): `off` / `only` / `bypass`.
-> - Исключения по назначениям (dst): приватные сети, on-link, пользовательские сети/хосты, порты.
-> - Идемпотентность: перед `start` чистятся созданные скриптом `ip rule/route` и nft-таблица.
-> - Опциональный IPv6 (полное отключение флагом `IPV6_ENABLED=0`).
-> - Жёсткая валидация портов (1..65535, диапазоны `L-R` с `L<=R`), валидация fwmark и TPROXY-портов.
-> - Совместимая проверка наличия цепочки без JSON-вывода (`nft -j` не используется).
+- `/usr/bin/tproxy-manager.sh`
+- `/etc/init.d/tproxy-manager`
 
----
+Пользовательская LuCI-документация, описание вкладок `XRAY`, `MIHOMO`, `Обновление геобаз` и `WATCHDOG` находятся в [README.md](../README.md).
 
-## Содержание
-- [Требования и совместимость](#требования-и-совместимость)
-- [Быстрый старт](#быстрый-старт)
-- [Команды](#команды)
-- [Режимы работы](#режимы-работы)
-  - [Режим портов: `bypass` vs `only`](#режим-портов-bypass-vs-only)
-  - [Режим источников (SRC): `off` `only` `bypass`](#режим-источников-src-off-only-bypass)
-- [Конфигурация](#конфигурация)
-  - [Через UCI](#через-uci)
-  - [Через переменные окружения](#через-переменные-окружения)
-- [Файлы списков и их формат](#файлы-списков-и-их-формат)
-  - [Файл портов](#файл-портов)
-  - [Файлы исключений DST (v4/v6)](#файлы-исключений-dst-v4v6)
-  - [Файлы SRC only/bypass](#файлы-src-onlybypass)
-- [Диагностика и статус](#диагностика-и-статус)
-- [Примеры запуска](#примеры-запуска)
-- [Интеграция с Xray (TPROXY listener)](#интеграция-с-xray-tproxy-listener)
-- [Частые вопросы (FAQ)](#частые-вопросы-faq)
-- [Откат и безопасное восстановление](#откат-и-безопасное-восстановление)
-- [Примечания по производительности и безопасности](#примечания-по-производительности-и-безопасности)
+## Назначение
 
----
+`tproxy-manager.sh` настраивает прозрачный перехват трафика через `nftables` и policy routing на OpenWrt. Скрипт:
 
-## Требования и совместимость
+- управляет таблицей `nftables`;
+- создаёт и удаляет `ip rule` и `ip route`;
+- использует UCI-пакет `tproxy-manager`;
+- работает с файлами списков из `/etc/tproxy-manager`.
 
-- **OpenWrt** с BusyBox (стандартный набор утилит).
-- **nftables v1.1.1** (и соответствующие ядровые подсистемы).
-- Доступны утилиты: `nft`, `ip`, `awk`, `sed`, `grep`, `mktemp`, `tr`, `cut`, `sort`, `xargs`.
-- Права root для применения правил.
+Поддерживаются:
 
-> Скрипт не использует `nft -j` (JSON) и иные современные функции, отсутствующие в v1.1.1.
+- IPv4 и IPv6;
+- режимы портов `bypass` и `only`;
+- фильтрация по исходным адресам `off`, `only`, `bypass`;
+- отдельные `fwmark` и routing table для TCP и UDP.
 
----
+## Основные файлы
+
+UCI:
+
+- `/etc/config/tproxy-manager`
+
+Исполняемые файлы:
+
+- `/usr/bin/tproxy-manager.sh`
+- `/etc/init.d/tproxy-manager`
+
+Списки:
+
+- `/etc/tproxy-manager/tproxy-manager.ports`
+- `/etc/tproxy-manager/tproxy-manager.v4`
+- `/etc/tproxy-manager/tproxy-manager.v6`
+- `/etc/tproxy-manager/tproxy-manager.src4.only`
+- `/etc/tproxy-manager/tproxy-manager.src6.only`
+- `/etc/tproxy-manager/tproxy-manager.src4.bypass`
+- `/etc/tproxy-manager/tproxy-manager.src6.bypass`
+
+## Требования
+
+- OpenWrt с `nftables`
+- `ip-full`
+- `kmod-nft-tproxy`
+- `kmod-nft-socket`
+- root-доступ
+
+Пакетные зависимости задаются в [control](../pkg/tproxy-manager-ipk/CONTROL/control).
 
 ## Быстрый старт
 
-1. Положите скрипт, например, в `/usr/sbin/xray-tproxy` и сделайте исполняемым:
-   ```sh
-   chmod +x /usr/sbin/xray-tproxy
-   ```
+Запуск через init.d:
 
-2. При необходимости создайте файл портов и файлы списков (см. разделы ниже).
+```sh
+/etc/init.d/tproxy-manager start
+```
 
-3. Запустите в режиме по умолчанию (портовый режим `bypass`, IPv6 включён):
-   ```sh
-   xray-tproxy start
-   ```
+Остановка:
 
-4. Посмотрите диагностический вывод:
-   ```sh
-   xray-tproxy diag
-   ```
+```sh
+/etc/init.d/tproxy-manager stop
+```
 
-5. Проверка статуса (вернёт `running`/`inactive` и exit code):
-   ```sh
-   xray-tproxy status
-   ```
+Проверка состояния:
 
-6. Остановить и очистить артефакты скрипта:
-   ```sh
-   xray-tproxy stop
-   ```
+```sh
+/etc/init.d/tproxy-manager status
+```
 
----
+Диагностика:
+
+```sh
+/etc/init.d/tproxy-manager diag
+```
+
+Прямой вызов backend-скрипта:
+
+```sh
+/usr/bin/tproxy-manager.sh start
+/usr/bin/tproxy-manager.sh restart only
+/usr/bin/tproxy-manager.sh stop
+/usr/bin/tproxy-manager.sh status
+/usr/bin/tproxy-manager.sh diag
+```
 
 ## Команды
 
+Поддерживаются:
+
 ```txt
-xray-tproxy start [-q] [bypass|only]
-xray-tproxy restart [-q] [bypass|only]
-xray-tproxy stop
-xray-tproxy status
-xray-tproxy diag
+tproxy-manager.sh start [-q] [bypass|only]
+tproxy-manager.sh restart [-q] [bypass|only]
+tproxy-manager.sh stop
+tproxy-manager.sh status
+tproxy-manager.sh diag
 ```
 
-- `-q` / `--quiet` — тихий режим (минимум вывода).
-- `start` — очистка предыдущих артефактов, установка `ip rule/route` и nft-таблицы, вывод диагностики.
-- `restart` — эквивалент `start`.
-- `stop` — удаление nft-таблицы и правил маршрутизации, вывод диагностики.
-- `status` — проверка наличия ключевых артефактов; полезно для `procd`/скриптов.
-- `diag` — подробная справка по текущему состоянию (содержимое таблиц/наборов, правила).
+Аргумент `[bypass|only]` переопределяет `port_mode` только для текущего запуска.
 
----
+## UCI-конфигурация
 
-## Режимы работы
-
-### Режим портов: `bypass` vs `only`
-
-- `bypass` (по умолчанию): **исключает** из проксирования порты, перечисленные в порт-файле. Всё остальное идёт через TPROXY.
-- `only`: проксирует **только** перечисленные порты, остальное пропускает.
-
-Выбор режима:
-- Через аргумент команды: `xray-tproxy start only`
-- Через UCI: `option port_mode 'only'`
-- Через ENV: `PORT_MODE_DEFAULT=only xray-tproxy start`
-
-### Режим источников (SRC): `off` `only` `bypass`
-
-- `off` — без фильтрации по источникам.
-- `only` — проксируется **только** трафик от адресов из списков `src_only_*`.
-- `bypass` — трафик от адресов из списков `src_bypass_*` **исключается** из проксирования.
-
-Задаётся через UCI/ENV (см. ниже).
-
----
-
-## Конфигурация
-
-### Через UCI
-
-Создайте `/etc/config/xray-proxy`:
+Базовая секция:
 
 ```uci
 config main 'main'
   option log_enabled '1'
-  option nft_table    'xray'
-  option ifaces       'br-lan wg0'
+  option nft_table 'tp_mgr'
+  option ifaces 'br-lan'
   option ipv6_enabled '1'
 
-  option tproxy_port      '61219'   # если задать один порт — применится и к TCP и к UDP
-  option tproxy_port_tcp  '61219'
-  option tproxy_port_udp  '61219'
+  option tproxy_port '61219'
+  option fwmark_tcp '0x1'
+  option fwmark_udp '0x2'
+  option rttab_tcp '100'
+  option rttab_udp '101'
 
-  option fwmark_tcp  '0x1'
-  option fwmark_udp  '0x2'
-  option rttab_tcp   '100'
-  option rttab_udp   '101'
+  option port_mode 'bypass'
+  option ports_file '/etc/tproxy-manager/tproxy-manager.ports'
 
-  option port_mode   'bypass'       # bypass|only
-  option ports_file  '/etc/xray/xray-tproxy.ports'
+  option bypass_v4_file '/etc/tproxy-manager/tproxy-manager.v4'
+  option bypass_v6_file '/etc/tproxy-manager/tproxy-manager.v6'
 
-  option bypass_v4_file '/etc/xray/xray-tproxy.v4'
-  option bypass_v6_file '/etc/xray/xray-tproxy.v6'
-
-  option src_mode           'off'   # off|only|bypass
-  option src_only_v4_file   '/etc/xray/xray-tproxy.src4.only'
-  option src_only_v6_file   '/etc/xray/xray-tproxy.src6.only'
-  option src_bypass_v4_file '/etc/xray/xray-tproxy.src4.bypass'
-  option src_bypass_v6_file '/etc/xray/xray-tproxy.src6.bypass'
+  option src_mode 'off'
+  option src_only_v4_file '/etc/tproxy-manager/tproxy-manager.src4.only'
+  option src_only_v6_file '/etc/tproxy-manager/tproxy-manager.src6.only'
+  option src_bypass_v4_file '/etc/tproxy-manager/tproxy-manager.src4.bypass'
+  option src_bypass_v6_file '/etc/tproxy-manager/tproxy-manager.src6.bypass'
 ```
 
-> Скрипт подхватывает UCI-конфиг автоматически, если существует секция `xray-proxy.main`.
+Замечания:
 
-### Через переменные окружения
+- `tproxy_port` задаёт единый порт, если не используются раздельные TCP/UDP-поля.
+- `ifaces` — список LAN-интерфейсов, через которые перехватывается трафик.
+- `port_mode`:
+  - `bypass` — перечисленные порты исключаются из проксирования;
+  - `only` — через прокси идут только перечисленные порты.
+- `src_mode`:
+  - `off`
+  - `only`
+  - `bypass`
 
-Любую опцию можно задать через ENV. Примеры:
+## Формат файлов списков
 
-```sh
-LAN_IFACES="br-lan wg0" NFT_TABLE="xray" xray-tproxy start bypass
-IPV6_ENABLED=0 xray-tproxy start
-TPORT_TCP=61219 TPORT_UDP=61219 xray-tproxy restart only
-SRC_MODE=bypass xray-tproxy start
-```
-
----
-
-## Файлы списков и их формат
-
-Комментарии — через `#`. Пустые строки игнорируются. Формат — одна сущность на строку.
-
-### Файл портов
-
-Путь задаётся опцией `ports_file` (по умолчанию `/etc/xray/xray-tproxy.ports`).
+### ports_file
 
 Поддерживаются:
 
-- Число порта: `80`
-- Диапазон: `1000-2000` (валидируется: `1..65535`, `L<=R`)
-- Протокол: `tcp:443`, `udp:53`, `both:123`, `udp:6000-7000`
+- `80`
+- `1000-2000`
+- `tcp:443`
+- `udp:53`
+- `both:123`
 
 Пример:
 
@@ -193,168 +167,62 @@ udp:53
 both:123
 1000-2000
 udp:6000-7000
-# комментарии и пустые строки допускаются
 ```
 
-> Скрипт выполняет **строгую** проверку формата и числовых границ. Невалидные строки игнорируются.
+### bypass_v4_file / bypass_v6_file
 
-### Файлы исключений DST (v4/v6)
-
-- IPv4 (`bypass_v4_file`): сети в CIDR и/или отдельные IPv4-адреса.
-- IPv6 (`bypass_v6_file`): соответственно для IPv6.
-
-Пример `xray-tproxy.v4`:
+Поддерживаются IP и CIDR:
 
 ```txt
-10.0.0.0/8
-172.16.0.0/12
-192.168.0.0/16
-127.0.0.0/8
-169.254.0.0/16
-8.8.8.8
-1.1.1.1
-```
-
-> Базовые приватные сети (RFC1918/127.0.0.0/8/и т. п.) уже встроены по умолчанию. Файл дополняет встроенный набор.
-
-### Файлы SRC only/bypass
-
-- `src_only_v4_file` / `src_only_v6_file` — адреса/сети, которые **разрешены** к проксированию при `SRC_MODE=only`.
-- `src_bypass_v4_file` / `src_bypass_v6_file` — адреса/сети, которые **исключены** при `SRC_MODE=bypass`.
-
-Пример `xray-tproxy.src4.only`:
-
-```txt
-192.168.1.100
 192.168.1.0/24
+10.0.0.1
+2001:db8::/32
 ```
 
----
+### src_only_* / src_bypass_*
 
-## Диагностика и статус
+Поддерживаются IP и CIDR по тем же правилам.
 
-- `xray-tproxy diag` выведет:
-  - Обработанные интерфейсы, режимы, IPv6 состояние.
-  - Найденные адреса на `LAN_IFACES`.
-  - Текущие `ip rule`/`ip -6 rule` и маршруты в таблицах.
-  - Содержимое nft-таблицы (включая сеты).
-  - Разобранные из файлов порты/источники/исключения.
+Комментарии и пустые строки допустимы во всех списках.
 
-- `xray-tproxy status` проверяет:
-  - Наличие цепочки `prerouting` в `table inet <NFT_TABLE>`.
-  - Наличие `ip rule` с нужными `fwmark` (v4/v6).
+## Диагностика
 
-> При некорректных значениях меток/портов скрипт завершится с сообщением об ошибке до применения правил.
+Проверьте:
 
----
+```sh
+/etc/init.d/tproxy-manager status
+/etc/init.d/tproxy-manager diag
+```
 
-## Примеры запуска
+Полезно также смотреть:
 
-1. **Стандартный запуск** (исключить перечисленные порты, остальное — через прокси):
-   ```sh
-   xray-tproxy start
-   ```
+```sh
+logread | tail -n 200
+nft list ruleset
+ip rule
+ip -6 rule
+```
 
-2. **Принудительный режим `only`** (проксировать только перечисленные в порт-файле):
-   ```sh
-   xray-tproxy start only
-   ```
+## Привязка к Xray/Mihomo
 
-3. **Отключить IPv6 полностью**:
-   ```sh
-   IPV6_ENABLED=0 xray-tproxy restart
-   ```
+Сам TPROXY-движок не управляет конфигами `xray` или `mihomo`. Он только перехватывает трафик и перенаправляет его на локальный TPROXY listener.
 
-4. **Несколько интерфейсов-источников**:
-   ```sh
-   LAN_IFACES="br-lan wg0" xray-tproxy restart
-   ```
+Поэтому отдельно нужно убедиться, что ваш proxy-engine:
 
-5. **Задать нестандартную таблицу/метки/порты TPROXY**:
-   ```sh
-   NFT_TABLE="xray" FWMARK_TCP=0x1 FWMARK_UDP=0x2 TPORT_TCP=61219 TPORT_UDP=61219 xray-tproxy restart
-   ```
+- слушает правильный порт;
+- корректно принимает прозрачный трафик;
+- запущен до применения правил или перезапущен после них.
 
-6. **Фильтрация по источникам**:
-   ```sh
-   SRC_MODE=only xray-tproxy restart     # проксируем только из src_only_* списков
-   SRC_MODE=bypass xray-tproxy restart   # исключаем источники из src_bypass_*
-   ```
+## Интеграция с LuCI
 
----
+Через LuCI-модуль `TPROXY` вы настраиваете те же параметры UCI и файлы списков, но без ручного редактирования `/etc/config/tproxy-manager`.
 
-## Интеграция с Xray (TPROXY listener)
+Если нужен UI-уровень, сценарии `Watchdog`, работа с `XRAY`, `MIHOMO` и GEO-обновлениями, используйте [README.md](../README.md).
 
-1. В конфиге Xray включите TPROXY-прослушивание на адресе `127.0.0.1:<порт>` для IPv4 и на `:[порт]` для IPv6, чтобы соответствовать параметрам скрипта (`TPORT_TCP`, `TPORT_UDP`). Пример (схематично):
+## Безопасный откат
 
-   ```json
-   {
-     "inbounds": [
-       {
-         "tag": "tproxy-tcp",
-         "protocol": "dokodemo-door",
-         "port": 61219,
-         "settings": { "network": "tcp", "followRedirect": true },
-         "streamSettings": { "sockopt": { "tproxy": "tproxy" } },
-         "listen": "127.0.0.1"
-       },
-       {
-         "tag": "tproxy-udp",
-         "protocol": "dokodemo-door",
-         "port": 61219,
-         "settings": { "network": "udp", "followRedirect": true },
-         "streamSettings": { "sockopt": { "tproxy": "tproxy" } },
-         "listen": "127.0.0.1"
-       }
-     ]
-   }
-   ```
+```sh
+/etc/init.d/tproxy-manager stop
+```
 
-2. Убедитесь, что Xray запущен до вызова `xray-tproxy start` либо перезапустите Xray после применения правил.
-
-> Порты Xray должны совпадать с `TPORT_TCP`/`TPORT_UDP` скрипта (по умолчанию `61219`).
-
----
-
-## Частые вопросы (FAQ)
-
-**Q:** Можно ли использовать доменные списки вместо IP/CIDR?  
-**A:** Скрипт работает на уровне L3/L4. Домены не поддерживаются — используйте внешний резолвинг в отдельные списки IP/CIDR.
-
-**Q:** Как исключить локальные сервисы (mDNS/SSDP/DHCP)?  
-**A:** Добавьте соответствующие UDP-порты в порт-файл и используйте режим `bypass` (например, `udp:5353`, `udp:1900`).
-
-**Q:** Что делать, если после `start` пропал доступ?  
-**A:** Выполните `xray-tproxy stop` для отката. Проверьте, что Xray слушает TPROXY-порты и маршрутизация корректна.
-
-**Q:** Нужен ли Hotplug?  
-**A:** Нет. Скрипт работает автономно, применяйте вручную или через `procd`/cron при изменениях сети.
-
-**Q:** Почему в `status` вижу `degraded`?  
-**A:** Нет соответствующих `ip rule` (v4/v6) или отсутствует цепочка `prerouting`. Выполните `diag` и проверьте вывод `ip rule`/`nft list`.
-
----
-
-## Откат и безопасное восстановление
-
-- Мгновенный откат:
-  ```sh
-  xray-tproxy stop
-  ```
-- Это удалит nft-таблицу скрипта и сбросит таблицы маршрутизации, созданные для TPROXY.
-
----
-
-## Примечания по производительности и безопасности
-
-- Включён ранний отсев по L4 (`meta l4proto != { tcp, udp } return`) — экономит матчи.
-- Для сетов портов автоматически добавляется `flags interval;`, если в списке есть диапазоны — корректная работа на старых версиях nft.
-- Метки `FWMARK_TCP` и `FWMARK_UDP` проходят проверку на ненулевое значение и отсутствие пересечения бит.
-- TPROXY-порты проходят числовую валидацию (`1..65535`).
-- Используйте минимально необходимый набор интерфейсов в `LAN_IFACES` и поддерживайте актуальные списки исключений.
-
----
-
-## Лицензия
-
-Скрипт и документация распространяются на условиях лицензии репозитория (если указана). В противном случае — по умолчанию MIT.
+Это удаляет правила, маршруты и артефакты, созданные backend-скриптом.

@@ -29,7 +29,12 @@ run_safe() {
 run_safe /usr/bin/optimize-sysctl.sh
 run_safe /usr/bin/setup-bbr.sh
 
-# 3) Включить и запустить сервис (если есть), ошибки не фатальны
+# 3) Исправить исполняемые биты init.d-скриптов (если есть)
+chmod +x /etc/init.d/tproxy-manager 2>/dev/null || true
+chmod +x /etc/init.d/tproxy-manager-watchdog 2>/dev/null || true
+chmod +x /usr/bin/vless2json.sh 2>/dev/null || true
+
+# 4) Включить и запустить сервис (если есть), ошибки не фатальны
 if [ -x /etc/init.d/tproxy-manager ]; then
   /etc/init.d/tproxy-manager enable >/dev/null 2>&1 \
     || logger -t "$LOGTAG" "enable failed (ignored)"

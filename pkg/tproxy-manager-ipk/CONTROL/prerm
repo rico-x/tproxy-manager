@@ -4,4 +4,8 @@ if [ -x /etc/init.d/tproxy-manager ]; then
   /etc/init.d/tproxy-manager stop
   /etc/init.d/tproxy-manager disable
 fi
+if [ -x /etc/init.d/tproxy-manager-watchdog ]; then
+  /etc/init.d/tproxy-manager-watchdog stop
+  /etc/init.d/tproxy-manager-watchdog disable
+fi
 exit 0
