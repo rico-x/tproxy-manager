@@ -1,12 +1,13 @@
-name: Build TPROXY-Manager via ipkg-build
+name: Build OpenWrt Packages
 
 on:
   push:
-    tags: [ "v*" ]     # запуск только при пуше тега вида vYY.M.D
+    branches: [ "main" ]
+    tags: [ "v*" ]
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Необязательно: задать тег (формат vYY.M.D). Если пусто — сгенерируется автоматически по UTC.'
+        description: "Необязательно: релизный тег в формате vYY.M.D. Если пусто, будет обычная branch-build сборка."
         required: false
         type: string
 
@@ -16,243 +17,341 @@ permissions:
   id-token: write
 
 env:
-  PKG_DIR: pkg/tproxy-manager-ipk
-  FEED_DIR: feed
+  FEED_DIR: openwrt-feed
+  FEED_NAME: tproxy
+  PACKAGE_NAME: tproxy-manager
+  SITE_DIR: site
+  DIST_DIR: dist
 
 jobs:
-  build:
+  meta:
     runs-on: ubuntu-latest
     outputs:
-      tag:   ${{ steps.meta.outputs.tag }}   # v25.9.15
-      plain: ${{ steps.meta.outputs.plain }} # 25.9.15
+      artifact_version: ${{ steps.meta.outputs.artifact_version }}
+      create_release: ${{ steps.meta.outputs.create_release }}
+      package_version: ${{ steps.meta.outputs.package_version }}
+      release_tag: ${{ steps.meta.outputs.release_tag }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Compute tag/version (vYY.M.D)
+      - name: Compute package version
         id: meta
         shell: bash
         run: |
           set -euo pipefail
+          SHORT_SHA="$(git rev-parse --short=8 HEAD)"
+          INPUT_TAG="${{ github.event.inputs.tag || '' }}"
+          RELEASE_TAG=""
+          CREATE_RELEASE="0"
+
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            TAG="${GITHUB_REF_NAME}"
-          else
-            if [[ -n "${{ github.event.inputs.tag || '' }}" ]]; then
-              TAG="${{ github.event.inputs.tag }}"
-            else
-              # пример: v25.9.15 (UTC)
-              TAG="v$(date -u +%y.%-m.%-d)"
-            fi
+            RELEASE_TAG="${GITHUB_REF_NAME}"
+            CREATE_RELEASE="1"
+          elif [[ -n "$INPUT_TAG" ]]; then
+            RELEASE_TAG="$INPUT_TAG"
+            CREATE_RELEASE="1"
           fi
 
-          # Валидация формата
-          if [[ ! "$TAG" =~ ^v[0-9]{2}\.[0-9]{1,2}\.[0-9]{1,2}$ ]]; then
-            echo "Неверный формат тега: '$TAG'. Ожидается vYY.M.D, например v25.9.15" >&2
+          if [[ -n "$RELEASE_TAG" ]]; then
+            if [[ ! "$RELEASE_TAG" =~ ^v[0-9]{2}\.[0-9]{1,2}\.[0-9]{1,2}$ ]]; then
+              echo "Invalid release tag: $RELEASE_TAG" >&2
+              exit 1
+            fi
+            PACKAGE_VERSION="${RELEASE_TAG#v}"
+            ARTIFACT_VERSION="${RELEASE_TAG#v}"
+          else
+            PACKAGE_VERSION="$(date -u +%Y.%m.%d)~git${SHORT_SHA}"
+            ARTIFACT_VERSION="$PACKAGE_VERSION"
+          fi
+
+          echo "artifact_version=$ARTIFACT_VERSION" >> "$GITHUB_OUTPUT"
+          echo "create_release=$CREATE_RELEASE" >> "$GITHUB_OUTPUT"
+          echo "package_version=$PACKAGE_VERSION" >> "$GITHUB_OUTPUT"
+          echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: meta
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - series: "24.10"
+            release: "24.10.6"
+            sdk_arch: "x86_64-24.10.6"
+            package_ext: "ipk"
+          - series: "25.12"
+            release: "25.12.2"
+            sdk_arch: "x86_64-25.12.2"
+            package_ext: "apk"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Inject package version into OpenWrt recipe
+        shell: bash
+        run: |
+          set -euo pipefail
+          RECIPE="$FEED_DIR/net/$PACKAGE_NAME/Makefile"
+          sed -i "s/^PKG_VERSION:=.*/PKG_VERSION:=${{ needs.meta.outputs.package_version }}/" "$RECIPE"
+
+      - name: Prepare feed signing keys
+        shell: bash
+        env:
+          APK_PRIVATE_KEY: ${{ secrets.APK_PRIVATE_KEY }}
+          USIGN_SECRET: ${{ secrets.USIGN_SECRET }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${{ matrix.series }}" == "24.10" && -n "${USIGN_SECRET:-}" ]]; then
+            printf '%s' "$USIGN_SECRET" | base64 -d > /tmp/tproxy-manager-usign.key
+            chmod 600 /tmp/tproxy-manager-usign.key
+            {
+              echo "KEY_BUILD<<EOF"
+              cat /tmp/tproxy-manager-usign.key
+              echo "EOF"
+            } >> "$GITHUB_ENV"
+          fi
+
+          if [[ "${{ matrix.series }}" == "25.12" && -n "${APK_PRIVATE_KEY:-}" ]]; then
+            printf '%s\n' "$APK_PRIVATE_KEY" > /tmp/tproxy-manager-apk.key
+            chmod 600 /tmp/tproxy-manager-apk.key
+            if [[ -f keys/tproxy-manager-apk.pem ]]; then
+              openssl ec -in /tmp/tproxy-manager-apk.key -pubout -out /tmp/tproxy-manager-apk.pem
+              cmp -s /tmp/tproxy-manager-apk.pem keys/tproxy-manager-apk.pem || {
+                echo "APK_PRIVATE_KEY does not match keys/tproxy-manager-apk.pem" >&2
+                exit 1
+              }
+            fi
+            {
+              echo "PRIVATE_KEY<<EOF"
+              cat /tmp/tproxy-manager-apk.key
+              echo "EOF"
+            } >> "$GITHUB_ENV"
+          fi
+
+      - name: Build package via OpenWrt SDK
+        uses: openwrt/gh-action-sdk@main
+        env:
+          ARCH: ${{ matrix.sdk_arch }}
+          BUILD_LOG: 1
+          FEED_DIR: ${{ github.workspace }}/${{ env.FEED_DIR }}
+          FEEDNAME: ${{ env.FEED_NAME }}
+          INDEX: 1
+          KEY_BUILD: ${{ env.KEY_BUILD }}
+          PACKAGES: ${{ env.PACKAGE_NAME }}
+          PRIVATE_KEY: ${{ env.PRIVATE_KEY }}
+          V: s
+
+      - name: Assemble build outputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          PKG_FILE="$(find bin/packages -type f -name "${PACKAGE_NAME}*.${{ matrix.package_ext }}" | head -n1)"
+          if [[ -z "$PKG_FILE" ]]; then
+            echo "Built package not found" >&2
+            find bin/packages -type f | sort
             exit 1
           fi
 
-          echo "tag=$TAG"     >> "$GITHUB_OUTPUT"
-          echo "plain=${TAG#v}" >> "$GITHUB_OUTPUT"
+          REPO_DIR="$(dirname "$PKG_FILE")"
+          FEED_OUT="$SITE_DIR/${{ matrix.series }}"
+          DIST_OUT="$DIST_DIR/${{ matrix.series }}"
 
-      - name: Install base tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            ca-certificates curl gzip tar coreutils findutils gawk sed perl zip \
-            build-essential cmake xz-utils
+          mkdir -p "$FEED_OUT" "$DIST_OUT"
+          cp "$PKG_FILE" "$DIST_OUT/"
+          cp -a "$REPO_DIR"/. "$FEED_OUT"/
 
-      - name: Fetch ipkg-build & ipkg-make-index.sh (OpenWrt 24.10)
-        run: |
-          curl -fsSL https://raw.githubusercontent.com/openwrt/openwrt/openwrt-24.10/scripts/ipkg-build -o ipkg-build
-          curl -fsSL https://raw.githubusercontent.com/openwrt/openwrt/openwrt-24.10/scripts/ipkg-make-index.sh -o ipkg-make-index.sh
-          chmod +x ipkg-build ipkg-make-index.sh
-          ./ipkg-build -h || true
-
-      - name: Normalize CONTROL/control and perms
-        shell: bash
-        run: |
-          set -e
-          CTRL="$PKG_DIR/CONTROL/control"
-          [[ -f "$CTRL" ]] || { echo "Missing $CTRL"; exit 1; }
-          sed -i 's/\r$//' "$CTRL" || true
-          perl -0777 -pe 's/^\xEF\xBB\xBF//' -i "$CTRL" || true
-          tail -c1 "$CTRL" | od -An -t x1 | grep -q '0a' || echo >> "$CTRL"
-          find "$PKG_DIR" -type f -path '*/etc/init.d/*' -exec chmod 0755 {} +
-          find "$PKG_DIR" -type f -path '*/etc/uci-defaults/*' -exec chmod 0755 {} +
-          [ -f "$PKG_DIR/CONTROL/preinst"  ] && chmod 0755 "$PKG_DIR/CONTROL/preinst"  || true
-          [ -f "$PKG_DIR/CONTROL/postinst" ] && chmod 0755 "$PKG_DIR/CONTROL/postinst" || true
-          [ -f "$PKG_DIR/CONTROL/prerm"    ] && chmod 0755 "$PKG_DIR/CONTROL/prerm"    || true
-          [ -f "$PKG_DIR/usr/bin/optimize-sysctl.sh" ] && chmod 0755 "$PKG_DIR/usr/bin/optimize-sysctl.sh" || true
-          [ -f "$PKG_DIR/usr/bin/setup-bbr.sh"       ] && chmod 0755 "$PKG_DIR/usr/bin/setup-bbr.sh"       || true
-          [ -f "$PKG_DIR/usr/bin/tproxy-manager.sh" ] && chmod 0755 "$PKG_DIR/usr/bin/tproxy-manager.sh" || true
-          [ -f "$PKG_DIR/usr/bin/tproxy-manager-watchdog.sh" ] && chmod 0755 "$PKG_DIR/usr/bin/tproxy-manager-watchdog.sh" || true
-
-      - name: Inject Version into control
-        shell: bash
-        run: |
-          CTRL="$PKG_DIR/CONTROL/control"
-          if grep -q '^Version:' "$CTRL"; then
-            sed -i "s/^Version:.*/Version: ${{ steps.meta.outputs.tag }}_1-1/" "$CTRL"
-          else
-            echo "Version: ${{ steps.meta.outputs.tag }}_1-1" >> "$CTRL"
+          if [[ "${{ matrix.series }}" == "24.10" ]]; then
+            mkdir -p "$FEED_OUT/keys"
+            cp keys/usign.pub "$FEED_OUT/keys/usign.pub"
           fi
-          tail -c1 "$CTRL" | od -An -t x1 | grep -q '0a' || echo >> "$CTRL"
 
-      - name: Build .ipk via ipkg-build (ABS dest)
-        shell: bash
-        run: |
-          DEST="$(pwd)/dist"
-          mkdir -p "$DEST"
-          ./ipkg-build "$PKG_DIR" "$DEST"
-          echo "--- dist content ---"
-          ls -lah "$DEST"
-          echo "--- quick check ---"
-          file "$DEST"/*.ipk
-          tar tzf "$DEST"/*.ipk | sed -n '1,10p'
+          if [[ "${{ matrix.series }}" == "25.12" && -f keys/tproxy-manager-apk.pem ]]; then
+            mkdir -p "$FEED_OUT/keys"
+            cp keys/tproxy-manager-apk.pem "$FEED_OUT/keys/tproxy-manager.pem"
+          fi
 
-      - name: Prepare feed (lite indexer, no ipkg-make-index.sh)
+          (
+            cd "$DIST_OUT"
+            sha256sum * > "SHA256SUMS_${{ matrix.series }}.txt"
+          )
+
+      - name: Render feed landing page
         shell: bash
         run: |
           set -euo pipefail
-          rm -rf "$FEED_DIR"
-          mkdir -p "$FEED_DIR/keys"
-          cp dist/*.ipk "$FEED_DIR"/
-          cat > "$FEED_DIR/.index_lite.sh" <<'SH'
-          #!/usr/bin/env bash
-          set -euo pipefail
-          dir="${1:-.}"; cd "$dir"; : > Packages
-          get_control() {
-            local ipk="$1" ctrl=""
-            if tar tzf "$ipk" >/dev/null 2>&1; then
-              if tar tzf "$ipk" | grep -q '^./control.tar.gz$'; then
-                ctrl="$(tar -xOzf "$ipk" ./control.tar.gz | tar -xOzf - ./control 2>/dev/null || tar -xOzf - control 2>/dev/null || true)"
-              elif tar tzf "$ipk" | grep -q '^./control.tar.xz$'; then
-                ctrl="$(tar -xOzf "$ipk" ./control.tar.xz | tar -xOJf - ./control 2>/dev/null || tar -xOJf - control 2>/dev/null || true)"
-              fi
-            fi
-            if [ -z "$ctrl" ]; then
-              if ar t "$ipk" 2>/dev/null | grep -q '^control.tar.gz$'; then
-                ctrl="$(ar p "$ipk" control.tar.gz | tar -xOzf - ./control 2>/dev/null || tar -xOzf - control 2>/dev/null || true)"
-              elif ar t "$ipk" 2>/dev/null | grep -q '^control.tar.xz$'; then
-                ctrl="$(ar p "$ipk" control.tar.xz | tar -xOJf - ./control 2>/dev/null || tar -xOJf - control 2>/dev/null || true)"
-              fi
-            fi
-            [ -n "$ctrl" ] && printf "%s" "$ctrl"
-            return 0
-          }
-          for ipk in *.ipk; do
-            [ -f "$ipk" ] || continue
-            ctrl="$(get_control "$ipk")" || true
-            if [ -z "$ctrl" ]; then
-              echo "WARN: cannot read control from $ipk" >&2
-              continue
-            fi
-            printf "%s\n" "$ctrl" >> Packages
-            size=$(stat -c%s "$ipk" 2>/dev/null || wc -c < "$ipk")
-            sha256=$(sha256sum "$ipk" | awk '{print $1}')
-            echo "Filename: $ipk"     >> Packages
-            echo "Size: $size"        >> Packages
-            echo "SHA256sum: $sha256" >> Packages
-            echo >> Packages
-          done
-          gzip -9fk Packages
-          SH
-          chmod +x "$FEED_DIR/.index_lite.sh"
-          "$FEED_DIR/.index_lite.sh" "$FEED_DIR"
-          [ -f keys/usign.pub ] && cp keys/usign.pub "$FEED_DIR/keys/"
+          FEED_OUT="$SITE_DIR/${{ matrix.series }}"
+          PACKAGE_FILE="$(basename "$(find "$DIST_DIR/${{ matrix.series }}" -maxdepth 1 -type f -name "*.${{ matrix.package_ext }}" | head -n1)")"
 
-      - name: Make index.html (nice landing)
-        shell: bash
-        run: |
-          cat > "$FEED_DIR/index.html" <<'HTML'
+          if [[ "${{ matrix.series }}" == "24.10" ]]; then
+            if [[ -f "$FEED_OUT/keys/usign.pub" && -f "$FEED_OUT/Packages.sig" ]]; then
+              cat > "$FEED_OUT/index.html" <<'HTML'
           <!doctype html>
           <meta charset="utf-8">
-          <title>TPROXY-Manager feed</title>
-          <h2>TPROXY-Manager opkg feed</h2>
-          <p>Добавьте этот фид в OpenWrt:</p>
+          <title>TPROXY-Manager feed for OpenWrt 24.10</title>
+          <h2>TPROXY-Manager feed for OpenWrt 24.10.x (opkg)</h2>
+          <p>Установка из feed:</p>
           <pre>
-          wget -O /tmp/usign.pub https://rico-x.github.io/tproxy-manager/keys/usign.pub && opkg-key add /tmp/usign.pub
-          echo 'src/gz tproxy https://rico-x.github.io/tproxy-manager/' >> /etc/opkg/customfeeds.conf
+          wget -O /tmp/usign.pub https://rico-x.github.io/tproxy-manager/24.10/keys/usign.pub
+          opkg-key add /tmp/usign.pub
+          echo 'src/gz tproxy https://rico-x.github.io/tproxy-manager/24.10' >> /etc/opkg/customfeeds.conf
           opkg update
           opkg install tproxy-manager
+          </pre>
+          <p>Локальная установка:</p>
+          <pre>
+          opkg install /tmp/PACKAGE_FILE
           </pre>
           <ul>
             <li><a href="Packages">Packages</a></li>
             <li><a href="Packages.gz">Packages.gz</a></li>
             <li><a href="Packages.sig">Packages.sig</a></li>
             <li><a href="keys/usign.pub">keys/usign.pub</a></li>
+            <li><a href="PACKAGE_FILE">PACKAGE_FILE</a></li>
           </ul>
           HTML
-
-      - name: Sign feed (optional)
-        env:
-          USIGN_SECRET: ${{ secrets.USIGN_SECRET }}
-        shell: bash
-        run: |
-          set -e
-          if [ -z "${USIGN_SECRET:-}" ]; then
-            echo "USIGN_SECRET is empty; skip signing."
-            exit 0
+            else
+              cat > "$FEED_OUT/index.html" <<'HTML'
+          <!doctype html>
+          <meta charset="utf-8">
+          <title>TPROXY-Manager packages for OpenWrt 24.10</title>
+          <h2>TPROXY-Manager for OpenWrt 24.10.x (opkg)</h2>
+          <p>Подпись opkg-feed не настроена в CI, поэтому для этой сборки гарантируется только локальная установка.</p>
+          <pre>
+          opkg install /tmp/PACKAGE_FILE
+          </pre>
+          <ul>
+            <li><a href="Packages">Packages</a></li>
+            <li><a href="PACKAGE_FILE">PACKAGE_FILE</a></li>
+          </ul>
+          HTML
+            fi
+          else
+            if [[ -f "$FEED_OUT/keys/tproxy-manager.pem" ]]; then
+              cat > "$FEED_OUT/index.html" <<'HTML'
+          <!doctype html>
+          <meta charset="utf-8">
+          <title>TPROXY-Manager feed for OpenWrt 25.12</title>
+          <h2>TPROXY-Manager feed for OpenWrt 25.12.x (apk)</h2>
+          <p>Установка из feed:</p>
+          <pre>
+          wget -O /etc/apk/keys/tproxy-manager.pem https://rico-x.github.io/tproxy-manager/25.12/keys/tproxy-manager.pem
+          echo 'https://rico-x.github.io/tproxy-manager/25.12/packages.adb' >> /etc/apk/repositories.d/customfeeds.list
+          apk update
+          apk add tproxy-manager
+          </pre>
+          <p>Локальная установка:</p>
+          <pre>
+          apk add --allow-untrusted /tmp/PACKAGE_FILE
+          </pre>
+          <ul>
+            <li><a href="packages.adb">packages.adb</a></li>
+            <li><a href="packages.adb.asc">packages.adb.asc</a></li>
+            <li><a href="packages.adb.sig">packages.adb.sig</a></li>
+            <li><a href="keys/tproxy-manager.pem">keys/tproxy-manager.pem</a></li>
+            <li><a href="PACKAGE_FILE">PACKAGE_FILE</a></li>
+          </ul>
+          HTML
+            else
+              cat > "$FEED_OUT/index.html" <<'HTML'
+          <!doctype html>
+          <meta charset="utf-8">
+          <title>TPROXY-Manager packages for OpenWrt 25.12</title>
+          <h2>TPROXY-Manager for OpenWrt 25.12.x (apk)</h2>
+          <p>Подпись apk-feed не настроена в CI, поэтому для этой сборки гарантируется только локальная установка.</p>
+          <pre>
+          apk add --allow-untrusted /tmp/PACKAGE_FILE
+          </pre>
+          <ul>
+            <li><a href="packages.adb">packages.adb</a></li>
+            <li><a href="PACKAGE_FILE">PACKAGE_FILE</a></li>
+          </ul>
+          HTML
+            fi
           fi
-          curl -fsSL https://github.com/openwrt/usign/archive/refs/heads/master.tar.gz -o usign.tar.gz
-          mkdir usign-src && tar xzf usign.tar.gz -C usign-src --strip-components=1
-          cmake -S usign-src -B usign-build
-          cmake --build usign-build -j"$(nproc)"
-          echo "$USIGN_SECRET" | base64 -d > /tmp/usign.key
-          chmod 600 /tmp/usign.key
-          ./usign-build/usign -S -m "$FEED_DIR/Packages" -s /tmp/usign.key
-          ls -l "$FEED_DIR"/Packages*
 
-      - name: ZIP bundle (versioned)
-        shell: bash
-        run: |
-          VER="${{ steps.meta.outputs.tag }}"
-          mkdir -p release
-          (cd dist && sha256sum *.ipk > "SHA256SUMS_${VER}.txt")
-          (cd dist && zip -9 "../release/tproxy-manager_${VER}.zip" *.ipk "SHA256SUMS_${VER}.txt")
-          ls -lah release
+          perl -0pi -e 's/PACKAGE_FILE/'"$PACKAGE_FILE"'/g' "$FEED_OUT/index.html"
 
-      - name: Upload Pages artifact (feed/)
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: feed
-
-      - name: Upload artifacts (versioned)
+      - name: Upload feed artifact
         uses: actions/upload-artifact@v4
         with:
-          name: "tproxy-manager_${{ steps.meta.outputs.tag }}"
-          path: |
-            dist/*.ipk
-            release/*.zip
-            feed/*
+          name: feed-${{ matrix.series }}
+          path: ${{ env.SITE_DIR }}/${{ matrix.series }}
 
-  release:
+      - name: Upload dist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.series }}
+          path: ${{ env.DIST_DIR }}/${{ matrix.series }}
+
+  pages-artifact:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - name: Download artifacts
+      - name: Download feed artifacts
         uses: actions/download-artifact@v4
         with:
           path: dl
 
-      - name: Create/Update GitHub Release and upload assets
+      - name: Assemble Pages site
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p site/24.10 site/25.12
+          cp -a dl/feed-24.10/. site/24.10/
+          cp -a dl/feed-25.12/. site/25.12/
+
+          cat > site/index.html <<'HTML'
+          <!doctype html>
+          <meta charset="utf-8">
+          <title>TPROXY-Manager package feeds</title>
+          <h1>TPROXY-Manager package feeds</h1>
+          <p>Выберите ветку OpenWrt:</p>
+          <ul>
+            <li><a href="24.10/">OpenWrt 24.10.x (opkg / .ipk)</a></li>
+            <li><a href="25.12/">OpenWrt 25.12.x (apk / .apk)</a></li>
+          </ul>
+          <p>Подробная документация: <a href="https://github.com/rico-x/tproxy-manager#readme">README</a>.</p>
+          HTML
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  release:
+    if: needs.meta.outputs.create_release == '1'
+    needs:
+      - meta
+      - build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download dist artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dl
+
+      - name: Create or update GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ needs.build.outputs.tag }}              # при ручном запуске тег будет создан автоматически
-          target_commitish: ${{ github.sha }}                   # коммит текущего запуска
+          tag_name: ${{ needs.meta.outputs.release_tag }}
+          target_commitish: ${{ github.sha }}
           make_latest: true
           generate_release_notes: true
           files: |
-            dl/**/dist/*.ipk
-            dl/**/release/*.zip
-            dl/**/feed/Packages
-            dl/**/feed/Packages.gz
-            dl/**/feed/Packages.sig
+            dl/**/dist-24.10/**/*.ipk
+            dl/**/dist-24.10/**/SHA256SUMS_24.10.txt
+            dl/**/dist-25.12/**/*.apk
+            dl/**/dist-25.12/**/SHA256SUMS_25.12.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   pages-deploy:
-    needs: build
+    needs: pages-artifact
     runs-on: ubuntu-latest
     permissions:
       pages: write
@@ -263,6 +362,7 @@ jobs:
     steps:
       - name: Configure Pages
         uses: actions/configure-pages@v5
+
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4

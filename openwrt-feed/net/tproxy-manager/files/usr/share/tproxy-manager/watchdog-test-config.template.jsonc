@@ -1,0 +1,28 @@
+{
+  "log": {
+    "loglevel": "warning"
+  },
+  "inbounds": [
+    {
+      "tag": "watchdog-socks-in",
+      "listen": "127.0.0.1",
+      "port": __TEST_PORT__,
+      "protocol": "socks",
+      "settings": {
+        "auth": "noauth",
+        "udp": true
+      }
+    }
+  ],
+  "outbounds": __OUTBOUNDS__,
+  "routing": {
+    "domainStrategy": "AsIs",
+    "rules": [
+      {
+        "type": "field",
+        "inboundTag": ["watchdog-socks-in"],
+        "outboundTag": "__OUTBOUND_TAG__"
+      }
+    ]
+  }
+}

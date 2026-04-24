@@ -52,7 +52,7 @@ UCI:
 - `kmod-nft-socket`
 - root-доступ
 
-Пакетные зависимости задаются в [control](../pkg/tproxy-manager-ipk/CONTROL/control).
+Пакетные зависимости задаются в OpenWrt recipe [openwrt-feed/net/tproxy-manager/Makefile](../openwrt-feed/net/tproxy-manager/Makefile).
 
 ## Быстрый старт
 

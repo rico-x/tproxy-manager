@@ -1,0 +1,58 @@
+{
+  // Базовый шаблон для встроенного конвертера /usr/bin/vless2json.sh.
+  // Конвертер может заменить плейсхолдеры значениями из VLESS-ссылки.
+  "remarks": "__REMARKS__",
+  "outbounds": [
+    {
+      "protocol": "vless",
+      "tag": "proxy",
+      "settings": {
+        "vnext": [
+          {
+            "address": "__ADDRESS__",
+            "port": "__PORT__",
+            "users": [
+              {
+                "id": "__UUID__",
+                "encryption": "none",
+                "flow": "__FLOW__"
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "__NETWORK__",
+        "security": "__SECURITY__",
+        "realitySettings": {
+          "serverName": "__SERVER_NAME__",
+          "fingerprint": "__FINGERPRINT__",
+          "publicKey": "__PUBLIC_KEY__",
+          "shortId": "__SHORT_ID__",
+          "spiderX": "__SPIDER_X__"
+        },
+        "tcpSettings": {
+          "header": {
+            "type": "__HEADER_TYPE__"
+          }
+        }
+      }
+    },
+    {
+      "protocol": "freedom",
+      "tag": "direct",
+      "settings": {
+        "domainStrategy": "AsIs"
+      }
+    },
+    {
+      "protocol": "blackhole",
+      "tag": "block",
+      "settings": {
+        "response": {
+          "type": "http"
+        }
+      }
+    }
+  ]
+}

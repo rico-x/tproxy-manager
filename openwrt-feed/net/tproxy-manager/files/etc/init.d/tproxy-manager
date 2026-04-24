@@ -1,0 +1,113 @@
+#!/bin/sh /etc/rc.common
+# Простая init.d-обёртка для tproxy-manager.sh (без procd/oneshot трюков)
+# Установка:
+#   cp этот файл в /etc/init.d/tproxy-manager
+#   chmod +x /etc/init.d/tproxy-manager
+#   /etc/init.d/tproxy-manager enable
+#   /etc/init.d/tproxy-manager start
+# Проверка состояния:
+#   /etc/init.d/tproxy-manager status
+#
+# Скрипт делегирует все действия основному файлу /usr/bin/tproxy-manager.sh
+# и возвращает тот же код возврата, что и базовый скрипт.
+# Поддерживается необязательный аргумент режима портов: [bypass|only]
+# в командах start/restart — он перекрывает UCI на один запуск.
+
+START=99
+STOP=15
+
+# Путь к основному скрипту
+TPROXY_MANAGER="/usr/bin/tproxy-manager.sh"
+
+# Доп. команды
+EXTRA_COMMANDS="status diag usage"
+EXTRA_HELP="        status  Показать running|inactive и вернуть 0/1
+        diag    Печать диагностики
+        usage   Краткая справка на русском"
+
+# --- Вспомогательные функции -------------------------------------------------
+
+_need_prog() {
+    [ -x "$TPROXY_MANAGER" ] && return 0
+    echo "ОШИБКА: не найден исполняемый файл: $TPROXY_MANAGER" >&2
+    return 1
+}
+
+_pick_mode_arg() {
+    case "$1" in
+        bypass|only) echo "$1"; return 0 ;;
+    esac
+    echo ""
+}
+
+# --- Команды сервиса ---------------------------------------------------------
+
+start() {
+    _need_prog || return 1
+    local mode="$(_pick_mode_arg "$1")"
+    if [ -n "$mode" ]; then
+        "$TPROXY_MANAGER" start "$mode"
+    else
+        "$TPROXY_MANAGER" start
+    fi
+}
+
+stop() {
+    _need_prog || return 1
+    "$TPROXY_MANAGER" stop
+}
+
+restart() {
+    _need_prog || return 1
+    local mode="$(_pick_mode_arg "$1")"
+    if [ -n "$mode" ]; then
+        "$TPROXY_MANAGER" restart "$mode"
+    else
+        "$TPROXY_MANAGER" restart
+    fi
+}
+
+reload() {
+    # Для совместимости: делаем то же, что restart (без изменения поведения)
+    restart "$@"
+}
+
+status() {
+    _need_prog || { echo "inactive"; return 1; }
+    "$TPROXY_MANAGER" status >/dev/null 2>&1
+    rc=$?
+    if [ $rc -eq 0 ]; then
+        echo "running"
+    else
+        echo "inactive"
+    fi
+    return $rc
+}
+
+diag() {
+    _need_prog || return 1
+    "$TPROXY_MANAGER" diag
+}
+
+usage() {
+    cat <<'EOF'
+Использование:
+  /etc/init.d/tproxy-manager {start|stop|restart|reload|status|diag} [bypass|only]
+
+Описание команд:
+  start [bypass|only]   — применить правила TPROXY/nft. Не запускает демон.
+                          Необязательный аргумент режима портов:
+                          bypass — перечисленные порты обходят прокси;
+                          only   — проксируются только перечисленные порты.
+  stop                  — удалить правила (nft/ip rule/ip route), показать остатки.
+  restart [bypass|only] — полная переинициализация (эквивалент start).
+  reload                — синоним restart (удобно для LuCI/скриптов).
+  status                — вывести "running" или "inactive" и вернуть 0/1.
+  diag                  — подробная диагностика текущего состояния.
+
+Примечания:
+  • Аргумент [bypass|only] перекрывает UCI port_mode только для этого запуска.
+  • Для автозапуска при старте системы выполните: /etc/init.d/tproxy-manager enable
+  • Проверять реальное состояние лучше так: /etc/init.d/tproxy-manager status
+EOF
+}
