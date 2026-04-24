@@ -117,7 +117,7 @@ jobs:
         run: |
           set -euo pipefail
           ./scripts/fetch-apk-static.sh .apk-tools/apk.static >/tmp/apk-tool-path
-          ./.apk-tools/apk.static version
+          ./.apk-tools/apk.static --help >/dev/null
 
       - name: Prepare feed signing keys
         shell: bash

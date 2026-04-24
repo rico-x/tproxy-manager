@@ -20,6 +20,12 @@ CONTROL_FILE="$PKG_DIR/CONTROL/control"
   exit 1
 }
 
+PKG_DIR="$(cd "$PKG_DIR" && pwd)"
+OUT_DIR_ABS="$OUT_DIR"
+mkdir -p "$OUT_DIR_ABS"
+OUT_DIR_ABS="$(cd "$OUT_DIR_ABS" && pwd)"
+CONTROL_FILE="$PKG_DIR/CONTROL/control"
+
 PACKAGE_NAME="$(control_field Package "$CONTROL_FILE")"
 ARCH_RAW="$(control_field Architecture "$CONTROL_FILE")"
 MAINTAINER="$(control_field Maintainer "$CONTROL_FILE")"
@@ -32,9 +38,9 @@ trap 'rm -rf "$WORKDIR"' EXIT
 
 BUILDROOT="$WORKDIR/buildroot"
 SCRIPTDIR="$WORKDIR/scripts"
-OUT_FILE="$OUT_DIR/${PACKAGE_NAME}-${PKG_VERSION}.apk"
+OUT_FILE="$OUT_DIR_ABS/${PACKAGE_NAME}-${PKG_VERSION}.apk"
 
-mkdir -p "$BUILDROOT" "$SCRIPTDIR" "$OUT_DIR"
+mkdir -p "$BUILDROOT" "$SCRIPTDIR"
 
 copy_payload_tree "$PKG_DIR" "$BUILDROOT"
 normalize_tree "$BUILDROOT"

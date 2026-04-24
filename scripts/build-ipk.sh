@@ -19,11 +19,15 @@ IPKG_BUILD="${4:-${IPKG_BUILD:-$ROOT/ipkg-build}}"
   exit 1
 }
 
+PKG_DIR="$(cd "$PKG_DIR" && pwd)"
+mkdir -p "$OUT_DIR"
+OUT_DIR="$(cd "$OUT_DIR" && pwd)"
+
 WORKDIR="$(mktemp -d)"
 trap 'rm -rf "$WORKDIR"' EXIT
 
 STAGE_DIR="$WORKDIR/pkg"
-mkdir -p "$STAGE_DIR" "$OUT_DIR"
+mkdir -p "$STAGE_DIR"
 
 copy_payload_tree "$PKG_DIR" "$STAGE_DIR"
 copy_control_tree "$PKG_DIR" "$STAGE_DIR"
