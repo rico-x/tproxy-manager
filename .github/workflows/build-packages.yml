@@ -117,7 +117,7 @@ jobs:
         run: |
           set -euo pipefail
           ./scripts/fetch-apk-static.sh .apk-tools/apk.static >/tmp/apk-tool-path
-          ./.apk-tools/apk.static --help >/dev/null
+          test -x ./.apk-tools/apk.static
 
       - name: Prepare feed signing keys
         shell: bash
@@ -216,94 +216,7 @@ jobs:
           set -euo pipefail
           FEED_OUT="$SITE_DIR/${{ matrix.series }}"
           PACKAGE_FILE="$(basename "$(find "$DIST_DIR/${{ matrix.series }}" -maxdepth 1 -type f -name "*.${{ matrix.package_ext }}" | head -n1)")"
-
-          if [[ "${{ matrix.series }}" == "24.10" ]]; then
-            if [[ -f "$FEED_OUT/keys/usign.pub" && -f "$FEED_OUT/Packages.sig" ]]; then
-              cat > "$FEED_OUT/index.html" <<'HTML'
-              <!doctype html>
-              <meta charset="utf-8">
-              <title>TPROXY-Manager feed for OpenWrt 24.10</title>
-              <h2>TPROXY-Manager feed for OpenWrt 24.10.x (opkg)</h2>
-              <p>Install from feed:</p>
-              <pre>
-              wget -O /tmp/usign.pub https://rico-x.github.io/tproxy-manager/24.10/keys/usign.pub
-              opkg-key add /tmp/usign.pub
-              echo 'src/gz tproxy https://rico-x.github.io/tproxy-manager/24.10' >> /etc/opkg/customfeeds.conf
-              opkg update
-              opkg install tproxy-manager
-              </pre>
-              <p>Local install:</p>
-              <pre>
-              opkg install /tmp/__PACKAGE_FILE__
-              </pre>
-              <ul>
-                <li><a href="Packages">Packages</a></li>
-                <li><a href="Packages.gz">Packages.gz</a></li>
-                <li><a href="Packages.sig">Packages.sig</a></li>
-                <li><a href="keys/usign.pub">keys/usign.pub</a></li>
-                <li><a href="__PACKAGE_FILE__">__PACKAGE_FILE__</a></li>
-              </ul>
-              HTML
-            else
-              cat > "$FEED_OUT/index.html" <<'HTML'
-              <!doctype html>
-              <meta charset="utf-8">
-              <title>TPROXY-Manager packages for OpenWrt 24.10</title>
-              <h2>TPROXY-Manager for OpenWrt 24.10.x (opkg)</h2>
-              <p>Feed signing is not configured for this build. Use local install.</p>
-              <pre>
-              opkg install /tmp/__PACKAGE_FILE__
-              </pre>
-              <ul>
-                <li><a href="Packages">Packages</a></li>
-                <li><a href="Packages.gz">Packages.gz</a></li>
-                <li><a href="__PACKAGE_FILE__">__PACKAGE_FILE__</a></li>
-              </ul>
-              HTML
-            fi
-          else
-            if [[ -f "$FEED_OUT/keys/tproxy-manager.pem" ]]; then
-              cat > "$FEED_OUT/index.html" <<'HTML'
-              <!doctype html>
-              <meta charset="utf-8">
-              <title>TPROXY-Manager feed for OpenWrt 25.12</title>
-              <h2>TPROXY-Manager feed for OpenWrt 25.12.x (apk)</h2>
-              <p>Install from feed:</p>
-              <pre>
-              wget -O /etc/apk/keys/tproxy-manager.pem https://rico-x.github.io/tproxy-manager/25.12/keys/tproxy-manager.pem
-              echo 'https://rico-x.github.io/tproxy-manager/25.12/packages.adb' >> /etc/apk/repositories.d/customfeeds.list
-              apk update
-              apk add tproxy-manager
-              </pre>
-              <p>Local install:</p>
-              <pre>
-              apk add --allow-untrusted /tmp/__PACKAGE_FILE__
-              </pre>
-              <ul>
-                <li><a href="packages.adb">packages.adb</a></li>
-                <li><a href="keys/tproxy-manager.pem">keys/tproxy-manager.pem</a></li>
-                <li><a href="__PACKAGE_FILE__">__PACKAGE_FILE__</a></li>
-              </ul>
-              HTML
-            else
-              cat > "$FEED_OUT/index.html" <<'HTML'
-              <!doctype html>
-              <meta charset="utf-8">
-              <title>TPROXY-Manager packages for OpenWrt 25.12</title>
-              <h2>TPROXY-Manager for OpenWrt 25.12.x (apk)</h2>
-              <p>Feed signing is not configured for this build. Use local install.</p>
-              <pre>
-              apk add --allow-untrusted /tmp/__PACKAGE_FILE__
-              </pre>
-              <ul>
-                <li><a href="packages.adb">packages.adb</a></li>
-                <li><a href="__PACKAGE_FILE__">__PACKAGE_FILE__</a></li>
-              </ul>
-              HTML
-            fi
-          fi
-
-          perl -0pi -e "s/__PACKAGE_FILE__/\Q$PACKAGE_FILE\E/g" "$FEED_OUT/index.html"
+          ./scripts/render-feed-page.sh "${{ matrix.series }}" "$FEED_OUT" "$PACKAGE_FILE"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
@@ -336,17 +249,15 @@ jobs:
           mkdir -p site/24.10 site/25.12
           cp -a dl/build-24.10/site/24.10/. site/24.10/
           cp -a dl/build-25.12/site/25.12/. site/25.12/
-
-          cat > site/index.html <<'HTML'
-          <!doctype html>
-          <meta charset="utf-8">
-          <title>TPROXY-Manager package feeds</title>
-          <h2>TPROXY-Manager package feeds</h2>
-          <ul>
-            <li><a href="24.10/">OpenWrt 24.10.x (opkg / .ipk)</a></li>
-            <li><a href="25.12/">OpenWrt 25.12.x (apk / .apk)</a></li>
-          </ul>
-          HTML
+          printf '%s\n' \
+            '<!doctype html>' \
+            '<meta charset="utf-8">' \
+            '<title>TPROXY-Manager package feeds</title>' \
+            '<h2>TPROXY-Manager package feeds</h2>' \
+            '<ul>' \
+            '  <li><a href="24.10/">OpenWrt 24.10.x (opkg / .ipk)</a></li>' \
+            '  <li><a href="25.12/">OpenWrt 25.12.x (apk / .apk)</a></li>' \
+            '</ul>' > site/index.html
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
