@@ -23,6 +23,7 @@ packages=( "$FEED_DIR"/*.apk )
 }
 
 "$APK_TOOL" mkndx \
+  --allow-untrusted \
   --description "$DESCRIPTION" \
   --output "$FEED_DIR/packages.adb" \
   "${packages[@]}"
