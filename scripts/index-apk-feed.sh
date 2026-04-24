@@ -29,5 +29,5 @@ packages=( "$FEED_DIR"/*.apk )
   "${packages[@]}"
 
 if [ -n "$PRIVATE_KEY" ] && [ -f "$PRIVATE_KEY" ]; then
-  "$APK_TOOL" --sign-key "$PRIVATE_KEY" adbsign "$FEED_DIR/packages.adb"
+  "$APK_TOOL" --allow-untrusted --sign-key "$PRIVATE_KEY" adbsign "$FEED_DIR/packages.adb"
 fi
