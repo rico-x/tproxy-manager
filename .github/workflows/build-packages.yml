@@ -1,0 +1,388 @@
+name: Build OpenWrt Packages
+
+on:
+  push:
+    branches: [ "main" ]
+    tags: [ "v*" ]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Optional release tag in vYY.M.D format"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+env:
+  PKG_DIR: pkg/tproxy-manager
+  SITE_DIR: site
+  DIST_DIR: dist
+  PACKAGE_NAME: tproxy-manager
+
+jobs:
+  meta:
+    runs-on: ubuntu-latest
+    outputs:
+      apk_version: ${{ steps.meta.outputs.apk_version }}
+      artifact_version: ${{ steps.meta.outputs.artifact_version }}
+      create_release: ${{ steps.meta.outputs.create_release }}
+      opkg_version: ${{ steps.meta.outputs.opkg_version }}
+      release_tag: ${{ steps.meta.outputs.release_tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute package versions
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SHORT_SHA="$(git rev-parse --short=8 HEAD)"
+          INPUT_TAG="${{ github.event.inputs.tag || '' }}"
+          RELEASE_TAG=""
+          CREATE_RELEASE="0"
+
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            RELEASE_TAG="${GITHUB_REF_NAME}"
+            CREATE_RELEASE="1"
+          elif [[ -n "$INPUT_TAG" ]]; then
+            RELEASE_TAG="$INPUT_TAG"
+            CREATE_RELEASE="1"
+          fi
+
+          if [[ -n "$RELEASE_TAG" ]]; then
+            if [[ ! "$RELEASE_TAG" =~ ^v[0-9]{2}\.[0-9]{1,2}\.[0-9]{1,2}$ ]]; then
+              echo "Invalid release tag: $RELEASE_TAG" >&2
+              exit 1
+            fi
+            BASE_VERSION="${RELEASE_TAG#v}"
+          else
+            BASE_VERSION="$(date -u +%Y.%m.%d)~${SHORT_SHA}"
+          fi
+
+          echo "artifact_version=$BASE_VERSION" >> "$GITHUB_OUTPUT"
+          echo "create_release=$CREATE_RELEASE" >> "$GITHUB_OUTPUT"
+          echo "opkg_version=${BASE_VERSION}-1" >> "$GITHUB_OUTPUT"
+          echo "apk_version=${BASE_VERSION}-r1" >> "$GITHUB_OUTPUT"
+          echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: meta
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - series: "24.10"
+            package_ext: "ipk"
+          - series: "25.12"
+            package_ext: "apk"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install base tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ca-certificates curl gzip tar coreutils findutils gawk sed perl zip \
+            xz-utils file build-essential cmake binutils
+
+      - name: Make build scripts executable
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod 0755 scripts/*.sh
+
+      - name: Prepare ipkg-build
+        if: matrix.series == '24.10'
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL https://raw.githubusercontent.com/openwrt/openwrt/openwrt-24.10/scripts/ipkg-build -o ipkg-build
+          chmod 0755 ipkg-build
+          ./ipkg-build -h >/dev/null || true
+
+      - name: Prepare apk.static
+        if: matrix.series == '25.12'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/fetch-apk-static.sh .apk-tools/apk.static >/tmp/apk-tool-path
+          ./.apk-tools/apk.static version
+
+      - name: Prepare feed signing keys
+        shell: bash
+        env:
+          APK_PRIVATE_KEY: ${{ secrets.APK_PRIVATE_KEY }}
+          USIGN_SECRET: ${{ secrets.USIGN_SECRET }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${{ matrix.series }}" == "24.10" && -n "${USIGN_SECRET:-}" ]]; then
+            printf '%s' "$USIGN_SECRET" | base64 -d > /tmp/tproxy-manager-usign.key
+            chmod 0600 /tmp/tproxy-manager-usign.key
+          fi
+
+          if [[ "${{ matrix.series }}" == "25.12" && -n "${APK_PRIVATE_KEY:-}" ]]; then
+            printf '%s\n' "$APK_PRIVATE_KEY" > /tmp/tproxy-manager-apk.key
+            chmod 0600 /tmp/tproxy-manager-apk.key
+            if [[ -f keys/tproxy-manager-apk.pem ]]; then
+              openssl ec -in /tmp/tproxy-manager-apk.key -pubout -out /tmp/tproxy-manager-apk.pem
+              cmp -s /tmp/tproxy-manager-apk.pem keys/tproxy-manager-apk.pem || {
+                echo "APK_PRIVATE_KEY does not match keys/tproxy-manager-apk.pem" >&2
+                exit 1
+              }
+            fi
+          fi
+
+      - name: Build ipk package
+        if: matrix.series == '24.10'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$DIST_DIR/24.10"
+          ./scripts/build-ipk.sh "$PKG_DIR" "$DIST_DIR/24.10" "${{ needs.meta.outputs.opkg_version }}" ./ipkg-build
+          ls -lah "$DIST_DIR/24.10"
+
+      - name: Build apk package
+        if: matrix.series == '25.12'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$DIST_DIR/25.12"
+          ./scripts/build-apk.sh "$PKG_DIR" "$DIST_DIR/25.12" "${{ needs.meta.outputs.apk_version }}" ./.apk-tools/apk.static
+          ls -lah "$DIST_DIR/25.12"
+
+      - name: Build and sign opkg feed
+        if: matrix.series == '24.10'
+        shell: bash
+        env:
+          USIGN_SECRET: ${{ secrets.USIGN_SECRET }}
+        run: |
+          set -euo pipefail
+          FEED_OUT="$SITE_DIR/24.10"
+          mkdir -p "$FEED_OUT" "$FEED_OUT/keys"
+          cp "$DIST_DIR/24.10"/*.ipk "$FEED_OUT"/
+          ./scripts/index-ipk-feed.sh "$FEED_OUT"
+
+          if [[ -f keys/usign.pub ]]; then
+            cp keys/usign.pub "$FEED_OUT/keys/usign.pub"
+          fi
+
+          if [[ -n "${USIGN_SECRET:-}" ]]; then
+            curl -fsSL https://github.com/openwrt/usign/archive/refs/heads/master.tar.gz -o usign.tar.gz
+            mkdir usign-src
+            tar xzf usign.tar.gz -C usign-src --strip-components=1
+            cmake -S usign-src -B usign-build
+            cmake --build usign-build -j"$(nproc)"
+            ./usign-build/usign -S -m "$FEED_OUT/Packages" -s /tmp/tproxy-manager-usign.key
+          fi
+
+      - name: Build and sign apk feed
+        if: matrix.series == '25.12'
+        shell: bash
+        run: |
+          set -euo pipefail
+          FEED_OUT="$SITE_DIR/25.12"
+          mkdir -p "$FEED_OUT" "$FEED_OUT/keys"
+          cp "$DIST_DIR/25.12"/*.apk "$FEED_OUT"/
+          ./scripts/index-apk-feed.sh "$FEED_OUT" ./.apk-tools/apk.static /tmp/tproxy-manager-apk.key "TPROXY-Manager feed for OpenWrt 25.12"
+
+          if [[ -f /tmp/tproxy-manager-apk.key && -f keys/tproxy-manager-apk.pem ]]; then
+            cp keys/tproxy-manager-apk.pem "$FEED_OUT/keys/tproxy-manager.pem"
+          fi
+
+      - name: Write checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          (
+            cd "$DIST_DIR/${{ matrix.series }}"
+            sha256sum * > "SHA256SUMS_${{ matrix.series }}.txt"
+          )
+
+      - name: Render feed landing page
+        shell: bash
+        run: |
+          set -euo pipefail
+          FEED_OUT="$SITE_DIR/${{ matrix.series }}"
+          PACKAGE_FILE="$(basename "$(find "$DIST_DIR/${{ matrix.series }}" -maxdepth 1 -type f -name "*.${{ matrix.package_ext }}" | head -n1)")"
+
+          if [[ "${{ matrix.series }}" == "24.10" ]]; then
+            if [[ -f "$FEED_OUT/keys/usign.pub" && -f "$FEED_OUT/Packages.sig" ]]; then
+              cat > "$FEED_OUT/index.html" <<'HTML'
+              <!doctype html>
+              <meta charset="utf-8">
+              <title>TPROXY-Manager feed for OpenWrt 24.10</title>
+              <h2>TPROXY-Manager feed for OpenWrt 24.10.x (opkg)</h2>
+              <p>Install from feed:</p>
+              <pre>
+              wget -O /tmp/usign.pub https://rico-x.github.io/tproxy-manager/24.10/keys/usign.pub
+              opkg-key add /tmp/usign.pub
+              echo 'src/gz tproxy https://rico-x.github.io/tproxy-manager/24.10' >> /etc/opkg/customfeeds.conf
+              opkg update
+              opkg install tproxy-manager
+              </pre>
+              <p>Local install:</p>
+              <pre>
+              opkg install /tmp/__PACKAGE_FILE__
+              </pre>
+              <ul>
+                <li><a href="Packages">Packages</a></li>
+                <li><a href="Packages.gz">Packages.gz</a></li>
+                <li><a href="Packages.sig">Packages.sig</a></li>
+                <li><a href="keys/usign.pub">keys/usign.pub</a></li>
+                <li><a href="__PACKAGE_FILE__">__PACKAGE_FILE__</a></li>
+              </ul>
+              HTML
+            else
+              cat > "$FEED_OUT/index.html" <<'HTML'
+              <!doctype html>
+              <meta charset="utf-8">
+              <title>TPROXY-Manager packages for OpenWrt 24.10</title>
+              <h2>TPROXY-Manager for OpenWrt 24.10.x (opkg)</h2>
+              <p>Feed signing is not configured for this build. Use local install.</p>
+              <pre>
+              opkg install /tmp/__PACKAGE_FILE__
+              </pre>
+              <ul>
+                <li><a href="Packages">Packages</a></li>
+                <li><a href="Packages.gz">Packages.gz</a></li>
+                <li><a href="__PACKAGE_FILE__">__PACKAGE_FILE__</a></li>
+              </ul>
+              HTML
+            fi
+          else
+            if [[ -f "$FEED_OUT/keys/tproxy-manager.pem" ]]; then
+              cat > "$FEED_OUT/index.html" <<'HTML'
+              <!doctype html>
+              <meta charset="utf-8">
+              <title>TPROXY-Manager feed for OpenWrt 25.12</title>
+              <h2>TPROXY-Manager feed for OpenWrt 25.12.x (apk)</h2>
+              <p>Install from feed:</p>
+              <pre>
+              wget -O /etc/apk/keys/tproxy-manager.pem https://rico-x.github.io/tproxy-manager/25.12/keys/tproxy-manager.pem
+              echo 'https://rico-x.github.io/tproxy-manager/25.12/packages.adb' >> /etc/apk/repositories.d/customfeeds.list
+              apk update
+              apk add tproxy-manager
+              </pre>
+              <p>Local install:</p>
+              <pre>
+              apk add --allow-untrusted /tmp/__PACKAGE_FILE__
+              </pre>
+              <ul>
+                <li><a href="packages.adb">packages.adb</a></li>
+                <li><a href="keys/tproxy-manager.pem">keys/tproxy-manager.pem</a></li>
+                <li><a href="__PACKAGE_FILE__">__PACKAGE_FILE__</a></li>
+              </ul>
+              HTML
+            else
+              cat > "$FEED_OUT/index.html" <<'HTML'
+              <!doctype html>
+              <meta charset="utf-8">
+              <title>TPROXY-Manager packages for OpenWrt 25.12</title>
+              <h2>TPROXY-Manager for OpenWrt 25.12.x (apk)</h2>
+              <p>Feed signing is not configured for this build. Use local install.</p>
+              <pre>
+              apk add --allow-untrusted /tmp/__PACKAGE_FILE__
+              </pre>
+              <ul>
+                <li><a href="packages.adb">packages.adb</a></li>
+                <li><a href="__PACKAGE_FILE__">__PACKAGE_FILE__</a></li>
+              </ul>
+              HTML
+            fi
+          fi
+
+          perl -0pi -e "s/__PACKAGE_FILE__/\Q$PACKAGE_FILE\E/g" "$FEED_OUT/index.html"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ matrix.series }}
+          path: |
+            ${{ env.DIST_DIR }}/${{ matrix.series }}/*
+            ${{ env.SITE_DIR }}/${{ matrix.series }}/*
+            ${{ env.SITE_DIR }}/${{ matrix.series }}/keys/*
+
+  pages:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dl
+
+      - name: Assemble site
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p site/24.10 site/25.12
+          cp -a dl/build-24.10/site/24.10/. site/24.10/
+          cp -a dl/build-25.12/site/25.12/. site/25.12/
+
+          cat > site/index.html <<'HTML'
+          <!doctype html>
+          <meta charset="utf-8">
+          <title>TPROXY-Manager package feeds</title>
+          <h2>TPROXY-Manager package feeds</h2>
+          <ul>
+            <li><a href="24.10/">OpenWrt 24.10.x (opkg / .ipk)</a></li>
+            <li><a href="25.12/">OpenWrt 25.12.x (apk / .apk)</a></li>
+          </ul>
+          HTML
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+  release:
+    if: needs.meta.outputs.create_release == '1'
+    needs: [meta, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dl
+
+      - name: Create or update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.meta.outputs.release_tag }}
+          target_commitish: ${{ github.sha }}
+          make_latest: true
+          generate_release_notes: true
+          files: |
+            dl/**/dist/**/*.ipk
+            dl/**/dist/**/*.apk
+            dl/**/dist/**/SHA256SUMS_24.10.txt
+            dl/**/dist/**/SHA256SUMS_25.12.txt
+            dl/**/site/**/Packages
+            dl/**/site/**/Packages.gz
+            dl/**/site/**/Packages.sig
+            dl/**/site/**/packages.adb
+            dl/**/site/**/keys/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

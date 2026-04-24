@@ -405,19 +405,46 @@ Runtime-state:
 | Каталог списков и шаблонов | `/etc/tproxy-manager` |
 | Xray configs | `/etc/xray` |
 | Mihomo configs | `/etc/mihomo` |
-| OpenWrt source-package | `openwrt-feed/net/tproxy-manager/Makefile` |
+| Package source tree | `pkg/tproxy-manager/` |
 
 ## Сборка пакета
 
-Пакет теперь собирается как штатный OpenWrt source-package из:
+Пакет собирается напрямую из дерева:
 
-- `openwrt-feed/net/tproxy-manager/Makefile`
-- `openwrt-feed/net/tproxy-manager/files/`
+- `pkg/tproxy-manager/`
+- `pkg/tproxy-manager/CONTROL/control`
+- `pkg/tproxy-manager/CONTROL/postinst`
+- `pkg/tproxy-manager/CONTROL/prerm`
 
-Ручная сборка через `ipkg-build` и каталог `pkg/tproxy-manager-ipk/CONTROL/*` больше не являются основной схемой публикации. CI собирает пакет через OpenWrt SDK:
+Это единый payload-корень для обоих форматов пакета. Отдельных деревьев `ipk` и `apk` в проекте больше нет.
 
-- `24.10.6` -> `.ipk` + `Packages.gz`
-- `25.12.2` -> `.apk` + `packages.adb`
+Скрипты сборки и индексации:
+
+- `scripts/build-ipk.sh`
+- `scripts/build-apk.sh`
+- `scripts/index-ipk-feed.sh`
+- `scripts/index-apk-feed.sh`
+- `scripts/fetch-apk-static.sh`
+
+CI не использует OpenWrt SDK. Вместо этого он:
+
+- собирает `24.10.x` пакет через `ipkg-build`;
+- собирает `25.12.x` пакет через `apk.static mkpkg`;
+- индексирует `Packages.gz` для `opkg`;
+- индексирует и подписывает `packages.adb` для `apk`.
+
+Локально это выглядит так:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/openwrt/openwrt/openwrt-24.10/scripts/ipkg-build -o ipkg-build
+chmod +x ipkg-build
+./scripts/build-ipk.sh ./pkg/tproxy-manager ./dist/24.10 25.12.2-1 ./ipkg-build
+
+./scripts/fetch-apk-static.sh ./.apk-tools/apk.static
+./scripts/build-apk.sh ./pkg/tproxy-manager ./dist/25.12 25.12.2-r1 ./.apk-tools/apk.static
+```
+
+`scripts/fetch-apk-static.sh` использует `docker`, чтобы вытащить `apk.static` из `alpine:edge`.
 
 Обычные push в `main` собирают feed и Pages-артефакты. GitHub Release создаётся только для тегов `vYY.M.D` или ручного запуска workflow с указанным тегом.
 
