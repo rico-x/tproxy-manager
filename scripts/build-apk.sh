@@ -31,6 +31,7 @@ ARCH_RAW="$(control_field Architecture "$CONTROL_FILE")"
 MAINTAINER="$(control_field Maintainer "$CONTROL_FILE")"
 DESCRIPTION="$(control_field Description "$CONTROL_FILE")"
 DEPENDS_RAW="$(control_field Depends "$CONTROL_FILE")"
+APK_DEPENDS="$(apk_depends_from_csv "$DEPENDS_RAW")"
 APK_ARCH="$(apk_arch_from_control "$ARCH_RAW")"
 
 WORKDIR="$(mktemp -d)"
@@ -76,9 +77,9 @@ MKPKG_ARGS=(
   --script "pre-deinstall:$SCRIPTDIR/pre-deinstall.sh"
 )
 
-while IFS= read -r dep; do
-  MKPKG_ARGS+=( --info "depends:$dep" )
-done < <(split_depends_csv "$DEPENDS_RAW")
+if [ -n "$APK_DEPENDS" ]; then
+  MKPKG_ARGS+=( --info "depends:$APK_DEPENDS" )
+fi
 
 MKPKG_ARGS+=( --script "pre-upgrade:$SCRIPTDIR/pre-upgrade.sh" )
 

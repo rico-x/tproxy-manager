@@ -89,6 +89,26 @@ split_depends_csv() {
   done
 }
 
+apk_depends_from_csv() {
+  local raw="${1-}"
+  local dep
+  local out=()
+
+  IFS=',' read -r -a deps <<< "$raw"
+  for dep in "${deps[@]}"; do
+    dep="$(trim "$dep")"
+    [ -n "$dep" ] || continue
+    dep="${dep// /}"
+    dep="${dep//\(/}"
+    dep="${dep//\)/}"
+    out+=( "$dep" )
+  done
+
+  if [ "${#out[@]}" -gt 0 ]; then
+    printf '%s' "${out[*]}"
+  fi
+}
+
 apk_arch_from_control() {
   local arch="$1"
   if [ "$arch" = "all" ]; then
