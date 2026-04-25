@@ -347,7 +347,7 @@ jobs:
           printf '%s\n' "$CTRL" | grep -q '^Architecture: all$'
           printf '%s\n' "$CTRL" | grep -q "^Depends: $EXPECTED_DEPENDS$"
           grep -q '^Package: tproxy-manager$' "$PACKAGES_FILE"
-          grep -q '^Filename: tproxy-manager-.*\.ipk$' "$PACKAGES_FILE"
+          grep -Eq '^Filename: tproxy-manager[_-].*\.ipk$' "$PACKAGES_FILE"
 
       - name: Validate apk metadata and apk feed
         shell: bash
