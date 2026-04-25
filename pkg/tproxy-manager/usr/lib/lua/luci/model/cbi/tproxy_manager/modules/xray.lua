@@ -7,6 +7,7 @@ local sys = require "luci.sys"
 local http= require "luci.http"
 local disp= require "luci.dispatcher"
 local xml = require "luci.xml"
+local utils = require "luci.model.cbi.tproxy_manager.utils"
 local pcdata = xml.pcdata
 
 local XRAY_DIR  = "/etc/xray"
@@ -18,62 +19,12 @@ local function get_xray_bin()
   else return "xray" end
 end
 local XRAY_BIN = get_xray_bin()
-
-local function atomic_write(path, data)
-  data = (data or ""):gsub("\r\n","\n")
-  local dir, base = path:match("^(.*)/([^/]+)$")
-  local tmpdir = dir and dir or "/tmp"
-  if dir and not fs.access(dir) then
-    sys.call("mkdir -p '"..dir:gsub("'", "'\\''").."'")
-  end
-  local tmp = string.format("%s/.%s.%d.tmp", tmpdir, base or "tmp", math.random(1, 10^9))
-  fs.writefile(tmp, data)
-  fs.rename(tmp, path)
-end
-
-local function read_file(p)  return fs.readfile(p) or "" end
-local function write_file(p, s) atomic_write(p, s or "") end
-
--- JSONC: вырезаем комментарии вне строк
-local function strip_json_comments(s)
-  local out, i, n = {}, 1, #s
-  local in_str, esc = false, false
-  while i <= n do
-    local c = s:sub(i,i)
-    local d = s:sub(i+1,i+1)
-    if in_str then
-      out[#out+1] = c
-      if esc then esc = false
-      elseif c == "\\" then esc = true
-      elseif c == '"' then in_str = false end
-      i = i + 1
-    else
-      if c == '"' then in_str = true; out[#out+1] = c; i = i + 1
-      elseif c == '/' and d == '/' then
-        i = i + 2; while i <= n and s:sub(i,i) ~= '\n' do i = i + 1 end
-      elseif c == '/' and d == '*' then
-        i = i + 2
-        while i <= n-1 and not (s:sub(i,i) == '*' and s:sub(i+1,i+1) == '/') do i = i + 1 end
-        i = i + 2
-      else
-        out[#out+1] = c; i = i + 1
-      end
-    end
-  end
-  return table.concat(out)
-end
-
-local function validate_jsonc_text(text)
-  local ok_jsonc, jsonc = pcall(require, "luci.jsonc")
-  if not ok_jsonc or not jsonc then return true end
-  local cleaned = strip_json_comments(text or "")
-  local ok, parsed = pcall(jsonc.parse, cleaned)
-  return ok and (parsed ~= nil)
-end
+local read_file = utils.read_file
+local write_file = utils.write_file
 
 local function write_json_file_xray(path, text)
   text = (text or ""):gsub("\r\n", "\n")
-  if not validate_jsonc_text(text) then
+  if not utils.validate_jsonc_text(text) then
     return nil, "Некорректный JSON (ошибка разбора)"
   end
   write_file(path, text)
@@ -143,6 +94,11 @@ local function render(ctx)
     local chosen = fval("json_file")
     local found=false; for _,f in ipairs(json_files) do if f==chosen then found=true; break end end
     if not found then chosen = json_files[1] end
+    local function is_known_json_file(name)
+      if not name or name == "" or name:find("[/\\]") then return false end
+      for _, f in ipairs(json_files) do if f == name then return true end end
+      return false
+    end
 
     -- create/delete
     if http.formvalue("_json_create") == "1" then
@@ -185,19 +141,26 @@ local function render(ctx)
         buf[#buf+1] = string.format("<option value=\"%s\"%s>%s</option>", pcdata(f), sel, pcdata(f))
       end
       buf[#buf+1] = "</select>"
+      buf[#buf+1] = string.format("<input type=\"hidden\" name=\"json_file_selected\" value=\"%s\">", pcdata(chosen or ""))
       buf[#buf+1] = [[
 <script>
 (function(){
   var sel = document.querySelector('#json-editor select[name="json_file"]');
+  var hidden = document.querySelector('#json-editor input[name="json_file_selected"]');
   if (!sel) return;
+  function remember(){ if(hidden) hidden.value = sel.value || ''; }
+  remember();
   sel.addEventListener('change', function(){
     if (window.__xray_guard && !window.__xray_guard()) {
       this.value = this.getAttribute('data-prev') || this.value; return;
     }
+    remember();
     var base = ']] .. pcdata(url) .. [[';
     var target = base + "?tab=xray&json_file="+encodeURIComponent(sel.value);
     location.href = target;
   });
+  var form = sel.closest && sel.closest('form');
+  if(form) form.addEventListener('submit', remember, true);
   sel.setAttribute('data-prev', sel.value);
 })();
 </script>]]
@@ -214,10 +177,41 @@ local function render(ctx)
       function jedit.cfgvalue()
         local content = read_file(XRAY_DIR .. "/" .. chosen)
         return [[
-<textarea name="json_text" rows="22" style="width:650px" spellcheck="false">]] .. pcdata(content) .. [[</textarea>
-<div style="height:5px"></div>
+<style>
+#cbi-tproxy_manager .json-editor-cbi-full .cbi-value-title{display:none!important}
+#cbi-tproxy_manager .json-editor-cbi-full .cbi-value-field{display:block!important;margin-left:0!important;width:100%!important}
+.xray-json-editor-block{display:block;width:min(100%,680px);max-width:100%;clear:both}
+.xray-json-codebox{position:relative;width:100%;height:32rem;border:1px solid #d1d5db;border-radius:.35rem;background:#0f172a;overflow:hidden}
+.xray-json-codebox pre,
+.xray-json-codebox textarea[name="json_text"]{
+  position:absolute;inset:0;margin:0;padding:.65rem;box-sizing:border-box;
+  border:0;outline:0;resize:none;overflow:auto;
+  font:13px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+  tab-size:2;white-space:pre-wrap;word-break:break-word;
+}
+.xray-json-codebox pre{pointer-events:none;color:#d1d5db;background:#0f172a}
+.xray-json-codebox textarea[name="json_text"]{
+  width:100%;height:100%;background:transparent;color:transparent;caret-color:#f8fafc;
+  -webkit-text-fill-color:transparent;
+}
+.xray-json-codebox textarea[name="json_text"]::selection{background:rgba(96,165,250,.35)}
+.xray-json-codebox .json-key{color:#93c5fd}
+.xray-json-codebox .json-string{color:#86efac}
+.xray-json-codebox .json-number{color:#fbbf24}
+.xray-json-codebox .json-bool{color:#c4b5fd}
+.xray-json-codebox .json-null{color:#fca5a5}
+.xray-json-codebox .json-comment{color:#94a3b8;font-style:italic}
+.xray-json-codebox .json-punct{color:#e2e8f0}
+.xray-json-editor-block #json-status-box{display:block;width:100%;box-sizing:border-box;clear:both;margin-top:.35rem}
+</style>
+<div class="xray-json-editor-block">
+<div class="xray-json-codebox">
+<pre id="json_highlight" aria-hidden="true"></pre>
+<textarea name="json_text" rows="22" spellcheck="false">]] .. pcdata(content) .. [[</textarea>
+</div>
 <div class="box editor-wrap editor-680" id="json-status-box">
   <div id="json_status" style="margin:.08rem 0 .14rem 0; font-weight:600"></div>
+</div>
 </div>
 <script>
 (function(){
@@ -232,10 +226,26 @@ local function render(ctx)
       out+=c; i++;
     } return out;
   }
-  var ta=document.querySelector('textarea[name="json_text"]'), badge=document.getElementById('json_status');
+  var block=document.querySelector('.xray-json-editor-block');
+  if(block){ var row=block.closest && block.closest('.cbi-value'); if(row) row.classList.add('json-editor-cbi-full'); }
+  var ta=document.querySelector('textarea[name="json_text"]'), badge=document.getElementById('json_status'), hi=document.getElementById('json_highlight');
   function debounce(fn,ms){var t;return function(){clearTimeout(t);t=setTimeout(fn,ms)}}
+  function esc(s){return String(s).replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c]})}
+  function highlightJsonc(src){
+    src=src||'';
+    return esc(src).replace(/("(?:\\.|[^"\\])*"(\s*:)?|\/\/[^\n]*|\/\*[\s\S]*?\*\/|\btrue\b|\bfalse\b|\bnull\b|-?\b\d+(?:\.\d+)?(?:[eE][+\-]?\d+)?\b|[{}\[\],:])/g,function(m){
+      if(/^\/\//.test(m)||/^\/\*/.test(m))return '<span class="json-comment">'+m+'</span>';
+      if(/^"/.test(m))return '<span class="'+(/\s*:$/.test(m)?'json-key':'json-string')+'">'+m+'</span>';
+      if(/^(true|false)$/.test(m))return '<span class="json-bool">'+m+'</span>';
+      if(/^null$/.test(m))return '<span class="json-null">'+m+'</span>';
+      if(/^-?\d/.test(m))return '<span class="json-number">'+m+'</span>';
+      return '<span class="json-punct">'+m+'</span>';
+    });
+  }
+  function syncHighlight(){ if(!ta||!hi)return; hi.innerHTML=highlightJsonc(ta.value)+'\n'; hi.scrollTop=ta.scrollTop; hi.scrollLeft=ta.scrollLeft; }
   function validate(){ if(!ta||!badge)return; try{ JSON.parse(stripJsonComments(ta.value)); badge.textContent='JSONC валиден (комментарии разрешены)'; badge.style.color='#16a34a'; }catch(e){ badge.textContent='Ошибка JSON: '+e.message; badge.style.color='#dc2626'; } }
-  if(ta){ ta.addEventListener('input', debounce(validate,250)); validate();
+  var validateDebounced = debounce(validate,250);
+  if(ta){ ta.addEventListener('input', function(){ syncHighlight(); validateDebounced(); }); ta.addEventListener('scroll', syncHighlight); syncHighlight(); validate();
 
     var key = 'json:' + (document.querySelector('#json-editor select[name="json_file"]')||{}).value;
     try{
@@ -262,11 +272,13 @@ local function render(ctx)
       function bsave.write(self, section)
         if not self.map:formvalue(self:cbid(section)) then return end
         local new = http.formvalue("json_text") or ""
-        local jf  = fval_last("json_file") or chosen
+        local jf  = fval_last("json_file_selected")
+        if not is_known_json_file(jf) then jf = fval_last("json_file") end
+        if not is_known_json_file(jf) then jf = chosen end
         local ok, err = write_json_file_xray(XRAY_DIR .. "/" .. jf, new)
         if not ok then set_err(err or "save error")
         else set_err(nil); set_info("JSON сохранён: "..jf) end
-        redirect_here("xray")
+        http.redirect(self_url({ tab = "xray", json_file = jf }))
       end
     end
 

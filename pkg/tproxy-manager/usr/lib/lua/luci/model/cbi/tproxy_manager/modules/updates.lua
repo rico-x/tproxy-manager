@@ -8,6 +8,7 @@ local http  = require "luci.http"
 local disp  = require "luci.dispatcher"
 local xml   = require "luci.xml"
 local jsonc = require "luci.jsonc"
+local utils = require "luci.model.cbi.tproxy_manager.utils"
 
 local pcdata = xml.pcdata
 
@@ -20,55 +21,17 @@ local CRON_TAG     = "# tproxy-manager-geo-update"
 local SYSLOG_TAG   = "tproxy-manager-geoip-update"
 
 -- ---------- Файловые хелперы ----------
-local function atomic_write(path, data)
-  data = (data or ""):gsub("\r\n","\n")
-  local dir, base = path:match("^(.*)/([^/]+)$")
-  local tmpdir = dir and dir or "/tmp"
-  if dir and not fs.access(dir) then
-    sys.call("mkdir -p '"..dir:gsub("'", "'\\''").."'")
+local read_file = utils.read_file
+local write_file = utils.write_file
+
+local function parse_jsonc_or_error(raw)
+  local data, err = utils.parse_jsonc_or_error(raw, {})
+  if data == nil then
+    return nil, err or "Некорректный JSON/JSONC"
   end
-  local tmp = string.format("%s/.%s.%d.tmp", tmpdir, base or "tmp", math.random(1, 10^9))
-  fs.writefile(tmp, data or "")
-  fs.rename(tmp, path)
-end
-
-local function read_file(p)  return fs.readfile(p) or "" end
-local function write_file(p, s) atomic_write(p, s or "") end
-
--- ---------- JSONC хелперы (локальные) ----------
-local function strip_json_comments(s)
-  local out, i, n = {}, 1, #s
-  local in_str, esc = false, false
-  while i <= n do
-    local c = s:sub(i,i)
-    local d = s:sub(i+1,i+1)
-    if in_str then
-      out[#out+1] = c
-      if esc then esc = false
-      elseif c == "\\" then esc = true
-      elseif c == '"' then in_str = false end
-      i = i + 1
-    else
-      if c == '"' then in_str = true; out[#out+1] = c; i = i + 1
-      elseif c == '/' and d == '/' then
-        i = i + 2; while i <= n and s:sub(i,i) ~= '\n' do i = i + 1 end
-      elseif c == '/' and d == '*' then
-        i = i + 2
-        while i <= n-1 and not (s:sub(i,i) == '*' and s:sub(i+1,i+1) == '/') do i = i + 1 end
-        i = i + 2
-      else
-        out[#out+1] = c; i = i + 1
-      end
-    end
+  if type(data) ~= "table" then
+    return nil, "Корневой элемент JSON должен быть массивом или объектом"
   end
-  return table.concat(out)
-end
-
-local function parse_jsonc_or_empty(raw)
-  if (raw or "") == "" then return {} end
-  local cleaned = strip_json_comments(raw or "")
-  local ok, data = pcall(jsonc.parse, cleaned)
-  if not ok or type(data) ~= "table" then return {} end
   return data
 end
 
@@ -87,10 +50,7 @@ local function mtime_str(path)
 end
 
 local function shellescape(s)
-  if s == nil then return "''" end
-  s = tostring(s)
-  if s == "" then return "''" end
-  return "'" .. s:gsub("'", "'\\''") .. "'"
+  return utils.shellescape(s)
 end
 
 local function log_sys(msg)
@@ -150,6 +110,72 @@ local function current_cron_spec()
     end
   end
   return ""
+end
+
+local function cron_named_value(token, field_type)
+  local names = nil
+  if field_type == "month" then
+    names = { jan = 1, feb = 2, mar = 3, apr = 4, may = 5, jun = 6, jul = 7, aug = 8, sep = 9, oct = 10, nov = 11, dec = 12 }
+  elseif field_type == "dow" then
+    names = { sun = 0, mon = 1, tue = 2, wed = 3, thu = 4, fri = 5, sat = 6 }
+  end
+  if not names then return tonumber(token) end
+  local lower = tostring(token or ""):lower()
+  return names[lower] or tonumber(lower)
+end
+
+local function cron_validate_atom(atom, min_value, max_value, field_type)
+  local value = cron_named_value(atom, field_type)
+  return value ~= nil and value >= min_value and value <= max_value
+end
+
+local function cron_validate_base(base, min_value, max_value, field_type)
+  if base == "*" then return true end
+  if base:match("^[^%-]+%-.+$") then
+    local left, right = base:match("^([^%-]+)%-(.+)$")
+    local lv = cron_named_value(left, field_type)
+    local rv = cron_named_value(right, field_type)
+    return lv ~= nil and rv ~= nil and lv >= min_value and rv <= max_value and lv <= rv
+  end
+  return cron_validate_atom(base, min_value, max_value, field_type)
+end
+
+local function cron_validate_field(value, min_value, max_value, field_type)
+  value = tostring(value or "")
+  if value == "" or not value:match("^[%w%*/,%-]+$") then return false end
+  for token in (value .. ","):gmatch("([^,]+),") do
+    local base, step = token, nil
+    if token:find("/", 1, true) then
+      base, step = token:match("^(.-)/(%d+)$")
+      if not base or not step or tonumber(step) < 1 then return false end
+    end
+    if not cron_validate_base(base, min_value, max_value, field_type) then
+      return false
+    end
+  end
+  return true
+end
+
+local function validate_cron_spec(spec)
+  spec = utils.trim(spec):gsub("%s+", " ")
+  local fields = {}
+  for part in spec:gmatch("%S+") do fields[#fields + 1] = part end
+  if #fields ~= 5 then
+    return nil, "Некорректное выражение cron: требуется 5 полей (мин чч дд мм дн)."
+  end
+  local validators = {
+    { min = 0, max = 59,  field = "min",   label = "минуты" },
+    { min = 0, max = 23,  field = "hour",  label = "часы" },
+    { min = 1, max = 31,  field = "dom",   label = "день месяца" },
+    { min = 1, max = 12,  field = "month", label = "месяц" },
+    { min = 0, max = 7,   field = "dow",   label = "день недели" },
+  }
+  for i, meta in ipairs(validators) do
+    if not cron_validate_field(fields[i], meta.min, meta.max, meta.field) then
+      return nil, "Некорректное поле cron: " .. meta.label .. " (" .. tostring(fields[i]) .. ")"
+    end
+  end
+  return table.concat(fields, " ")
 end
 
 local function cron_spec_human(spec)
@@ -215,7 +241,8 @@ end
 
 local function load_geo_cfg()
   local raw = read_file(GEO_CFG)
-  local data = parse_jsonc_or_empty(raw)
+  local data, err = parse_jsonc_or_error(raw)
+  if not data then return {}, err end
   return normalize_rows(data)
 end
 
@@ -325,7 +352,7 @@ table.geo-table.geo-upd th:first-child, table.geo-table.geo-upd td:first-child{ 
   end
 
   -- список для таблицы
-  local cfg = load_geo_cfg()
+  local cfg, cfg_err = load_geo_cfg()
   local edit_idx = tonumber(http.formvalue("_geo_edit_idx") or http.formvalue("_geo_edit") or "")
 
   -- Таблица источников + cron controls
@@ -460,11 +487,16 @@ table.geo-table.geo-upd th:first-child, table.geo-table.geo-upd td:first-child{ 
   -- ---------- Обработчики действий ----------
   do
     local function load_rows_again()
-      return load_geo_cfg()
+      local rows, err = load_geo_cfg()
+      return rows, err
     end
 
     if http.formvalue("_geo_add") == "1" then
-      local rows = load_rows_again()
+      local rows, err = load_rows_again()
+      if err then
+        set_err("Список GEO не разобран: " .. err); set_info(nil)
+        redirect_here("updates"); return m
+      end
       local name = (http.formvalue("add_name") or ""):gsub("^%s+",""):gsub("%s+$","")
       local url  = (http.formvalue("add_url")  or ""):gsub("^%s+",""):gsub("%s+$","")
       local dest = (http.formvalue("add_dest") or ""):gsub("^%s+",""):gsub("%s+$","")
@@ -514,7 +546,11 @@ table.geo-table.geo-upd th:first-child, table.geo-table.geo-upd td:first-child{ 
 
     if http.formvalue("_geo_apply_edit") == "1" then
       local idx = tonumber(http.formvalue("_geo_edit_idx") or "")
-      local rows = load_rows_again()
+      local rows, err = load_rows_again()
+      if err then
+        set_err("Список GEO не разобран: " .. err); set_info(nil)
+        redirect_here("updates"); return m
+      end
       if idx and rows[idx] then
         local dest = (http.formvalue("edit_dest") or ""):gsub("^%s+",""):gsub("%s+$","")
         if dest == "" then
@@ -526,6 +562,7 @@ table.geo-table.geo-upd th:first-child, table.geo-table.geo-upd td:first-child{ 
         rows[idx].url  = (http.formvalue("edit_url")  or "")
         rows[idx].dest = dest
         save_geo_cfg(rows)
+        write_geo_script(rows)
         set_err(nil); set_info("Источник обновлён: "..(rows[idx].name or rows[idx].dest))
       end
       redirect_here("updates"); return m
@@ -537,7 +574,11 @@ table.geo-table.geo-upd th:first-child, table.geo-table.geo-upd td:first-child{ 
 
     if http.formvalue("_geo_delete") then
       local idx = tonumber(http.formvalue("_geo_delete"))
-      local rows = load_rows_again()
+      local rows, err = load_rows_again()
+      if err then
+        set_err("Список GEO не разобран: " .. err); set_info(nil)
+        redirect_here("updates"); return m
+      end
       if idx and rows[idx] then
         local name = rows[idx].name or rows[idx].dest
         table.remove(rows, idx)
@@ -550,7 +591,12 @@ table.geo-table.geo-upd th:first-child, table.geo-table.geo-upd td:first-child{ 
 
     if http.formvalue("_geo_save") == "1" then
       local raw = http.formvalue("geo_sources") or "[]"
-      local data = parse_jsonc_or_empty(raw)
+      local data, err = parse_jsonc_or_error(raw)
+      if not data then
+        set_err("Список GEO не сохранён: " .. err)
+        set_info(nil)
+        redirect_here("updates"); return m
+      end
       local rows = normalize_rows(data)
       save_geo_cfg(rows)
       write_geo_script(rows)
@@ -559,24 +605,31 @@ table.geo-table.geo-upd th:first-child, table.geo-table.geo-upd td:first-child{ 
     end
 
     if http.formvalue("_geo_write_script") == "1" then
-      local rows = load_rows_again()
+      local rows, err = load_rows_again()
+      if err then
+        set_err("Список GEO не разобран: " .. err); set_info(nil)
+        redirect_here("updates"); return m
+      end
       write_geo_script(rows)
       set_info("Скрипт обновления пересоздан"); set_err(nil)
       redirect_here("updates"); return m
     end
 
     if http.formvalue("_geo_install_cron") == "1" then
-      local rows = load_rows_again()
+      local rows, err = load_rows_again()
+      if err then
+        set_err("Список GEO не разобран: " .. err); set_info(nil)
+        redirect_here("updates"); return m
+      end
       write_geo_script(rows)
       local spec = (http.formvalue("geo_cron") or ""):gsub("%s+"," ")
       if spec == "" then spec = "0 5 * * *" end
-      local fields = {}
-      for w in spec:gmatch("%S+") do fields[#fields+1] = w end
-      if #fields ~= 5 then
-        set_err("Некорректное выражение cron: требуется 5 полей (мин чч дд мм дн). Получено: "..spec); set_info(nil)
+      local normalized, cron_err = validate_cron_spec(spec)
+      if not normalized then
+        set_err(cron_err); set_info(nil)
       else
-        cron_install(spec)
-        set_info("Cron установлен: "..spec); set_err(nil)
+        cron_install(normalized)
+        set_info("Cron установлен: "..normalized); set_err(nil)
       end
       redirect_here("updates"); return m
     end
@@ -592,6 +645,9 @@ table.geo-table.geo-upd th:first-child, table.geo-table.geo-upd td:first-child{ 
     function dv.cfgvalue()
       local e = get_err(); local i = get_info()
       local out = {}
+      if cfg_err and cfg_err ~= "" then
+        out[#out+1] = "<div class='msg err'>Некорректный JSON/JSONC в " .. pcdata(GEO_CFG) .. ": " .. pcdata(cfg_err) .. "</div>"
+      end
       if e ~= "" then out[#out+1] = "<div class='msg err'>"..pcdata(e).."</div>" end
       if i ~= "" then out[#out+1] = "<div class='msg info'>"..pcdata(i).."</div>" end
       if i ~= "" then set_info(nil) end

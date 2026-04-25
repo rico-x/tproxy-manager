@@ -7,6 +7,7 @@ local sys  = require "luci.sys"
 local http = require "luci.http"
 local disp = require "luci.dispatcher"
 local xml  = require "luci.xml"
+local utils = require "luci.model.cbi.tproxy_manager.utils"
 local pcdata = xml.pcdata
 
 local MIHOMO_DIR      = "/etc/mihomo"
@@ -19,20 +20,17 @@ local function get_mihomo_bin()
 end
 local MIHOMO_BIN = get_mihomo_bin()
 
-local function atomic_write(path, data)
-  data = (data or ""):gsub("\r\n","\n")
-  local dir, base = path:match("^(.*)/([^/]+)$")
-  local tmpdir = dir and dir or "/tmp"
-  if dir and not fs.access(dir) then
-    sys.call("mkdir -p '"..dir:gsub("'", "'\\''").."'")
-  end
-  local tmp = string.format("%s/.%s.%d.tmp", tmpdir, base or "tmp", math.random(1, 10^9))
-  fs.writefile(tmp, data)
-  fs.rename(tmp, path)
-end
+local read_file = utils.read_file
+local write_file = utils.write_file
 
-local function read_file(p)  return fs.readfile(p) or "" end
-local function write_file(p, s) atomic_write(p, s or "") end
+local function validate_mihomo_text(text)
+  local tmp = string.format("/tmp/tproxy-manager-mihomo-check.%d.yaml", math.random(1, 10^9))
+  write_file(tmp, text or "")
+  local cmd = string.format("%s -t -f %q >%s 2>&1", MIHOMO_BIN, tmp, MIHOMO_TEST_LOG)
+  local ok = sys.call(cmd) == 0
+  fs.remove(tmp)
+  return ok
+end
 
 -- Только *.yaml (никаких *.yml)
 local function list_yaml(dir)
@@ -48,8 +46,7 @@ end
 
 -- ensure Mihomo dir exists
 do
-  local st = fs.stat(MIHOMO_DIR)
-  if not (st and st.type == "directory") then fs.mkdir(MIHOMO_DIR) end
+  utils.ensure_dir(MIHOMO_DIR)
 end
 -- ===== конец Mihomo-специфики =====
 
@@ -185,6 +182,12 @@ local function render(ctx)
         if not self.map:formvalue(self:cbid(section)) then return end
         local new = http.formvalue("mihomo_text") or ""
         local cf = fval_last("mihomo_file") or chosen
+        if not validate_mihomo_text(new) then
+          set_err("Некорректная конфигурация Mihomo. Файл не сохранён.")
+          set_info(nil)
+          redirect_here("mihomo")
+          return
+        end
         write_file(MIHOMO_DIR .. "/" .. cf, new)
         set_err(nil); set_info("Конфиг Mihomo сохранён: "..cf)
         redirect_here("mihomo")

@@ -227,8 +227,148 @@ jobs:
             ${{ env.SITE_DIR }}/${{ matrix.series }}/*
             ${{ env.SITE_DIR }}/${{ matrix.series }}/keys/*
 
+  smoke:
+    needs: [meta, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install lint and inspection tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            shellcheck lua5.1 binutils file gzip tar xz-utils coreutils grep sed gawk
+
+      - name: Make build scripts executable
+        shell: bash
+        run: chmod 0755 scripts/*.sh
+
+      - name: Prepare apk.static
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/fetch-apk-static.sh .apk-tools/apk.static >/tmp/apk-tool-path
+          test -x ./.apk-tools/apk.static
+
+      - name: Shell syntax checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r -d '' file; do
+            first_line="$(head -n1 "$file" || true)"
+            case "$first_line" in
+              '#!/bin/sh'*|#!/usr/bin/env\ sh*|#!/bin/ash*|#!/usr/bin/env\ ash*)
+                sh -n "$file"
+                ;;
+            esac
+          done < <(find pkg/tproxy-manager \
+            \( -path '*/usr/bin/*' -o -path '*/etc/init.d/*' -o -path '*/etc/uci-defaults/*' -o -path '*/usr/libexec/*' -o -path '*/CONTROL/*' \) \
+            -type f -print0)
+          while IFS= read -r -d '' file; do
+            bash -n "$file"
+          done < <(find scripts -type f -name '*.sh' -print0)
+
+      - name: Lua syntax checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r -d '' file; do
+            luac -p "$file"
+          done < <(find pkg/tproxy-manager/usr/lib/lua -type f -name '*.lua' -print0)
+          while IFS= read -r -d '' file; do
+            first_line="$(head -n1 "$file" || true)"
+            case "$first_line" in
+              '#!/usr/bin/lua'*|#!/usr/bin/env\ lua*)
+                luac -p "$file"
+                ;;
+            esac
+          done < <(find pkg/tproxy-manager/usr/bin -type f -print0)
+
+      - name: Shellcheck
+        shell: bash
+        run: |
+          set -euo pipefail
+          shellcheck -s bash scripts/*.sh
+          while IFS= read -r -d '' file; do
+            first_line="$(head -n1 "$file" || true)"
+            case "$first_line" in
+              '#!/bin/sh'*|#!/usr/bin/env\ sh*|#!/bin/ash*|#!/usr/bin/env\ ash*)
+                shellcheck -s sh "$file"
+                ;;
+            esac
+          done < <(find pkg/tproxy-manager \
+            \( -path '*/usr/bin/*' -o -path '*/etc/init.d/*' -o -path '*/etc/uci-defaults/*' -o -path '*/usr/libexec/*' -o -path '*/CONTROL/*' \) \
+            -type f -print0)
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dl
+
+      - name: Validate ipk metadata and opkg feed
+        shell: bash
+        run: |
+          set -euo pipefail
+          IPK="$(find dl -type f -name '*.ipk' | head -n1)"
+          PACKAGES_FILE="$(find dl -type f -path '*/site/24.10/Packages' | head -n1)"
+          PACKAGES_GZ="$(find dl -type f -path '*/site/24.10/Packages.gz' | head -n1)"
+          [ -n "$IPK" ] && [ -f "$IPK" ]
+          [ -n "$PACKAGES_FILE" ] && [ -f "$PACKAGES_FILE" ]
+          [ -n "$PACKAGES_GZ" ] && [ -f "$PACKAGES_GZ" ]
+          CTRL="$(ar p "$IPK" control.tar.gz | tar -xOzf - ./control 2>/dev/null || ar p "$IPK" control.tar.gz | tar -xOzf - control 2>/dev/null)"
+          EXPECTED_DEPENDS="$(awk -F': ' '/^Depends:/{print $2}' pkg/tproxy-manager/CONTROL/control)"
+          printf '%s\n' "$CTRL" | grep -q '^Package: tproxy-manager$'
+          printf '%s\n' "$CTRL" | grep -q '^Architecture: all$'
+          printf '%s\n' "$CTRL" | grep -q "^Depends: $EXPECTED_DEPENDS$"
+          grep -q '^Package: tproxy-manager$' "$PACKAGES_FILE"
+          grep -q '^Filename: tproxy-manager-.*\.ipk$' "$PACKAGES_FILE"
+
+      - name: Validate apk metadata and apk feed
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$(find dl -type f -name '*.apk' | head -n1)"
+          ADB="$(find dl -type f -path '*/site/25.12/packages.adb' | head -n1)"
+          KEY="$(find dl -type f -path '*/site/25.12/keys/tproxy-manager.pem' | head -n1)"
+          [ -n "$APK" ] && [ -f "$APK" ]
+          [ -n "$ADB" ] && [ -f "$ADB" ]
+          [ -n "$KEY" ] && [ -f "$KEY" ]
+          DUMP="$(./.apk-tools/apk.static adbdump "$APK")"
+          printf '%s\n' "$DUMP" | grep -q 'tproxy-manager'
+          printf '%s\n' "$DUMP" | grep -Eq 'noarch|arch: noarch'
+          printf '%s\n' "$DUMP" | grep -q 'ca-bundle'
+          printf '%s\n' "$DUMP" | grep -q 'busybox'
+          printf '%s\n' "$DUMP" | grep -Eq 'post-install|post-upgrade|pre-deinstall|pre-upgrade'
+          mkdir -p /tmp/apk-keys
+          cp "$KEY" /tmp/apk-keys/
+          ./.apk-tools/apk.static --keys-dir /tmp/apk-keys verify "$ADB"
+
+      - name: Validate rendered feed pages
+        shell: bash
+        run: |
+          set -euo pipefail
+          PAGE_2410="$(find dl -type f -path '*/site/24.10/index.html' | head -n1)"
+          PAGE_2512="$(find dl -type f -path '*/site/25.12/index.html' | head -n1)"
+          [ -n "$PAGE_2410" ] && [ -n "$PAGE_2512" ]
+          grep -q 'OpenWrt 24.10' "$PAGE_2410"
+          grep -q 'OpenWrt 25.12' "$PAGE_2512"
+          printf '%s\n' \
+            '<!doctype html>' \
+            '<meta charset="utf-8">' \
+            '<title>TPROXY-Manager package feeds</title>' \
+            '<h2>TPROXY-Manager package feeds</h2>' \
+            '<ul>' \
+            '  <li><a href="24.10/">OpenWrt 24.10.x (opkg / .ipk)</a></li>' \
+            '  <li><a href="25.12/">OpenWrt 25.12.x (apk / .apk)</a></li>' \
+            '</ul>' > /tmp/tproxy-root-index.html
+          grep -q '24.10/' /tmp/tproxy-root-index.html
+          grep -q '25.12/' /tmp/tproxy-root-index.html
+
   pages:
-    needs: build
+    needs: smoke
     runs-on: ubuntu-latest
     permissions:
       pages: write
@@ -270,7 +410,7 @@ jobs:
 
   release:
     if: needs.meta.outputs.create_release == '1'
-    needs: [meta, build]
+    needs: [meta, smoke]
     runs-on: ubuntu-latest
     steps:
       - name: Download build artifacts

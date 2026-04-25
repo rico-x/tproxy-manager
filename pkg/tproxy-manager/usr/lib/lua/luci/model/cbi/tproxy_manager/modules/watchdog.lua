@@ -7,12 +7,15 @@ local http = require "luci.http"
 local disp = require "luci.dispatcher"
 local xml = require "luci.xml"
 local jsonc = require "luci.jsonc"
+local helpers = require "luci.model.cbi.tproxy_manager.modules.watchdog_helpers"
 
 local pcdata = xml.pcdata
 
 local WATCHDOG_SCRIPT = "/usr/bin/tproxy-manager-watchdog.sh"
 local WATCHDOG_LINK_STATE_DIR = "/tmp/tproxy-manager-watchdog-links"
 local WATCHDOG_LOG_FILE = "/tmp/tproxy-manager-watchdog.log"
+local MD5_CACHE = {}
+local STATE_CACHE = {}
 
 local function atomic_write(path, data)
   data = (data or ""):gsub("\r\n", "\n")
@@ -146,13 +149,18 @@ local function parse_kv_text(text)
 end
 
 local function read_state_file(path)
-  return parse_kv_text(read_file(path))
+  if STATE_CACHE[path] ~= nil then return STATE_CACHE[path] end
+  local parsed = parse_kv_text(read_file(path))
+  STATE_CACHE[path] = parsed
+  return parsed
 end
 
 local function md5_hash(link)
+  if MD5_CACHE[link] ~= nil then return MD5_CACHE[link] end
   local rc, out = run_cmd_capture("printf %s " .. shellescape(link) .. " | md5sum | awk '{print $1}'")
-  if rc ~= 0 then return "" end
-  return trim(out)
+  local value = rc == 0 and trim(out) or ""
+  MD5_CACHE[link] = value
+  return value
 end
 
 local function parse_links_file(path)
@@ -190,6 +198,8 @@ local function write_links_file(path, entries)
     end
   end
   write_file(path, table.concat(out, "\n") .. (#out > 0 and "\n" or ""))
+  MD5_CACHE = {}
+  STATE_CACHE = {}
 end
 
 local function validate_links_text(text)
@@ -328,8 +338,8 @@ local function render(ctx)
   local links_path = getu("watchdog_links_file", "/etc/tproxy-manager/watchdog.links")
 
   if http.formvalue("_watchdog_save_settings") == "1" then
-    if save_watchdog_settings(ctx) then
-      redirect_watchdog()
+    if helpers.save_watchdog_settings(ctx) then
+      helpers.redirect_watchdog()
       return m
     end
   end
@@ -339,7 +349,7 @@ local function render(ctx)
     local text = http.formvalue("watchdog_template_text") or ""
     if path == "" then
       set_err("Нужно указать путь к файлу шаблона.")
-    elseif not validate_jsonc_text(text) then
+    elseif not helpers.validate_jsonc_text(text) then
       set_err("Некорректный JSON/JSONC шаблона.")
     else
       uci:set(PKG, "main", "watchdog_template_file", path)
@@ -347,7 +357,7 @@ local function render(ctx)
       write_file(path, text)
       set_err(nil)
       set_info("Шаблон watchdog сохранён: " .. path)
-      redirect_watchdog()
+      helpers.redirect_watchdog()
       return m
     end
   end
@@ -363,7 +373,7 @@ local function render(ctx)
       write_file(path, text)
       set_err(nil)
       set_info("Тестовый шаблон сохранён: " .. path)
-      redirect_watchdog()
+      helpers.redirect_watchdog()
       return m
     end
   end
@@ -382,71 +392,71 @@ local function render(ctx)
       write_file(path, text ~= "" and (text:gsub("\n*$", "") .. "\n") or "")
       set_err(nil)
       set_info("LINKS_FILE сохранён: " .. path)
-      redirect_watchdog()
+      helpers.redirect_watchdog()
       return m
     end
   end
 
   if http.formvalue("_watchdog_clear_log") == "1" then
-    clear_watchdog_log()
+    helpers.clear_watchdog_log()
     set_err(nil)
     set_info("Лог watchdog очищен.")
-    redirect_watchdog()
+    helpers.redirect_watchdog()
     return m
   end
 
   if http.formvalue("_watchdog_once") == "1" then
-    local rc, out = run_watchdog_command({ "once" })
+    local rc, out = helpers.run_watchdog_command({ "once" })
     if rc == 0 then set_info(out ~= "" and out or "Проверка watchdog выполнена.") else set_err(out ~= "" and out or "Проверка watchdog завершилась ошибкой.") end
-    redirect_watchdog()
+    helpers.redirect_watchdog()
     return m
   end
 
   if http.formvalue("_watchdog_reset") == "1" then
-    local rc, out = run_watchdog_command({ "reset" })
+    local rc, out = helpers.run_watchdog_command({ "reset" })
     if rc == 0 then set_info(out ~= "" and out or "Счётчик ошибок сброшен.") else set_err(out ~= "" and out or "Не удалось сбросить счётчик ошибок.") end
-    redirect_watchdog()
+    helpers.redirect_watchdog()
     return m
   end
 
   if http.formvalue("_watchdog_test_rotate") == "1" then
-    local rc, out = run_watchdog_command({ "test-rotate" })
+    local rc, out = helpers.run_watchdog_command({ "test-rotate" })
     if rc == 0 then set_info(out ~= "" and out or "Ротация выполнена.") else set_err(out ~= "" and out or "Ротация завершилась ошибкой.") end
-    redirect_watchdog()
+    helpers.redirect_watchdog()
     return m
   end
 
   if http.formvalue("_watchdog_check_all") == "1" then
-    local rc, out = run_watchdog_command({ "check-all" })
+    local rc, out = helpers.run_watchdog_command({ "check-all" })
     if rc == 0 then set_info(out ~= "" and out or "Проверка всех ссылок выполнена.") else set_err(out ~= "" and out or "Проверка ссылок завершилась ошибкой.") end
-    redirect_watchdog()
+    helpers.redirect_watchdog()
     return m
   end
 
   if http.formvalue("_wd_apply") then
     local hash = trim(http.formvalue("_wd_apply"))
-    local rc, out = run_watchdog_command({ "apply-link", hash })
+    local rc, out = helpers.run_watchdog_command({ "apply-link", hash })
     if rc == 0 then set_info(out ~= "" and out or ("Ссылка применена: " .. hash)) else set_err(out ~= "" and out or ("Не удалось применить ссылку: " .. hash)) end
-    redirect_watchdog()
+    helpers.redirect_watchdog()
     return m
   end
 
   if http.formvalue("_wd_test") then
     local hash = trim(http.formvalue("_wd_test"))
-    local rc, out = run_watchdog_command({ "test-link", hash })
+    local rc, out = helpers.run_watchdog_command({ "test-link", hash })
     if rc == 0 then set_info(out ~= "" and out or ("Ссылка проверена: " .. hash)) else set_err(out ~= "" and out or ("Ссылка не прошла проверку: " .. hash)) end
-    redirect_watchdog()
+    helpers.redirect_watchdog()
     return m
   end
 
   if http.formvalue("_wd_edit_start") then
     local hash = trim(http.formvalue("_wd_edit_start"))
-    redirect_watchdog("wd_edit_hash=" .. http.urlencode(hash))
+    helpers.redirect_watchdog("wd_edit_hash=" .. http.urlencode(hash))
     return m
   end
 
   if http.formvalue("_wd_edit_cancel") == "1" then
-    redirect_watchdog()
+    helpers.redirect_watchdog()
     return m
   end
 
@@ -460,7 +470,7 @@ local function render(ctx)
       write_links_file(links_path, entries)
       set_err(nil)
       set_info("Ссылка добавлена.")
-      redirect_watchdog()
+      helpers.redirect_watchdog()
       return m
     end
   end
@@ -479,7 +489,7 @@ local function render(ctx)
       write_links_file(links_path, entries)
       set_err(nil)
       set_info("Ссылка обновлена.")
-      redirect_watchdog()
+      helpers.redirect_watchdog()
       return m
     end
   end
@@ -493,7 +503,7 @@ local function render(ctx)
       write_links_file(links_path, entries)
       set_err(nil)
       set_info("Ссылка удалена.")
-      redirect_watchdog()
+      helpers.redirect_watchdog()
       return m
     end
     set_err("Удаляемая ссылка не найдена.")
@@ -511,14 +521,14 @@ local function render(ctx)
         set_err(nil)
         set_info("Порядок ссылок обновлён.")
       end
-      redirect_watchdog()
+      helpers.redirect_watchdog()
       return m
     end
     set_err("Ссылка для изменения порядка не найдена.")
   end
 
-  local status_rc, status_out = run_watchdog_command({ "status" })
-  local status = status_rc == 0 and parse_kv_text(status_out) or {}
+  local status_rc, status_out = helpers.run_watchdog_command({ "status" })
+  local status = status_rc == 0 and helpers.parse_kv_text(status_out) or {}
   local edit_hash = trim(http.formvalue("wd_edit_hash"))
   local links = parse_links_file(links_path)
 
@@ -598,7 +608,7 @@ local function render(ctx)
         rows[#rows + 1] = "<tr><td colspan='5' style='color:#6b7280'>Список ссылок пуст</td></tr>"
       end
       for i, entry in ipairs(links) do
-        local label, checked = status_label(entry)
+        local label, checked = helpers.status_label(entry, pcdata)
         if edit_hash ~= "" and edit_hash == entry.hash then
           rows[#rows + 1] = string.format([[
 <tr>
@@ -805,7 +815,7 @@ local function render(ctx)
     dv.rawhtml = true
     function dv.cfgvalue()
       return [[<details class="wd-details"><summary><strong>Лог Watchdog</strong></summary><div class="box editor-wrap" style="margin-top:.5rem"><div style="margin-bottom:.5rem"><button class="cbi-button cbi-button-remove" name="_watchdog_clear_log" value="1">Очистить лог</button></div><pre style="white-space:pre-wrap;max-height:30rem;overflow:auto">]] ..
-             pcdata(watchdog_log()) .. [[</pre></div></details>]]
+             pcdata(helpers.watchdog_log()) .. [[</pre></div></details>]]
     end
   end
 end

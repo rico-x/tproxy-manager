@@ -146,6 +146,21 @@ config main 'main'
   - `only`
   - `bypass`
 
+## GEO datadir
+
+Пакет создаёт каталог `/usr/share/tproxy-manager` для GEO-баз. Дефолтный `/etc/tproxy-manager/geo-sources.conf` скачивает туда:
+
+- `/usr/share/tproxy-manager/geoip.dat`
+- `/usr/share/tproxy-manager/geosite.dat`
+
+Proxy daemon должен смотреть в этот каталог. Для Xray через UCI:
+
+```sh
+uci set xray.config.datadir='/usr/share/tproxy-manager/'
+uci commit xray
+/etc/init.d/xray restart
+```
+
 ## Формат файлов списков
 
 ### ports_file

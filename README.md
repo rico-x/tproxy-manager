@@ -1,44 +1,60 @@
+> [!IMPORTANT]
+> **Дисклеймер.** TPROXY Manager не является средством обхода блокировок, сокрытия действий пользователя или нарушения правил доступа к информационным ресурсам. Автор проекта выступает против использования программы для нарушения действующих законов любой страны. Этот проект предназначен для администрирования локального роутера: аккуратного управления маршрутами, прозрачной обработки трафика, технической оптимизации сетевой нагрузки и обслуживания собственных proxy-сервисов в рамках законных сценариев.
+
 # TPROXY Manager for OpenWrt
 
-LuCI-панель и набор системных скриптов для управления TPROXY через `nftables`, конфигами Xray/Mihomo, обновлением GEO-баз и VLESS-based watchdog для автоматической смены outbound.
+TPROXY Manager — это LuCI-панель и набор системных скриптов для OpenWrt. Проект помогает управлять прозрачным перехватом трафика через `nftables`, списками обхода, конфигами Xray/Mihomo, GEO-базами и автоматическим переключением VLESS outbound через Watchdog.
 
-Основной пользовательский интерфейс находится в LuCI:
+Проект ориентирован на роутер, где proxy daemon уже установлен отдельно. Это может быть Xray, Mihomo или другой сервис, который умеет работать с подготовленными конфигами и списками.
 
-- `TPROXY` — правила перехвата и списки.
-- `XRAY` — сервис Xray, JSON/JSONC-конфиги и проверка.
-- `MIHOMO` — сервис Mihomo, YAML-конфиги и проверка.
-- `Обновление геобаз` — источники GEO, пакетное обновление и cron.
-- `WATCHDOG` — VLESS-ссылки, внешние шаблоны, health-check и автоматическая ротация.
+Основные возможности:
 
-Полная низкоуровневая документация по самому TPROXY-движку вынесена в [docs/tproxy-doc.md](docs/tproxy-doc.md).
-Документация по встроенному конвертеру VLESS -> JSON вынесена в [docs/vless2json.md](docs/vless2json.md).
+- настройка TPROXY-правил и policy routing через LuCI;
+- редактирование списков портов, адресов и источников трафика;
+- управление сервисами Xray и Mihomo;
+- редакторы JSON/JSONC и YAML с серверной проверкой перед сохранением;
+- загрузка `geoip.dat` и `geosite.dat` из настраиваемых источников;
+- cron-обновление GEO-баз;
+- встроенный `vless2json.sh` для генерации outbound из VLESS-ссылок;
+- Watchdog для проверки ссылок, исключения нерабочих узлов и автоматической ротации;
+- сборка пакетов без OpenWrt SDK: `.ipk` для OpenWrt 24.10 и `.apk` для OpenWrt 25.12.
 
-## Скриншоты
-
-Ссылки ниже оставлены как плейсхолдеры. Подставьте свои изображения в те же пути или замените URL на свои.
-
-![Главная панель](docs/screenshots/placeholder-dashboard.png)
-![TPROXY](docs/screenshots/placeholder-tproxy.png)
-![XRAY](docs/screenshots/placeholder-xray.png)
-![MIHOMO](docs/screenshots/placeholder-mihomo.png)
-![GEO Updates](docs/screenshots/placeholder-geo-updates.png)
-![Watchdog](docs/screenshots/placeholder-watchdog.png)
+Низкоуровневая документация по TPROXY-движку: [docs/tproxy-doc.md](docs/tproxy-doc.md).  
+Документация по встроенному VLESS-конвертеру: [docs/vless2json.md](docs/vless2json.md).
 
 ## Установка
 
-Публичные feed-страницы публикуются на GitHub Pages:
+Пакеты публикуются на GitHub Pages:
 
-- `24.10.x`: [https://rico-x.github.io/tproxy-manager/24.10/](https://rico-x.github.io/tproxy-manager/24.10/)
-- `25.12.x`: [https://rico-x.github.io/tproxy-manager/25.12/](https://rico-x.github.io/tproxy-manager/25.12/)
+- OpenWrt 24.10: [https://rico-x.github.io/tproxy-manager/24.10/](https://rico-x.github.io/tproxy-manager/24.10/)
+- OpenWrt 25.12: [https://rico-x.github.io/tproxy-manager/25.12/](https://rico-x.github.io/tproxy-manager/25.12/)
+
+После установки откройте LuCI: `Network -> TPROXY Manager`.
+
+Сначала проверьте версию OpenWrt:
+
+```sh
+cat /etc/openwrt_release
+```
+
+Выбор пакета зависит от ветки OpenWrt:
+
+| Версия OpenWrt | Менеджер пакетов | Формат пакета | Feed |
+| --- | --- | --- | --- |
+| `24.10.x` и старее | `opkg` | `.ipk` | `/24.10/` |
+| `25.12.x` и новее | `apk` | `.apk` | `/25.12/` |
+
+Не смешивайте инструкции: OpenWrt 25.12 использует `apk`, поэтому команды `opkg` для этой ветки не подходят. OpenWrt 24.10 использует `opkg`, поэтому `apk add` на этой ветке обычно недоступен.
 
 ### OpenWrt 24.10.x
 
-Локальная установка:
+Для локальной установки скачайте `.ipk` из [последнего release](https://github.com/rico-x/tproxy-manager/releases/latest) и установите его:
 
-1. Скачайте актуальный `.ipk` из [releases](https://github.com/rico-x/tproxy-manager/releases/latest).
-2. Установите пакет через LuCI или `opkg install /tmp/tproxy-manager.ipk`.
+```sh
+opkg install /tmp/tproxy-manager.ipk
+```
 
-Установка через feed:
+Для установки из feed:
 
 ```sh
 wget -O /tmp/usign.pub https://rico-x.github.io/tproxy-manager/24.10/keys/usign.pub
@@ -48,76 +64,105 @@ opkg update
 opkg install tproxy-manager
 ```
 
-Если в опубликованном feed нет `24.10/keys/usign.pub`, используйте локальную установку `.ipk`.
-
 ### OpenWrt 25.12.x
 
-Локальная установка:
+Для локальной установки скачайте `.apk` из [последнего release](https://github.com/rico-x/tproxy-manager/releases/latest) и установите его:
 
-1. Скачайте актуальный `.apk` из [releases](https://github.com/rico-x/tproxy-manager/releases/latest).
-2. Установите пакет командой `apk add --allow-untrusted /tmp/tproxy-manager.apk`.
+```sh
+apk add --allow-untrusted /tmp/tproxy-manager.apk
+```
 
-Установка через feed:
+Для установки из feed:
 
 ```sh
 wget -O /etc/apk/keys/tproxy-manager.pem https://rico-x.github.io/tproxy-manager/25.12/keys/tproxy-manager.pem
-echo 'https://rico-x.github.io/tproxy-manager/25.12/packages.adb' >> /etc/apk/repositories.d/customfeeds.list
+echo 'https://rico-x.github.io/tproxy-manager/25.12/packages.adb' > /etc/apk/repositories.d/customfeeds.list
 apk update
 apk add tproxy-manager
 ```
 
-Для `25.12.x` `opkg` больше не используется.
-Если в опубликованном feed нет `25.12/keys/tproxy-manager.pem`, используйте локальную установку `.apk`.
-
-### APK signing key
-
-Для `apk` feed нужен отдельный EC private key на кривой NIST P-256.
-
-В проект уже добавлен публичный ключ:
-
-- `keys/tproxy-manager-apk.pem`
-
-Приватный ключ в репозиторий не коммитится. Он хранится локально в:
-
-- `keys/private/tproxy-manager-apk.key`
-
-Сгенерировать пару можно так:
+Если ключ feed уже добавлен, повторно скачивать его не нужно. Для обновления достаточно выполнить:
 
 ```sh
-./scripts/generate-apk-key.sh
+apk update
+apk upgrade tproxy-manager
 ```
 
-После генерации:
+### Что делает установка
 
-1. Оставьте в git только `keys/tproxy-manager-apk.pem`
-2. Содержимое `keys/private/tproxy-manager-apk.key` сохраните в GitHub Secret `APK_PRIVATE_KEY`
+`postinst` выполняет начальную подготовку системы:
 
-Workflow проверяет, что `APK_PRIVATE_KEY` соответствует `keys/tproxy-manager-apk.pem`.
+- запускает `/etc/uci-defaults/90_tproxy_manager`;
+- создаёт `/etc/tproxy-manager`;
+- создаёт `/usr/share/tproxy-manager`;
+- создаёт базовые файлы списков;
+- создаёт `/etc/tproxy-manager/geo-sources.conf`, если файл отсутствует или пустой;
+- копирует watchdog-шаблоны в `/etc/tproxy-manager`, если их ещё нет;
+- делает исполняемыми init.d-скрипты и `/usr/bin/vless2json.sh`;
+- включает и запускает `/etc/init.d/tproxy-manager`;
+- не включает и не запускает Watchdog без явного действия пользователя.
 
-После установки `postinst`:
+По умолчанию `geo-sources.conf` получает два источника:
 
-- запускает `uci-defaults` и создаёт базовые файлы в `/etc/tproxy-manager`;
-- копирует seed-шаблоны watchdog, если их ещё нет;
-- делает исполняемыми `/etc/init.d/tproxy-manager` и `/etc/init.d/tproxy-manager-watchdog`;
-- включает и запускает `/etc/init.d/tproxy-manager`.
+```json
+[
+  {
+    "dest": "/usr/share/tproxy-manager/geoip.dat",
+    "url": "https://github.com/Loyalsoldier/geoip/releases/latest/download/geoip.dat",
+    "name": "GeoIP"
+  },
+  {
+    "dest": "/usr/share/tproxy-manager/geosite.dat",
+    "url": "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat",
+    "name": "GeoSite"
+  }
+]
+```
 
-Сервис `tproxy-manager-watchdog` автоматически не включается и не стартует без явного действия пользователя.
+После установки настройте ваш proxy daemon на каталог GEO-баз `/usr/share/tproxy-manager/`. Для Xray это обычно выглядит так:
 
-## Что создаёт пакет
+```sh
+uci set xray.config.datadir='/usr/share/tproxy-manager/'
+uci commit xray
+/etc/init.d/xray restart
+```
 
-Системные сервисы:
+Если ваш Xray установлен без UCI-обёртки, задайте аналогичный `datadir` в конфиге или параметрах запуска используемого init.d-сервиса.
 
-- `/etc/init.d/tproxy-manager` — управление TPROXY-правилами.
-- `/etc/init.d/tproxy-manager-watchdog` — `procd`-сервис watchdog.
+## Вкладки LuCI
 
-Основные runtime-скрипты:
+Вкладка `TPROXY` доступна всегда. Остальные вкладки включаются в сворачиваемом блоке `Дополнительные настройки`.
 
-- `/usr/bin/tproxy-manager.sh`
-- `/usr/bin/tproxy-manager-watchdog.sh`
-- `/usr/bin/vless2json.sh`
-- `/usr/bin/tproxy-manager-geo-update.sh`
+Доступные вкладки:
 
-Каталог пользовательских файлов:
+- `TPROXY`
+- `XRAY`
+- `MIHOMO`
+- `Обновление геобаз`
+- `WATCHDOG`
+
+По умолчанию `WATCHDOG` выключен.
+
+Если в редакторах есть несохранённые изменения, интерфейс предупреждает перед переключением вкладок.
+
+## TPROXY
+
+Вкладка `TPROXY` управляет прозрачным перехватом трафика и списками маршрутизации.
+
+Здесь настраиваются:
+
+- LAN-интерфейсы, с которых перехватывается трафик;
+- IPv6;
+- единый TPROXY-порт или отдельные TCP/UDP-порты;
+- `fwmark` для TCP и UDP;
+- routing table id для TCP и UDP;
+- режим по портам: `bypass` или `only`;
+- режим по источникам: `off`, `only`, `bypass`;
+- пути до файлов списков.
+
+Дефолтная `nftables` table проекта: `tp_mgr`.
+
+Файлы списков:
 
 - `/etc/tproxy-manager/tproxy-manager.ports`
 - `/etc/tproxy-manager/tproxy-manager.v4`
@@ -126,370 +171,369 @@ Workflow проверяет, что `APK_PRIVATE_KEY` соответствует
 - `/etc/tproxy-manager/tproxy-manager.src6.only`
 - `/etc/tproxy-manager/tproxy-manager.src4.bypass`
 - `/etc/tproxy-manager/tproxy-manager.src6.bypass`
-- `/etc/tproxy-manager/geo-sources.conf`
-- `/etc/tproxy-manager/watchdog.links`
-- `/etc/tproxy-manager/watchdog-outbound.template.jsonc`
-- `/etc/tproxy-manager/watchdog-test-config.template.jsonc`
 
-UCI-конфиг:
+Встроенный редактор позволяет править эти файлы прямо из LuCI. Для SRC-списков есть быстрое добавление IP из DHCP-аренд.
 
-- `/etc/config/tproxy-manager`
+Допустимые строки в списках:
 
-## Навигация по LuCI
+```txt
+80
+1000-2000
+192.168.1.0/24
+2001:db8::/32
+# комментарий
+```
 
-Верхняя панель показывает базовую вкладку `TPROXY` всегда. Остальные вкладки включаются в сворачиваемом блоке `Дополнительные настройки`:
+После изменения настроек нажмите сохранение и перезапустите сервис `TPROXY` из вкладки или командой:
 
-- `XRAY`
-- `MIHOMO`
-- `Обновление геобаз`
-- `WATCHDOG`
+```sh
+/etc/init.d/tproxy-manager restart
+```
 
-По умолчанию `WATCHDOG` выключен.
+## XRAY
 
-Если на странице есть несохранённые правки в редакторах, переключение вкладок и части селекторов защищено confirm-guard.
+Вкладка `XRAY` нужна для базового обслуживания Xray из LuCI.
 
-![Навигация и модули](docs/screenshots/placeholder-navigation.png)
+Возможности:
 
-## Вкладка TPROXY
-
-Во вкладке `TPROXY` настраиваются системные правила перехвата:
-
-- список LAN-интерфейсов;
-- IPv6;
-- TPROXY-порты;
-- `fwmark` и routing tables;
-- режим по портам: `bypass` или `only`;
-- режим по источникам: `off`, `only`, `bypass`;
-- пути до файлов списков.
-
-Единый редактор списков позволяет править любой из файлов списков без ручного перехода по SSH. Для SRC-списков есть быстрое добавление IP из DHCP-аренд.
-
-Типовые форматы:
-
-- порт: `80`
-- диапазон: `1000-2000`
-- IPv4/CIDR: `192.168.1.0/24`
-- IPv6/CIDR: `2001:db8::/32`
-- комментарии и пустые строки допустимы
-
-Изменение UCI-параметров не должно восприниматься как мгновенное применение сетевых правил. Для гарантированного применения ориентируйтесь на состояние сервиса `TPROXY`.
-
-![TPROXY](docs/screenshots/placeholder-tproxy-main.png)
-
-## Вкладка XRAY
-
-Во вкладке `XRAY` доступны:
-
-- управление сервисом `xray`;
-- общий системный `logread`;
-- редактор файлов `*.json` в `/etc/xray`;
+- запуск, остановка и автозапуск сервиса `xray`;
+- просмотр общего `logread`;
+- редактор `*.json` в `/etc/xray`;
+- создание и удаление JSON-файлов;
 - JSONC-валидация перед сохранением;
-- тест всей конфигурации через `xray -test -format json -confdir /etc/xray`.
+- проверка всей конфигурации через `xray -test -format json -confdir /etc/xray`.
 
-Особенности:
+Лог последней проверки:
 
-- новые файлы создаются только как `*.json`;
-- сохранение выполняется атомарно;
-- удаление выполняется для выбранного файла;
-- лог результата проверки хранится в `/tmp/tproxy_manager_xray_test.log`.
+```txt
+/tmp/tproxy_manager_xray_test.log
+```
 
-![XRAY](docs/screenshots/placeholder-xray-editor.png)
+## MIHOMO
 
-## Вкладка MIHOMO
+Вкладка `MIHOMO` работает с YAML-конфигами Mihomo.
 
-Во вкладке `MIHOMO` доступны:
+Возможности:
 
-- управление сервисом `mihomo`;
-- общий `logread`;
-- редактор файлов `*.yaml` в `/etc/mihomo`;
-- проверка выбранного конфига через `mihomo -t -f /etc/mihomo/<file>`.
+- запуск, остановка и автозапуск сервиса `mihomo`;
+- просмотр общего `logread`;
+- редактор `*.yaml` в `/etc/mihomo`;
+- создание и удаление YAML-файлов;
+- проверка выбранного конфига через `mihomo -t -f`;
+- серверная валидация перед сохранением.
 
-Особенности:
+Если проверка YAML не проходит, файл не записывается на диск.
 
-- создаются только файлы `*.yaml`;
-- сохранение конфигурации не валидирует YAML до записи;
-- результат последней проверки хранится в `/tmp/tproxy_manager_mihomo_test.log`.
+Лог последней проверки:
 
-![MIHOMO](docs/screenshots/placeholder-mihomo-editor.png)
+```txt
+/tmp/tproxy_manager_mihomo_test.log
+```
 
-## Вкладка Обновление геобаз
+## Обновление геобаз
 
-Модуль GEO работает с файлом `/etc/tproxy-manager/geo-sources.conf` и генерирует системный скрипт `/usr/bin/tproxy-manager-geo-update.sh`.
+Модуль GEO работает с файлом:
+
+```txt
+/etc/tproxy-manager/geo-sources.conf
+```
+
+Он генерирует updater-скрипт:
+
+```txt
+/usr/bin/tproxy-manager-geo-update.sh
+```
+
+По умолчанию GEO-базы скачиваются в:
+
+```txt
+/usr/share/tproxy-manager/geoip.dat
+/usr/share/tproxy-manager/geosite.dat
+```
 
 Во вкладке доступны:
 
 - таблица источников `name / url / dest`;
-- добавление, редактирование и удаление строк;
-- обновление одной записи;
+- добавление, редактирование и удаление источников;
+- обновление одного источника;
 - обновление всех источников;
-- настройка cron-расписания;
-- глобальный JSON/JSONC-редактор списка источников;
-- пересоздание updater-скрипта.
+- JSON/JSONC-редактор полного списка;
+- пересоздание updater-скрипта;
+- настройка cron-расписания.
 
-Технические детали:
+При сохранении JSON/JSONC проверяется сервером. Если синтаксис сломан, старый файл не затирается.
 
-- cron-тег: `# tproxy-manager-geo-update`
-- syslog-тег: `tproxy-manager-geoip-update`
-- для скачивания используется `curl`, при необходимости fallback на `wget`
+Cron проверяется по полям и диапазонам. Примеры:
 
-![GEO Updates](docs/screenshots/placeholder-geo-table.png)
+```txt
+0 5 * * *
+*/30 * * * *
+30 4 * * 0
+0 3 1 * *
+```
 
-## Вкладка WATCHDOG
+После первого обновления GEO-баз убедитесь, что ваш proxy daemon использует `/usr/share/tproxy-manager/` как каталог данных. Для Xray:
 
-`WATCHDOG` — отдельный модуль и отдельный сервис, который проверяет текущий прокси, при достижении порога ошибок выбирает рабочую VLESS-ссылку, генерирует новый outbound через встроенный `vless2json.sh` и перезапускает выбранный сервис.
+```sh
+uci set xray.config.datadir='/usr/share/tproxy-manager/'
+uci commit xray
+/etc/init.d/xray restart
+```
 
-Сервис:
+## WATCHDOG
 
-- `/etc/init.d/tproxy-manager-watchdog`
-- runtime: `/usr/bin/tproxy-manager-watchdog.sh`
+Watchdog — это отдельная вкладка и отдельный сервис:
 
-Вкладка по умолчанию выключена и включается в `Дополнительных настройках`.
+```txt
+/etc/init.d/tproxy-manager-watchdog
+/usr/bin/tproxy-manager-watchdog.sh
+```
 
-![Watchdog overview](docs/screenshots/placeholder-watchdog-overview.png)
+Он проверяет текущий proxy через `CHECK_URL`. Если проверка несколько раз подряд завершается ошибкой, Watchdog выбирает другую VLESS-ссылку, проверяет её отдельным test-instance, генерирует outbound и перезапускает указанный сервис.
 
-### Что делает Watchdog
+Основной сценарий:
 
-Основной цикл:
+1. Заполните список VLESS-ссылок.
+2. Нажмите `Проверить все ссылки`.
+3. Убедитесь, что хотя бы часть ссылок живая.
+4. При необходимости настройте outbound-шаблон.
+5. При необходимости настройте test-template.
+6. Запустите сервис Watchdog.
 
-1. Проверяет `CHECK_URL` через локальный `PROXY_URL`.
-2. Если текущий прокси отвечает, watchdog просто обновляет состояние.
-3. Если ошибок подряд становится не меньше `FAIL_THRESHOLD`, watchdog начинает ротацию ссылок.
-4. Для каждой кандидатной ссылки он поднимает отдельный test-instance через `TEST_COMMAND`.
-5. Рабочая ссылка применяется в `OUTBOUND_FILE`, затем вызывается `SERVICE_PATH restart`.
+### Список VLESS-ссылок
 
-Режимы автоматического выбора:
+Файл по умолчанию:
 
-- `по порядку`
-- `случайно`
+```txt
+/etc/tproxy-manager/watchdog.links
+```
 
-Есть опция временно исключать нерабочие ссылки на заданное время.
-
-### LINKS_FILE и таблица ссылок
-
-Основной список хранится в `watchdog.links`.
-
-Поддерживаемый формат строки:
+Поддерживаемый формат:
 
 ```txt
 vless://...#Комментарий
-```
-
-или
-
-```txt
 vless://... # внешний комментарий
 ```
 
-Сейчас UI ориентирован на комментарий из `#fragment` внутри самой ссылки. В таблице показывается:
+В таблице показываются:
 
 - комментарий;
-- сама ссылка без комментария;
+- ссылка без комментария;
 - статус `Живая / Не живая / Не проверялась`;
 - время последней проверки;
-- действия `Применить / Проверить / Ред. / Удалить / Вверх / Вниз`.
+- кнопки `Применить`, `Проверить`, `Ред.`, `Удалить`, `Вверх`, `Вниз`.
 
-Под таблицей находится сворачиваемый массовый редактор `LINKS_FILE` для вставки большого числа ссылок сразу.
+Под таблицей есть сворачиваемый массовый редактор `LINKS_FILE` для вставки большого числа ссылок.
 
-![Watchdog links table](docs/screenshots/placeholder-watchdog-links.png)
+### Режим выбора ссылки
 
-### Outbounds-шаблон
+Доступны два режима:
 
-Watchdog не хранит outbound-шаблон внутри shell-скрипта. Он работает с отдельным файлом:
+- `по порядку` — ссылки перебираются по списку циклически;
+- `случайно` — кандидат выбирается случайно.
 
-- `watchdog_template_file`
-- по умолчанию: `/etc/tproxy-manager/watchdog-outbound.template.jsonc`
+Можно включить временное исключение нерабочих ссылок. Тогда ссылка со статусом `dead` не участвует в автоматическом переключении до истечения заданного периода.
 
-Этот шаблон редактируется прямо из вкладки и передаётся встроенному конвертеру по умолчанию:
+### Outbound-шаблон
+
+Файл по умолчанию:
+
+```txt
+/etc/tproxy-manager/watchdog-outbound.template.jsonc
+```
+
+Watchdog не хранит outbound внутри shell-скрипта. Шаблон редактируется во вкладке и передаётся встроенному конвертеру:
 
 ```sh
 vless2json.sh -r LINKS_FILE -t TEMPLATE_FILE
 ```
 
-В проект уже встроен `/usr/bin/vless2json.sh`, поэтому пакет самодостаточен. При необходимости путь до конвертера можно переопределить в `WATCHDOG`.
+Встроенный конвертер находится здесь:
 
-Поведение встроенного конвертера:
+```txt
+/usr/bin/vless2json.sh
+```
 
-- на вход получает файл со ссылками и путь до шаблона;
-- использует первую валидную VLESS-ссылку из файла;
-- на выход отдаёт JSON-объект, полученный из шаблона;
-- внутри этого объекта должен быть корректный `outbounds`-массив для выбранной ссылки.
+Описание плейсхолдеров шаблона: [docs/vless2json.md](docs/vless2json.md).
 
-Описание плейсхолдеров и контракт шаблона вынесены в [docs/vless2json.md](docs/vless2json.md).
+### Test-template
 
-![Watchdog outbounds template](docs/screenshots/placeholder-watchdog-outbounds-template.png)
+Для проверки ссылок используется отдельный временный конфиг test-instance.
 
-### Тестовый шаблон
+Файл по умолчанию:
 
-Для test-instance используется отдельный шаблон:
+```txt
+/etc/tproxy-manager/watchdog-test-config.template.jsonc
+```
 
-- `watchdog_test_template_file`
-- по умолчанию: `/etc/tproxy-manager/watchdog-test-config.template.jsonc`
+Базовые плейсхолдеры:
 
-Это нужно для случаев, когда для тестирования используется не штатный Xray-конфиг или вообще другой движок. Шаблон редактируется прямо во вкладке.
-
-Базовые плейсхолдеры test-шаблона:
-
-- `__TEST_PORT__` — локальный порт временного SOCKS-inbound;
+- `__TEST_PORT__` — локальный порт временного SOCKS inbound;
 - `__OUTBOUNDS__` — массив outbounds, полученный из конвертера;
-- `__OUTBOUND_TAG__` — `tag` первого outbound из этого массива.
+- `__OUTBOUND_TAG__` — `tag` первого outbound.
 
-`__OUTBOUND_TAG__` нужен, чтобы test-instance направил свой inbound именно в целевой outbound при проверке, а не в `direct` или `block`.
-
-По умолчанию команда тестового запуска:
+Команда тестового запуска по умолчанию:
 
 ```sh
 /usr/bin/xray -c {config}
 ```
 
-Но она настраивается через `watchdog_test_command`. Если используется другой движок, правятся и `TEST_COMMAND`, и test-template.
+Если используется не Xray, поменяйте и `TEST_COMMAND`, и test-template.
 
-![Watchdog test template](docs/screenshots/placeholder-watchdog-test-template.png)
+### Runtime-команды
 
-### Настройки Watchdog
+```sh
+/usr/bin/tproxy-manager-watchdog.sh status
+/usr/bin/tproxy-manager-watchdog.sh once
+/usr/bin/tproxy-manager-watchdog.sh check-all
+/usr/bin/tproxy-manager-watchdog.sh test-rotate
+/usr/bin/tproxy-manager-watchdog.sh reset
+```
 
-Основные параметры:
+Логи и состояние:
 
-- `CHECK_URL`
-- `PROXY_URL`
-- `INTERVAL`
-- `FAIL_THRESHOLD`
-- `CONNECT_TIMEOUT`
-- `MAX_TIME`
-- `OUTBOUND_FILE`
-- `VLESS2JSON`
-- `SERVICE_PATH`
-- `TEST_COMMAND`
-- `SELECTION_MODE`
-- `TEST_PORT`
+```txt
+/tmp/tproxy-manager-watchdog.log
+/tmp/tproxy-manager-watchdog.state
+/tmp/tproxy-manager-watchdog-links/*.state
+```
 
-`RESTART_CMD` намеренно фиксирован как `restart`, а путь до обслуживаемого сервиса задаётся отдельно через `SERVICE_PATH`. Это сделано, чтобы поддерживать не только `xray`, но и другие сервисы.
-
-Также есть:
-
-- фоновая проверка всех ссылок по таймеру;
-- настраиваемый таймер в секундах;
-- отображение времени последней массовой проверки и результата `alive/total`.
-
-![Watchdog settings](docs/screenshots/placeholder-watchdog-settings.png)
-
-### Логи и runtime-state
-
-Основной лог watchdog:
-
-- `/tmp/tproxy-manager-watchdog.log`
-
-Runtime-state:
-
-- `/tmp/tproxy-manager-watchdog.state`
-- per-link state: `/tmp/tproxy-manager-watchdog-links/*.state`
-
-Из UI доступны:
-
-- очистка лога;
-- ручная проверка текущего прокси;
-- ручная проверка всех ссылок;
-- принудительная ротация;
-- сброс счётчика ошибок.
-
-## Быстрый список полезных путей
+## Полезные пути
 
 | Назначение | Путь |
 | --- | --- |
 | UCI-конфиг | `/etc/config/tproxy-manager` |
-| Основной TPROXY-скрипт | `/usr/bin/tproxy-manager.sh` |
-| TPROXY init.d | `/etc/init.d/tproxy-manager` |
-| Watchdog runtime | `/usr/bin/tproxy-manager-watchdog.sh` |
-| Встроенный VLESS-конвертер | `/usr/bin/vless2json.sh` |
+| Основной init.d | `/etc/init.d/tproxy-manager` |
+| Основной runtime | `/usr/bin/tproxy-manager.sh` |
 | Watchdog init.d | `/etc/init.d/tproxy-manager-watchdog` |
+| Watchdog runtime | `/usr/bin/tproxy-manager-watchdog.sh` |
+| Watchdog internal libs | `/usr/libexec/tproxy-manager/watchdog/*` |
+| VLESS-конвертер | `/usr/bin/vless2json.sh` |
 | GEO updater | `/usr/bin/tproxy-manager-geo-update.sh` |
-| Каталог списков и шаблонов | `/etc/tproxy-manager` |
+| Пользовательские списки | `/etc/tproxy-manager` |
+| GEO datadir | `/usr/share/tproxy-manager` |
 | Xray configs | `/etc/xray` |
 | Mihomo configs | `/etc/mihomo` |
-| Package source tree | `pkg/tproxy-manager/` |
 
-## Сборка пакета
+## Сборка
 
-Пакет собирается напрямую из дерева:
+Пакет собирается напрямую из общего payload-корня:
 
-- `pkg/tproxy-manager/`
-- `pkg/tproxy-manager/CONTROL/control`
-- `pkg/tproxy-manager/CONTROL/postinst`
-- `pkg/tproxy-manager/CONTROL/prerm`
+```txt
+pkg/tproxy-manager/
+```
 
-Это единый payload-корень для обоих форматов пакета. Отдельных деревьев `ipk` и `apk` в проекте больше нет.
+OpenWrt SDK не используется.
 
-Скрипты сборки и индексации:
+Скрипты:
 
-- `scripts/build-ipk.sh`
-- `scripts/build-apk.sh`
-- `scripts/index-ipk-feed.sh`
-- `scripts/index-apk-feed.sh`
-- `scripts/fetch-apk-static.sh`
+```sh
+./scripts/build-ipk.sh ./pkg/tproxy-manager ./dist/24.10 25.12.2-1 ./ipkg-build
+./scripts/build-apk.sh ./pkg/tproxy-manager ./dist/25.12 25.12.2-r1 ./.apk-tools/apk.static
+```
 
-CI не использует OpenWrt SDK. Вместо этого он:
-
-- собирает `24.10.x` пакет через `ipkg-build`;
-- собирает `25.12.x` пакет через `apk.static mkpkg`;
-- индексирует `Packages.gz` для `opkg`;
-- индексирует и подписывает `packages.adb` для `apk`.
-
-Локально это выглядит так:
+Получить `ipkg-build`:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/openwrt/openwrt/openwrt-24.10/scripts/ipkg-build -o ipkg-build
 chmod +x ipkg-build
-./scripts/build-ipk.sh ./pkg/tproxy-manager ./dist/24.10 25.12.2-1 ./ipkg-build
-
-./scripts/fetch-apk-static.sh ./.apk-tools/apk.static
-./scripts/build-apk.sh ./pkg/tproxy-manager ./dist/25.12 25.12.2-r1 ./.apk-tools/apk.static
 ```
 
-`scripts/fetch-apk-static.sh` использует `docker`, чтобы вытащить `apk.static` из `alpine:edge`.
+Получить `apk.static`:
 
-Обычные push в `main` собирают feed и Pages-артефакты. GitHub Release создаётся только для тегов `vYY.M.D` или ручного запуска workflow с указанным тегом.
+```sh
+./scripts/fetch-apk-static.sh ./.apk-tools/apk.static
+```
 
-## Типовые сценарии
+`scripts/fetch-apk-static.sh` использует Docker и вытаскивает `apk.static` из `alpine:edge`.
 
-### Включить Watchdog
+## Скриншоты
 
-1. В LuCI откройте `TPROXY Manager`.
-2. В `Дополнительных настройках` включите вкладку `WATCHDOG`.
-3. Откройте `WATCHDOG`.
-4. Заполните `LINKS_FILE`, путь до конвертера и путь до обслуживаемого сервиса.
-5. При необходимости скорректируйте outbound-шаблон и test-template.
-6. Сохраните настройки.
-7. Проверьте ссылки кнопкой `Проверить все ссылки`.
-8. После этого включите и запустите сервис `Watchdog`.
+Ссылки оставлены как плейсхолдеры. Замените файлы в `docs/screenshots/` своими изображениями или поменяйте пути в этом разделе.
 
-### Использовать Watchdog не с Xray
+- Главная панель: `docs/screenshots/placeholder-dashboard.png`
+- Навигация: `docs/screenshots/placeholder-navigation.png`
+- TPROXY: `docs/screenshots/placeholder-tproxy-main.png`
+- XRAY: `docs/screenshots/placeholder-xray-editor.png`
+- MIHOMO: `docs/screenshots/placeholder-mihomo-editor.png`
+- GEO: `docs/screenshots/placeholder-geo-table.png`
+- Watchdog overview: `docs/screenshots/placeholder-watchdog-overview.png`
+- Watchdog links: `docs/screenshots/placeholder-watchdog-links.png`
+- Watchdog outbounds template: `docs/screenshots/placeholder-watchdog-outbounds-template.png`
+- Watchdog test template: `docs/screenshots/placeholder-watchdog-test-template.png`
+- Watchdog settings: `docs/screenshots/placeholder-watchdog-settings.png`
 
-Нужно отдельно проверить три вещи:
+## Рекомендации после установки
 
-1. Конвертер действительно генерирует формат, который понимает ваш потребитель.
-2. `SERVICE_PATH restart` перезапускает правильный сервис.
-3. `TEST_COMMAND` и test-template подходят именно под ваш тестовый engine.
+### Обновите GEO-базы
+
+Откройте вкладку `Обновление геобаз` и нажмите `Обновить все`.
+
+После этого настройте proxy daemon на datadir:
+
+```sh
+uci set xray.config.datadir='/usr/share/tproxy-manager/'
+uci commit xray
+/etc/init.d/xray restart
+```
+
+### Проверьте системные оптимизации
+
+В пакет входят два вспомогательных скрипта:
+
+```sh
+/usr/bin/optimize-sysctl.sh
+/usr/bin/setup-bbr.sh
+```
+
+`postinst` запускает их один раз без остановки установки при ошибках. После обновления ядра, смены прошивки или ручной правки sysctl их можно запустить повторно:
+
+```sh
+/usr/bin/optimize-sysctl.sh
+/usr/bin/setup-bbr.sh
+```
+
+`optimize-sysctl.sh` записывает поддержанные параметры в `/etc/sysctl.d/66-tproxy-manager.conf`.  
+`setup-bbr.sh` включает TCP BBR, если ядро и модуль `kmod-tcp-bbr` это поддерживают.
+
+### Защитите DNS от утечек
+
+Чтобы DNS-запросы не раскрывали реальные адреса через провайдера, рекомендуется установить HTTPS DNS proxy и LuCI-интерфейс:
+
+OpenWrt 24.10:
+
+```sh
+opkg update
+opkg install https-dns-proxy luci-app-https-dns-proxy luci-i18n-https-dns-proxy-ru
+```
+
+OpenWrt 25.12:
+
+```sh
+apk update
+apk add https-dns-proxy luci-app-https-dns-proxy luci-i18n-https-dns-proxy-ru
+```
+
+После установки настройте провайдера DNS-over-HTTPS в LuCI и убедитесь, что клиенты LAN используют DNS роутера.
 
 ## Диагностика
 
-Если что-то не работает:
-
-1. Проверьте `logread`.
-2. Проверьте логи watchdog: `/tmp/tproxy-manager-watchdog.log`.
-3. Проверьте состояние watchdog:
-
-```sh
-/usr/bin/tproxy-manager-watchdog.sh status
-```
-
-4. Проверьте ручной health-check ссылок:
-
-```sh
-/usr/bin/tproxy-manager-watchdog.sh check-all
-```
-
-5. Проверьте TPROXY:
+Проверить TPROXY:
 
 ```sh
 /etc/init.d/tproxy-manager status
 /etc/init.d/tproxy-manager diag
+```
+
+Проверить Watchdog:
+
+```sh
+/usr/bin/tproxy-manager-watchdog.sh status
+/usr/bin/tproxy-manager-watchdog.sh check-all
+```
+
+Проверить системные логи:
+
+```sh
+logread | tail -n 100
 ```

@@ -1,4 +1,6 @@
 .DS_Store
+
+# Local build artifacts. GitHub Actions produces release packages.
 dist/
 dl/
 site/
@@ -6,3 +8,5 @@ release/
 feed/
 keys/private/
 .apk-tools/
+*.apk
+*.ipk

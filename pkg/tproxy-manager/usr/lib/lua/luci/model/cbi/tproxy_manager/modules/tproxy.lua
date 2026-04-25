@@ -7,9 +7,36 @@ local function render(ctx)
   local self_url, redirect_here = ctx.self_url, ctx.redirect_here
   local service_block, set_err, get_err, set_info, get_info = ctx.service_block, ctx.set_err, ctx.get_err, ctx.set_info, ctx.get_info
   local write_file, read_file, is_port, append_line_unique = ctx.write_file, ctx.read_file, ctx.is_port, ctx.append_line_unique
+  local trim, is_ipv4, is_uint, is_abs_path = ctx.trim, ctx.is_ipv4, ctx.is_uint, ctx.is_abs_path
+  local is_iface_name, is_nft_table_name, is_fwmark = ctx.is_iface_name, ctx.is_nft_table_name, ctx.is_fwmark
   local combined_log = ctx.combined_log
   local netm_init = ctx.netm_init
   local PKG = ctx.PKG
+  local defaults = {
+    ifaces = "br-lan",
+    ipv6_enabled = "1",
+    tproxy_port = "61219",
+    port_mode = "bypass",
+    src_mode = "off",
+    nft_table = "tp_mgr",
+    fwmark_tcp = "0x1",
+    fwmark_udp = "0x2",
+    rttab_tcp = "100",
+    rttab_udp = "101",
+    log_enabled = "1",
+    ports_file = ctx.BASE_DIR .. "/tproxy-manager.ports",
+    bypass_v4_file = ctx.BASE_DIR .. "/tproxy-manager.v4",
+    bypass_v6_file = ctx.BASE_DIR .. "/tproxy-manager.v6",
+    src_only_v4_file = ctx.BASE_DIR .. "/tproxy-manager.src4.only",
+    src_only_v6_file = ctx.BASE_DIR .. "/tproxy-manager.src6.only",
+    src_bypass_v4_file = ctx.BASE_DIR .. "/tproxy-manager.src4.bypass",
+    src_bypass_v6_file = ctx.BASE_DIR .. "/tproxy-manager.src6.bypass",
+  }
+  local function getu(k)
+    local v = uci:get(PKG, "main", k)
+    if v == nil or v == "" then return defaults[k] or "" end
+    return v
+  end
 
   -- Toolbar handlers for log
   if http.formvalue("_refreshlog_tproxy") then
@@ -99,7 +126,7 @@ local function render(ctx)
   do
     local dv = main_s:option(DummyValue, "_ifaces"); dv.rawhtml = true
     function dv.cfgvalue()
-      local current = (uci:get(PKG,"main","ifaces") or ""):gsub(","," "):gsub("%s+"," ")
+      local current = getu("ifaces"):gsub(","," "):gsub("%s+"," ")
       local set = {}; for w in current:gmatch("(%S+)") do set[w]=true end
 
       local exclude = {}
@@ -136,7 +163,7 @@ local function render(ctx)
         end
       end)
 
-      local ipv6 = uci:get(PKG,"main","ipv6_enabled") or ""
+      local ipv6 = getu("ipv6_enabled")
       local buf = {}
       buf[#buf+1] = string.format(
         "<div class='box'><div style='display:flex;align-items:center;gap:.6rem;margin-bottom:.4rem'>"
@@ -167,9 +194,9 @@ local function render(ctx)
   do
     local dv = main_s:option(DummyValue, "_ports"); dv.rawhtml = true
     function dv.cfgvalue()
-      local u_p_all = uci:get(PKG,"main","tproxy_port") or ""
-      local u_p_tcp = uci:get(PKG,"main","tproxy_port_tcp") or ""
-      local u_p_udp = uci:get(PKG,"main","tproxy_port_udp") or ""
+      local u_p_all = getu("tproxy_port")
+      local u_p_tcp = getu("tproxy_port_tcp")
+      local u_p_udp = getu("tproxy_port_udp")
       local f_p_all = http.formvalue("tpx_port") or ""
       local f_p_tcp = http.formvalue("tpx_port_tcp") or ""
       local f_p_udp = http.formvalue("tpx_port_udp") or ""
@@ -237,8 +264,8 @@ local function render(ctx)
   do
     local dv = main_s:option(DummyValue, "_modes"); dv.rawhtml = true
     function dv.cfgvalue()
-      local pm = pick_form_or_uci(fval("tpx_port_mode"), uci:get(PKG,"main","port_mode"))
-      local sm = pick_form_or_uci(fval("tpx_src_mode"),  uci:get(PKG,"main","src_mode"))
+      local pm = pick_form_or_uci(fval("tpx_port_mode"), getu("port_mode"))
+      local sm = pick_form_or_uci(fval("tpx_src_mode"),  getu("src_mode"))
       local function opt(val, cur, title)
         return string.format('<option value="%s"%s>%s</option>', val, (val==cur) and " selected" or "", title)
       end
@@ -287,11 +314,9 @@ local function render(ctx)
     local se = m:section(SimpleSection, "")
     local dv = se:option(DummyValue, "_uniedit"); dv.rawhtml = true
     function dv.cfgvalue()
-      local function getu(k) return uci:get(PKG,"main",k) or "" end
-
       local pmode_form = fval("tpx_port_mode")
-      local smode      = pick_form_or_uci(fval("tpx_src_mode"),  uci:get(PKG,"main","src_mode"))
-      local pmode      = pick_form_or_uci(pmode_form, uci:get(PKG,"main","port_mode"))
+      local smode      = pick_form_or_uci(fval("tpx_src_mode"),  getu("src_mode"))
+      local pmode      = pick_form_or_uci(pmode_form, getu("port_mode"))
 
       local ports = getu("ports_file")
       local bv4   = getu("bypass_v4_file")
@@ -513,7 +538,6 @@ local function render(ctx)
     local dv = m:section(SimpleSection, "Дополнительные настройки (свернутая панель)"):option(DummyValue, "_advanced")
     dv.rawhtml = true
     function dv.cfgvalue()
-      local function getu(k) return uci:get(PKG,"main",k) or "" end
       local nft = getu("nft_table")
       local fwt = getu("fwmark_tcp")
       local fwu = getu("fwmark_udp")
@@ -564,7 +588,11 @@ local function render(ctx)
     local ip_only  = http.formvalue("_dhcp_add_only")
     local ip_bypass= http.formvalue("_dhcp_add_bypass")
     if ip_only and ip_only ~= "" then
-      local path = uci:get(PKG,"main","src_only_v4_file") or ""
+      if not is_ipv4(ip_only) then
+        set_err("DHCP quick-add: указан некорректный IPv4-адрес.")
+        redirect_here("tproxy"); return
+      end
+      local path = getu("src_only_v4_file")
       if path ~= "" then
         append_line_unique(path, ip_only)
         set_info(string.format("Добавлено %s → src_only_v4_file: %s", ip_only, path))
@@ -573,7 +601,11 @@ local function render(ctx)
       redirect_here("tproxy"); return
     end
     if ip_bypass and ip_bypass ~= "" then
-      local path = uci:get(PKG,"main","src_bypass_v4_file") or ""
+      if not is_ipv4(ip_bypass) then
+        set_err("DHCP quick-add: указан некорректный IPv4-адрес.")
+        redirect_here("tproxy"); return
+      end
+      local path = getu("src_bypass_v4_file")
       if path ~= "" then
         append_line_unique(path, ip_bypass)
         set_info(string.format("Добавлено %s → src_bypass_v4_file: %s", ip_bypass, path))
@@ -587,6 +619,20 @@ local function render(ctx)
     local want_restart = http.formvalue("_tproxy_restart") == "1"
 
     if want_save then
+      local nft_table = trim(http.formvalue("tpx_nft_table"))
+      local fwmark_tcp = trim(http.formvalue("tpx_fwmark_tcp"))
+      local fwmark_udp = trim(http.formvalue("tpx_fwmark_udp"))
+      local rttab_tcp = trim(http.formvalue("tpx_rttab_tcp"))
+      local rttab_udp = trim(http.formvalue("tpx_rttab_udp"))
+      local path_fields = {
+        ports_file = trim(http.formvalue("tpx_ports_file")),
+        bypass_v4_file = trim(http.formvalue("tpx_bypass_v4_file")),
+        bypass_v6_file = trim(http.formvalue("tpx_bypass_v6_file")),
+        src_only_v4_file = trim(http.formvalue("tpx_src_only_v4_file")),
+        src_only_v6_file = trim(http.formvalue("tpx_src_only_v6_file")),
+        src_bypass_v4_file = trim(http.formvalue("tpx_src_bypass_v4_file")),
+        src_bypass_v6_file = trim(http.formvalue("tpx_src_bypass_v6_file")),
+      }
       local split = http.formvalue("tpx_split") ~= nil
       if split then
         local pt = http.formvalue("tpx_port_tcp") or ""
@@ -603,6 +649,25 @@ local function render(ctx)
         end
       end
 
+      if not is_nft_table_name(nft_table) then
+        set_err("Некорректное имя nft_table. Используйте безопасное имя, например tp_mgr.")
+        return
+      end
+      if not is_fwmark(fwmark_tcp) or not is_fwmark(fwmark_udp) then
+        set_err("fwmark_tcp/fwmark_udp должны быть десятичными числами или hex вида 0x1.")
+        return
+      end
+      if not is_uint(rttab_tcp, 1) or not is_uint(rttab_udp, 1) then
+        set_err("rttab_tcp/rttab_udp должны быть положительными целыми числами.")
+        return
+      end
+      for key, path in pairs(path_fields) do
+        if not is_abs_path(path) then
+          set_err("Некорректный путь для " .. key .. ". Ожидается абсолютный путь без пробельного мусора.")
+          return
+        end
+      end
+
       set_err(nil)
 
       uci:section(PKG,"main","main",{})
@@ -611,6 +676,12 @@ local function render(ctx)
       local selected = {}
       for _,d in ipairs((sys.net and sys.net.devices and sys.net.devices()) or {}) do
         if d ~= "lo" and not d:match("^wwan") and http.formvalue("tpx_if_"..d) then selected[#selected+1]=d end
+      end
+      for _, iface in ipairs(selected) do
+        if not is_iface_name(iface) then
+          set_err("Некорректное имя интерфейса: " .. tostring(iface))
+          return
+        end
       end
       if #selected > 0 then uci:set(PKG,"main","ifaces", table.concat(selected," ")) else uci:delete(PKG,"main","ifaces") end
       uci:set(PKG,"main","ipv6_enabled", http.formvalue("tpx_ipv6_enabled") and "1" or "0")
@@ -636,18 +707,18 @@ local function render(ctx)
       if sm == "off" or sm == "only" or sm == "bypass" then uci:set(PKG,"main","src_mode", sm) else uci:delete(PKG,"main","src_mode") end
 
       local function S(k,v) if v and v~="" then uci:set(PKG,"main",k,v) else uci:delete(PKG,"main",k) end end
-      S("nft_table", http.formvalue("tpx_nft_table"))
-      S("fwmark_tcp", http.formvalue("tpx_fwmark_tcp"))
-      S("fwmark_udp", http.formvalue("tpx_fwmark_udp"))
-      S("rttab_tcp",  http.formvalue("tpx_rttab_tcp"))
-      S("rttab_udp",  http.formvalue("tpx_rttab_udp"))
-      S("ports_file",        http.formvalue("tpx_ports_file"))
-      S("bypass_v4_file",    http.formvalue("tpx_bypass_v4_file"))
-      S("bypass_v6_file",    http.formvalue("tpx_bypass_v6_file"))
-      S("src_only_v4_file",  http.formvalue("tpx_src_only_v4_file"))
-      S("src_only_v6_file",  http.formvalue("tpx_src_only_v6_file"))
-      S("src_bypass_v4_file",http.formvalue("tpx_src_bypass_v4_file"))
-      S("src_bypass_v6_file",http.formvalue("tpx_src_bypass_v6_file"))
+      S("nft_table", nft_table)
+      S("fwmark_tcp", fwmark_tcp)
+      S("fwmark_udp", fwmark_udp)
+      S("rttab_tcp",  rttab_tcp)
+      S("rttab_udp",  rttab_udp)
+      S("ports_file", path_fields.ports_file)
+      S("bypass_v4_file", path_fields.bypass_v4_file)
+      S("bypass_v6_file", path_fields.bypass_v6_file)
+      S("src_only_v4_file", path_fields.src_only_v4_file)
+      S("src_only_v6_file", path_fields.src_only_v6_file)
+      S("src_bypass_v4_file", path_fields.src_bypass_v4_file)
+      S("src_bypass_v6_file", path_fields.src_bypass_v6_file)
 
       uci:commit(PKG)
       set_info("Настройки TPROXY сохранены")

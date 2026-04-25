@@ -42,4 +42,21 @@ if [ -x /etc/init.d/tproxy-manager ]; then
     || logger -t "$LOGTAG" "start failed (ignored)"
 fi
 
+cat <<'EOF'
+
+tproxy-manager installed.
+
+GEO sources are configured for /usr/share/tproxy-manager/.
+Configure your proxy daemon to use this datadir. Example for Xray:
+
+  uci set xray.config.datadir='/usr/share/tproxy-manager/'
+  uci commit xray
+  /etc/init.d/xray restart
+
+For DNS leak protection consider installing:
+
+  https-dns-proxy luci-app-https-dns-proxy luci-i18n-https-dns-proxy-ru
+
+EOF
+
 exit 0

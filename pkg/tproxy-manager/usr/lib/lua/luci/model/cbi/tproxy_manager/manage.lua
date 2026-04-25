@@ -5,6 +5,7 @@ local jsonc = require "luci.jsonc"
 local http  = require "luci.http"
 local disp  = require "luci.dispatcher"
 local xml   = require "luci.xml"
+local utils = require "luci.model.cbi.tproxy_manager.utils"
 local ucim  = require "luci.model.uci"
 local uci   = ucim.cursor()
 local cbi   = require "luci.cbi"
@@ -19,36 +20,16 @@ local formvalue  = http.formvalue
 local PKG      = "tproxy-manager"
 local BASE_DIR = "/etc/tproxy-manager"
 
--- ---------- минимальные файловые хелперы ----------
-local function atomic_write(path, data)
-  data = (data or ""):gsub("\r\n","\n")
-  local dir, base = path:match("^(.*)/([^/]+)$")
-  local tmpdir = dir and dir or "/tmp"
-  if dir and not fs.access(dir) then
-    sys.call("mkdir -p '"..dir:gsub("'", "'\\''").."'")
-  end
-  local tmp = string.format("%s/.%s.%d.tmp", tmpdir, base or "tmp", math.random(1, 10^9))
-  fs.writefile(tmp, data)
-  fs.rename(tmp, path)
-end
-local function read_file(p)  return fs.readfile(p) or "" end
-local function write_file(p, s) atomic_write(p, s or "") end
+local read_file  = utils.read_file
+local write_file = utils.write_file
 
 -- Сообщения с TTL
 local ERR_F   = "/tmp/tproxy_manager_last_error"
 local INF_F   = "/tmp/tproxy_manager_last_info"
 local ERR_TTL = 60
-
-local function set_err(s)  if s and s~="" then write_file(ERR_F, s) else fs.remove(ERR_F) end end
-local function get_err()
-  local st = fs.stat(ERR_F)
-  if st and st.mtime and (os.time() - st.mtime) > ERR_TTL then
-    fs.remove(ERR_F); return ""
-  end
-  return read_file(ERR_F)
-end
-local function set_info(s) if s and s~="" then write_file(INF_F, s) else fs.remove(INF_F) end end
-local function get_info()  return read_file(INF_F) end
+local messages = utils.make_temp_message_store(ERR_F, INF_F, ERR_TTL)
+local set_err, get_err = messages.set_err, messages.get_err
+local set_info, get_info = messages.set_info, messages.get_info
 
 -- Общий system log (модулям может понадобиться)
 local function combined_log()
@@ -130,11 +111,6 @@ local function urlencode(s) return (http and http.urlencode) and http.urlencode(
 local function pick_form_or_uci(form_val, uci_val)
   return (form_val ~= nil and form_val ~= "") and form_val or (uci_val or "")
 end
-local function is_port(v)
-  if not v or v == "" or not v:match("^%d+$") then return false end
-  local n = tonumber(v)
-  return n >= 1 and n <= 65535
-end
 local function append_line_unique(path, line)
   if not line or line == "" then return end
   local body = read_file(path)
@@ -150,6 +126,14 @@ local function self_url(opts)
   local url = disp.build_url("admin","network","tproxy_manager")
   local qp = {}
   if opts.tab and #opts.tab>0 then qp[#qp+1] = "tab="..urlencode(opts.tab) end
+  local keys = {}
+  for k, v in pairs(opts) do
+    if k ~= "tab" and v ~= nil and tostring(v) ~= "" then keys[#keys+1] = k end
+  end
+  table.sort(keys)
+  for _, k in ipairs(keys) do
+    qp[#qp+1] = urlencode(k) .. "=" .. urlencode(opts[k])
+  end
   if #qp>0 then url = url .. "?" .. table.concat(qp,"&") end
   return url
 end
@@ -159,67 +143,15 @@ end
 
 -- ensure dirs
 do
-  local st = fs.stat(BASE_DIR); if not (st and st.type == "directory") then fs.mkdir(BASE_DIR) end
+  utils.ensure_dir(BASE_DIR)
 end
 
--- ensure UCI defaults (TPROXY обязателен; остальные модули по умолчанию выключены)
+-- ensure main section exists, but do not rewrite installer defaults from LuCI
 do
-  uci:section(PKG,"main","main",{})
-  local changed = false
-  local function ensure(k, def)
-    local v = uci:get(PKG,"main",k)
-    if v == nil or v == "" then uci:set(PKG,"main",k,def); changed = true end
+  if not uci:get(PKG, "main") then
+    uci:section(PKG,"main","main",{})
+    uci:commit(PKG)
   end
-  -- Флаги модулей
-  ensure("enable_xray",    "0")
-  ensure("enable_mihomo",  "0")
-  ensure("enable_updates", "0")
-  ensure("enable_watchdog","0")
-
-  -- Базовые TPROXY-параметры
-  ensure("log_enabled", "1")
-  ensure("nft_table", "tproxy")
-  ensure("ifaces", "br-lan")
-  ensure("ipv6_enabled", "1")
-  ensure("tproxy_port", "61219")
-  ensure("fwmark_tcp", "0x1")
-  ensure("fwmark_udp", "0x2")
-  ensure("rttab_tcp", "100")
-  ensure("rttab_udp", "101")
-  ensure("port_mode", "bypass")
-  ensure("ports_file", BASE_DIR.."/tproxy-manager.ports")
-  ensure("bypass_v4_file", BASE_DIR.."/tproxy-manager.v4")
-  ensure("bypass_v6_file", BASE_DIR.."/tproxy-manager.v6")
-  ensure("src_mode", "off")
-  ensure("src_only_v4_file",  BASE_DIR.."/tproxy-manager.src4.only")
-  ensure("src_only_v6_file",  BASE_DIR.."/tproxy-manager.src6.only")
-  ensure("src_bypass_v4_file",BASE_DIR.."/tproxy-manager.src4.bypass")
-  ensure("src_bypass_v6_file",BASE_DIR.."/tproxy-manager.src6.bypass")
-
-  -- Watchdog-параметры
-  ensure("watchdog_check_url", "https://ifconfig.me/ip")
-  ensure("watchdog_proxy_url", "socks5h://127.0.0.1:10808")
-  ensure("watchdog_interval", "60")
-  ensure("watchdog_fail_threshold", "3")
-  ensure("watchdog_connect_timeout", "15")
-  ensure("watchdog_max_time", "20")
-  ensure("watchdog_links_file", BASE_DIR.."/watchdog.links")
-  ensure("watchdog_template_file", BASE_DIR.."/watchdog-outbound.template.jsonc")
-  ensure("watchdog_outbound_file", "/etc/xray/04_outbounds.json")
-  ensure("watchdog_vless2json", "/usr/bin/vless2json.sh")
-  ensure("watchdog_service_path", "/etc/init.d/xray")
-  ensure("watchdog_restart_cmd", "restart")
-  ensure("watchdog_test_command", "/usr/bin/xray -c {config}")
-  ensure("watchdog_test_template_file", BASE_DIR.."/watchdog-test-config.template.jsonc")
-  ensure("watchdog_selection_mode", "random")
-  ensure("watchdog_exclude_dead", "0")
-  ensure("watchdog_dead_cooldown_hours", "0")
-  ensure("watchdog_dead_cooldown_minutes", "0")
-  ensure("watchdog_test_port", "10881")
-  ensure("watchdog_background_check_enabled", "0")
-  ensure("watchdog_background_check_interval", "1800")
-
-  if changed then uci:commit(PKG) end
 end
 
 -- Текущие признаки активных модулей из UCI
@@ -399,10 +331,20 @@ local ctx = {
   set_err = set_err, get_err = get_err, set_info = set_info, get_info = get_info,
 
   -- утилиты
+  utils = utils,
   write_file = write_file, read_file = read_file,
   pick_form_or_uci = pick_form_or_uci,
   append_line_unique = append_line_unique,
-  is_port = is_port,
+  trim = utils.trim,
+  shellescape = utils.shellescape,
+  is_port = utils.is_port,
+  is_ipv4 = utils.is_ipv4,
+  is_uint = utils.is_uint,
+  is_abs_path = utils.is_abs_path,
+  is_iface_name = utils.is_iface_name,
+  is_nft_table_name = utils.is_nft_table_name,
+  is_fwmark = utils.is_fwmark,
+  parse_kv_text = utils.parse_kv_text,
   netm_init = netm_init,
 }
 
