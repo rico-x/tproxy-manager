@@ -227,13 +227,13 @@ local function status_label(entry)
   local checked = state.LAST_CHECKED_HUMAN or "-"
   local cooldown = state.COOLDOWN_UNTIL_HUMAN or "-"
   if status == "alive" then
-    return "<span class='svc-badge ok'>Живая</span>", checked
+    return "<span class='svc-badge ok'>OK</span>", checked
   elseif status == "dead" then
     local suffix = ""
     if cooldown ~= "" and cooldown ~= "-" then
       suffix = " <span style='color:#9ca3af'>(искл. до " .. pcdata(cooldown) .. ")</span>"
     end
-    return "<span class='svc-badge err'>Не живая</span>" .. suffix, checked
+    return "<span class='svc-badge err'>Error</span>" .. suffix, checked
   end
   return "<span style='color:#6b7280'>Не проверялась</span>", "-"
 end
@@ -602,7 +602,6 @@ local function render(ctx)
     function dv.cfgvalue()
       local rows = {}
       rows[#rows + 1] = "<div class='box'>"
-      rows[#rows + 1] = "<div style='margin-bottom:.5rem;color:#6b7280'>Комментарий берётся из части после <code>#</code> внутри самой VLESS-ссылки.</div>"
       rows[#rows + 1] = "<table class='wd-table'><thead><tr><th style='width:18%'>Комментарий</th><th style='width:42%'>VLESS ссылка</th><th style='width:12%'>Статус</th><th style='width:12%'>Последняя проверка</th><th style='width:16%'>Действие</th></tr></thead><tbody>"
       if #links == 0 then
         rows[#rows + 1] = "<tr><td colspan='5' style='color:#6b7280'>Список ссылок пуст</td></tr>"

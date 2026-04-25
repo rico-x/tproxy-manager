@@ -3,6 +3,8 @@
 
 # TPROXY Manager for OpenWrt
 
+![Главная панель](docs/screenshots/placeholder-dashboard.png)
+
 TPROXY Manager — это LuCI-панель и набор системных скриптов для OpenWrt. Проект помогает управлять прозрачным перехватом трафика через `nftables`, списками обхода, конфигами Xray/Mihomo, GEO-базами и автоматическим переключением VLESS outbound через Watchdog.
 
 Проект ориентирован на роутер, где proxy daemon уже установлен отдельно. Это может быть Xray, Mihomo или другой сервис, который умеет работать с подготовленными конфигами и списками.
@@ -131,6 +133,8 @@ uci commit xray
 
 ## Вкладки LuCI
 
+![Навигация](docs/screenshots/placeholder-navigation.png)
+
 Вкладка `TPROXY` доступна всегда. Остальные вкладки включаются в сворачиваемом блоке `Дополнительные настройки`.
 
 Доступные вкладки:
@@ -146,6 +150,8 @@ uci commit xray
 Если в редакторах есть несохранённые изменения, интерфейс предупреждает перед переключением вкладок.
 
 ## TPROXY
+
+![TPROXY main](docs/screenshots/placeholder-tproxy-main.png)
 
 Вкладка `TPROXY` управляет прозрачным перехватом трафика и списками маршрутизации.
 
@@ -192,6 +198,8 @@ uci commit xray
 
 ## XRAY
 
+![XRAY](docs/screenshots/placeholder-xray.png)
+
 Вкладка `XRAY` нужна для базового обслуживания Xray из LuCI.
 
 Возможности:
@@ -205,11 +213,15 @@ uci commit xray
 
 Лог последней проверки:
 
+![XRAY editor](docs/screenshots/placeholder-xray-editor.png)
+
 ```txt
 /tmp/tproxy_manager_xray_test.log
 ```
 
 ## MIHOMO
+
+![MIHOMO](docs/screenshots/placeholder-mihomo.png)
 
 Вкладка `MIHOMO` работает с YAML-конфигами Mihomo.
 
@@ -226,11 +238,15 @@ uci commit xray
 
 Лог последней проверки:
 
+![MIHOMO editor](docs/screenshots/placeholder-mihomo-editor.png)
+
 ```txt
 /tmp/tproxy_manager_mihomo_test.log
 ```
 
 ## Обновление геобаз
+
+![GEO Updates](docs/screenshots/placeholder-geo-updates.png)
 
 Модуль GEO работает с файлом:
 
@@ -282,6 +298,8 @@ uci commit xray
 
 ## WATCHDOG
 
+![Watchdog](docs/screenshots/placeholder-watchdog.png)
+
 Watchdog — это отдельная вкладка и отдельный сервис:
 
 ```txt
@@ -302,6 +320,8 @@ Watchdog — это отдельная вкладка и отдельный се
 
 ### Список VLESS-ссылок
 
+![Watchdog links](docs/screenshots/placeholder-watchdog-links.png)
+
 Файл по умолчанию:
 
 ```txt
@@ -319,7 +339,7 @@ vless://... # внешний комментарий
 
 - комментарий;
 - ссылка без комментария;
-- статус `Живая / Не живая / Не проверялась`;
+- статус `OK / Error / Не проверялась`;
 - время последней проверки;
 - кнопки `Применить`, `Проверить`, `Ред.`, `Удалить`, `Вверх`, `Вниз`.
 
@@ -335,6 +355,8 @@ vless://... # внешний комментарий
 Можно включить временное исключение нерабочих ссылок. Тогда ссылка со статусом `dead` не участвует в автоматическом переключении до истечения заданного периода.
 
 ### Outbound-шаблон
+
+![Watchdog outbounds template](docs/screenshots/placeholder-watchdog-outbounds-template.png)
 
 Файл по умолчанию:
 
@@ -358,6 +380,8 @@ vless2json.sh -r LINKS_FILE -t TEMPLATE_FILE
 
 ### Test-template
 
+![Watchdog test template](docs/screenshots/placeholder-watchdog-test-template.png)
+
 Для проверки ссылок используется отдельный временный конфиг test-instance.
 
 Файл по умолчанию:
@@ -379,6 +403,8 @@ vless2json.sh -r LINKS_FILE -t TEMPLATE_FILE
 ```
 
 Если используется не Xray, поменяйте и `TEST_COMMAND`, и test-template.
+
+![Watchdog settings](docs/screenshots/placeholder-watchdog-settings.png)
 
 ### Runtime-команды
 
@@ -446,22 +472,6 @@ chmod +x ipkg-build
 ```
 
 `scripts/fetch-apk-static.sh` использует Docker и вытаскивает `apk.static` из `alpine:edge`.
-
-## Скриншоты
-
-Ссылки оставлены как плейсхолдеры. Замените файлы в `docs/screenshots/` своими изображениями или поменяйте пути в этом разделе.
-
-- Главная панель: `docs/screenshots/placeholder-dashboard.png`
-- Навигация: `docs/screenshots/placeholder-navigation.png`
-- TPROXY: `docs/screenshots/placeholder-tproxy-main.png`
-- XRAY: `docs/screenshots/placeholder-xray-editor.png`
-- MIHOMO: `docs/screenshots/placeholder-mihomo-editor.png`
-- GEO: `docs/screenshots/placeholder-geo-table.png`
-- Watchdog overview: `docs/screenshots/placeholder-watchdog-overview.png`
-- Watchdog links: `docs/screenshots/placeholder-watchdog-links.png`
-- Watchdog outbounds template: `docs/screenshots/placeholder-watchdog-outbounds-template.png`
-- Watchdog test template: `docs/screenshots/placeholder-watchdog-test-template.png`
-- Watchdog settings: `docs/screenshots/placeholder-watchdog-settings.png`
 
 ## Рекомендации после установки
 

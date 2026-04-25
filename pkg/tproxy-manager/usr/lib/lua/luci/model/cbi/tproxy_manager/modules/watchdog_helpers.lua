@@ -153,13 +153,13 @@ function M.status_label(entry, pcdata)
   local checked = state.LAST_CHECKED_HUMAN or "-"
   local cooldown = state.COOLDOWN_UNTIL_HUMAN or "-"
   if status == "alive" then
-    return "<span class='svc-badge ok'>Живая</span>", checked
+    return "<span class='svc-badge ok'>OK</span>", checked
   elseif status == "dead" then
     local suffix = ""
     if cooldown ~= "" and cooldown ~= "-" then
       suffix = " <span style='color:#9ca3af'>(искл. до " .. pcdata(cooldown) .. ")</span>"
     end
-    return "<span class='svc-badge err'>Не живая</span>" .. suffix, checked
+    return "<span class='svc-badge err'>Error</span>" .. suffix, checked
   end
   return "<span style='color:#6b7280'>Не проверялась</span>", "-"
 end
