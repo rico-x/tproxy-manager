@@ -1,3 +1,5 @@
+# shellcheck shell=sh
+
 build_test_command() {
     config_file="$1"
     config_q="$(shellescape "$config_file")"

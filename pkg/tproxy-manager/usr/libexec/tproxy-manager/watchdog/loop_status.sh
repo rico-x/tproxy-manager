@@ -1,3 +1,5 @@
+# shellcheck shell=sh
+
 check_current_proxy() {
     log_msg "check start: proxy=$PROXY_URL url=$CHECK_URL"
     code="$(probe_proxy_url "$PROXY_URL")"

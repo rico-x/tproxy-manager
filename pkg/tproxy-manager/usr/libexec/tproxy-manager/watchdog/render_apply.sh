@@ -1,3 +1,5 @@
+# shellcheck shell=sh
+
 probe_proxy_url() {
     proxy_url="$1"
     http_code="$(curl -sS -o /dev/null -w '%{http_code}' \

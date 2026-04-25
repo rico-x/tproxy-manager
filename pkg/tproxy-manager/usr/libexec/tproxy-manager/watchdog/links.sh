@@ -1,3 +1,5 @@
+# shellcheck shell=sh
+
 link_hash() {
     printf '%s' "$1" | md5sum 2>/dev/null | awk '{print $1}'
 }

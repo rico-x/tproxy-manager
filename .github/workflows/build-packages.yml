@@ -260,7 +260,7 @@ jobs:
           while IFS= read -r -d '' file; do
             first_line="$(head -n1 "$file" || true)"
             case "$first_line" in
-              '#!/bin/sh'*|#!/usr/bin/env\ sh*|#!/bin/ash*|#!/usr/bin/env\ ash*)
+              '#!/bin/sh'*|'#!/usr/bin/env sh'*|'#!/bin/ash'*|'#!/usr/bin/env ash'*)
                 sh -n "$file"
                 ;;
             esac
@@ -281,7 +281,7 @@ jobs:
           while IFS= read -r -d '' file; do
             first_line="$(head -n1 "$file" || true)"
             case "$first_line" in
-              '#!/usr/bin/lua'*|#!/usr/bin/env\ lua*)
+              '#!/usr/bin/lua'*|'#!/usr/bin/env lua'*)
                 luac -p "$file"
                 ;;
             esac
@@ -291,12 +291,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          shellcheck -s bash scripts/*.sh
+          shellcheck -S error -s bash scripts/*.sh
           while IFS= read -r -d '' file; do
             first_line="$(head -n1 "$file" || true)"
             case "$first_line" in
-              '#!/bin/sh'*|#!/usr/bin/env\ sh*|#!/bin/ash*|#!/usr/bin/env\ ash*)
-                shellcheck -s sh "$file"
+              '#!/bin/sh'*|'#!/usr/bin/env sh'*|'#!/bin/ash'*|'#!/usr/bin/env ash'*)
+                shellcheck -S error -s sh "$file"
                 ;;
             esac
           done < <(find pkg/tproxy-manager \

@@ -1,3 +1,5 @@
+# shellcheck shell=sh
+
 PKG="tproxy-manager"
 
 STATE_FILE="/tmp/tproxy-manager-watchdog.state"
