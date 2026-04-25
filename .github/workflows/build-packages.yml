@@ -318,7 +318,30 @@ jobs:
           [ -n "$IPK" ] && [ -f "$IPK" ]
           [ -n "$PACKAGES_FILE" ] && [ -f "$PACKAGES_FILE" ]
           [ -n "$PACKAGES_GZ" ] && [ -f "$PACKAGES_GZ" ]
-          CTRL="$(ar p "$IPK" control.tar.gz | tar -xOzf - ./control 2>/dev/null || ar p "$IPK" control.tar.gz | tar -xOzf - control 2>/dev/null)"
+          get_ipk_control() {
+            local ipk="$1"
+            local ctrl=""
+
+            if tar tzf "$ipk" >/dev/null 2>&1; then
+              if tar tzf "$ipk" | grep -q '^./control.tar.gz$'; then
+                ctrl="$(tar -xOzf "$ipk" ./control.tar.gz | tar -xOzf - ./control 2>/dev/null || tar -xOzf - control 2>/dev/null || true)"
+              elif tar tzf "$ipk" | grep -q '^./control.tar.xz$'; then
+                ctrl="$(tar -xOzf "$ipk" ./control.tar.xz | tar -xOJf - ./control 2>/dev/null || tar -xOJf - control 2>/dev/null || true)"
+              fi
+            fi
+
+            if [[ -z "$ctrl" ]]; then
+              if ar t "$ipk" 2>/dev/null | grep -q '^control.tar.gz$'; then
+                ctrl="$(ar p "$ipk" control.tar.gz | tar -xOzf - ./control 2>/dev/null || tar -xOzf - control 2>/dev/null || true)"
+              elif ar t "$ipk" 2>/dev/null | grep -q '^control.tar.xz$'; then
+                ctrl="$(ar p "$ipk" control.tar.xz | tar -xOJf - ./control 2>/dev/null || tar -xOJf - control 2>/dev/null || true)"
+              fi
+            fi
+
+            [[ -n "$ctrl" ]] || return 1
+            printf '%s\n' "$ctrl"
+          }
+          CTRL="$(get_ipk_control "$IPK")"
           EXPECTED_DEPENDS="$(awk -F': ' '/^Depends:/{print $2}' pkg/tproxy-manager/CONTROL/control)"
           printf '%s\n' "$CTRL" | grep -q '^Package: tproxy-manager$'
           printf '%s\n' "$CTRL" | grep -q '^Architecture: all$'
