@@ -228,7 +228,7 @@ do
   window.__xray_dirty = false;
   document.addEventListener('input', function(e){
     var n = e && e.target && e.target.name;
-    if (n === 'uniedit_text' || n === 'json_text' || n === 'clash_text' || n === 'mihomo_text' || n === 'geo_sources' || n === 'watchdog_template_text' || n === 'watchdog_test_template_text' || n === 'watchdog_links_text' || n === 'wd_add_link' || n === 'wd_edit_link') window.__xray_dirty = true;
+    if (n === 'uniedit_text' || n === 'json_text' || n === 'clash_text' || n === 'mihomo_text' || n === 'geo_sources' || n === 'watchdog_template_text' || n === 'watchdog_test_template_text' || n === 'watchdog_links_text' || n === 'wd_add_link' || n === 'wd_edit_link' || n === 'watchdog_happ_capture_ttl' || n === 'watchdog_happ_capture_port' || n === 'watchdog_happ_capture_log' || n === 'happ_capture_start_ttl' || n === 'happ_capture_start_port' || n === 'happ_capture_start_log' || (n && n.indexOf('sub_') === 0)) window.__xray_dirty = true;
   }, true);
   window.__xray_guard = function(){ return (!window.__xray_dirty) || confirm('Есть несохранённые изменения. Перейти без сохранения?'); };
   setTimeout(function(){

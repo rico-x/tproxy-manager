@@ -131,6 +131,16 @@ maybe_run_background_check() {
     run_check_all
 }
 
+maybe_run_subscription_fetch() {
+    [ -x /usr/bin/tproxy-manager-subscriptions.lua ] || return 1
+    out="$(/usr/bin/tproxy-manager-subscriptions.lua fetch-due 2>&1)"
+    rc=$?
+    if [ -n "$out" ]; then
+        log_msg "$out"
+    fi
+    return $rc
+}
+
 show_status() {
     state_snapshot
     if [ -x /etc/init.d/tproxy-manager-watchdog ] && /etc/init.d/tproxy-manager-watchdog status >/dev/null 2>&1; then
@@ -186,6 +196,7 @@ loop_run() {
     while true; do
         run_once
         maybe_run_background_check >/dev/null 2>&1 || true
+        maybe_run_subscription_fetch >/dev/null 2>&1 || true
         sleep "$INTERVAL"
     done
 }

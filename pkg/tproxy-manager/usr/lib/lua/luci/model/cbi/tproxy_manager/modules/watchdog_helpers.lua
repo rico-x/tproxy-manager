@@ -199,6 +199,8 @@ function M.save_watchdog_settings(ctx)
   local cooldown_minutes = parse_int(http.formvalue("watchdog_dead_cooldown_minutes"), 0)
   local test_port = parse_int(http.formvalue("watchdog_test_port"), 0)
   local background_check_interval = parse_int(http.formvalue("watchdog_background_check_interval"), 0)
+  local happ_capture_ttl = parse_int(http.formvalue("watchdog_happ_capture_ttl"), 0)
+  local happ_capture_port = parse_int(http.formvalue("watchdog_happ_capture_port"), 0)
   local mode = trim(http.formvalue("watchdog_selection_mode"))
   local service_path = trim(http.formvalue("watchdog_service_path"))
   local test_command, test_command_err = M.validate_test_command(http.formvalue("watchdog_test_command"))
@@ -212,6 +214,8 @@ function M.save_watchdog_settings(ctx)
   end
   if test_port < 1 or test_port > 65535 then set_err("Порт test-instance должен быть в диапазоне 1..65535."); return false end
   if background_check_interval < 1 then set_err("Таймер фоновой проверки должен быть не меньше 1 секунды."); return false end
+  if happ_capture_ttl < 1 then set_err("Время действия Happ capture должно быть не меньше 1 секунды."); return false end
+  if happ_capture_port < 1 or happ_capture_port > 65535 then set_err("Порт Happ capture должен быть в диапазоне 1..65535."); return false end
   if mode ~= "random" and mode ~= "ordered" then set_err("Неизвестный режим выбора ссылок."); return false end
   if service_path == "" or not utils.is_abs_path(service_path) then set_err("Нужно указать корректный абсолютный путь к сервису."); return false end
   if not test_command then set_err(test_command_err); return false end
@@ -224,13 +228,15 @@ function M.save_watchdog_settings(ctx)
     watchdog_test_template_file = trim(http.formvalue("watchdog_test_template_file")),
     watchdog_outbound_file = trim(http.formvalue("watchdog_outbound_file")),
     watchdog_vless2json = trim(http.formvalue("watchdog_vless2json")),
+    watchdog_subscriptions_file = trim(http.formvalue("watchdog_subscriptions_file")),
+    watchdog_happ_capture_log = trim(http.formvalue("watchdog_happ_capture_log")),
   }
   for key, value in pairs(text_fields) do
     if value == "" then
       set_err("Нужно заполнить поле " .. key .. ".")
       return false
     end
-    if key:match("_file$") or key == "watchdog_vless2json" then
+    if key:match("_file$") or key == "watchdog_vless2json" or key == "watchdog_happ_capture_log" then
       if not utils.is_abs_path(value) then
         set_err("Некорректный абсолютный путь для " .. key .. ".")
         return false
@@ -257,6 +263,8 @@ function M.save_watchdog_settings(ctx)
   S("watchdog_test_port", tostring(test_port))
   S("watchdog_background_check_enabled", http.formvalue("watchdog_background_check_enabled") and "1" or "0")
   S("watchdog_background_check_interval", tostring(background_check_interval))
+  S("watchdog_happ_capture_ttl", tostring(happ_capture_ttl))
+  S("watchdog_happ_capture_port", tostring(happ_capture_port))
   uci:commit(PKG)
 
   set_err(nil)

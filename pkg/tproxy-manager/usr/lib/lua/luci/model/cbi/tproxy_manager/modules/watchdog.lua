@@ -12,8 +12,11 @@ local helpers = require "luci.model.cbi.tproxy_manager.modules.watchdog_helpers"
 local pcdata = xml.pcdata
 
 local WATCHDOG_SCRIPT = "/usr/bin/tproxy-manager-watchdog.sh"
+local SUBSCRIPTIONS_SCRIPT = "/usr/bin/tproxy-manager-subscriptions.lua"
 local WATCHDOG_LINK_STATE_DIR = "/tmp/tproxy-manager-watchdog-links"
 local WATCHDOG_LOG_FILE = "/tmp/tproxy-manager-watchdog.log"
+local DEFAULT_SUBSCRIPTIONS_FILE = "/etc/tproxy-manager/watchdog-subscriptions.json"
+local DEFAULT_CAPTURE_LOG = "/tmp/tproxy-manager-happ-capture.log"
 local MD5_CACHE = {}
 local STATE_CACHE = {}
 
@@ -137,6 +140,210 @@ local function run_watchdog_command(args)
     parts[#parts + 1] = shellescape(arg)
   end
   return run_cmd_capture(table.concat(parts, " "))
+end
+
+local function run_subscription_command(args)
+  local parts = { shellescape(SUBSCRIPTIONS_SCRIPT) }
+  for _, arg in ipairs(args or {}) do
+    parts[#parts + 1] = shellescape(arg)
+  end
+  return run_cmd_capture(table.concat(parts, " "))
+end
+
+local function default_subscription_db()
+  return {
+    version = 1,
+    next_id = 1,
+    subscriptions = {},
+    links = {},
+    excluded = {},
+    removed = {},
+  }
+end
+
+local function normalize_subscription_db(db)
+  if type(db) ~= "table" then db = default_subscription_db() end
+  db.version = tonumber(db.version) or 1
+  db.next_id = tonumber(db.next_id) or 1
+  if type(db.subscriptions) ~= "table" then db.subscriptions = {} end
+  if type(db.links) ~= "table" then db.links = {} end
+  if type(db.excluded) ~= "table" then db.excluded = {} end
+  if type(db.removed) ~= "table" then db.removed = {} end
+  return db
+end
+
+local function read_subscription_db(path)
+  local raw = read_file(path)
+  if raw == "" then return default_subscription_db() end
+  local ok, parsed = pcall(jsonc.parse, raw)
+  if not ok or type(parsed) ~= "table" then return default_subscription_db() end
+  return normalize_subscription_db(parsed)
+end
+
+local function write_subscription_db(path, db)
+  write_file(path, jsonc.stringify(normalize_subscription_db(db), true) .. "\n")
+end
+
+local function next_subscription_id(db)
+  local id = tonumber(db.next_id) or 1
+  local max_id = 0
+  for _, sub in ipairs(db.subscriptions or {}) do
+    local sub_id = tonumber(sub.id) or 0
+    if sub_id > max_id then max_id = sub_id end
+  end
+  if id <= max_id then id = max_id + 1 end
+  db.next_id = id + 1
+  return id
+end
+
+local function find_subscription(db, id)
+  id = tonumber(id)
+  if not id then return nil, nil end
+  for idx, sub in ipairs(db.subscriptions or {}) do
+    if tonumber(sub.id) == id then return sub, idx end
+  end
+  return nil, nil
+end
+
+local function subscription_source_key(sub)
+  return tostring(sub.type or "happ") .. ":" .. tostring(sub.id)
+end
+
+local function remove_subscription_sources(db, sub)
+  local skey = subscription_source_key(sub)
+  for hash, item in pairs(db.links or {}) do
+    if type(item) == "table" and type(item.sources) == "table" and item.sources[skey] then
+      item.sources[skey] = nil
+      local has_source = false
+      for _ in pairs(item.sources) do has_source = true; break end
+      if not has_source then
+        db.links[hash] = nil
+        db.removed[hash] = os.time()
+      end
+    end
+  end
+end
+
+local function subscription_sources_for_hash(db, hash)
+  local item = db.links and db.links[hash]
+  local labels = {}
+  if type(item) == "table" and type(item.sources) == "table" then
+    for _, source in pairs(item.sources) do
+      local typ = tostring(source.type or "happ")
+      local id = tostring(source.id or "")
+      labels[#labels + 1] = trim((source.label and tostring(source.label) ~= "" and source.label) or (typ .. " " .. id))
+    end
+  end
+  table.sort(labels)
+  return labels
+end
+
+local function is_subscription_link(db, hash)
+  return #subscription_sources_for_hash(db, hash) > 0
+end
+
+local function source_badges(db, hash)
+  local labels = subscription_sources_for_hash(db, hash)
+  if #labels == 0 then return "<span class='svc-badge'>local</span>", false end
+  local out = {}
+  for _, label in ipairs(labels) do
+    out[#out + 1] = "<span class='svc-badge ok'>" .. pcdata(label) .. "</span>"
+  end
+  return table.concat(out, " "), true
+end
+
+local function parse_capture_headers(path)
+  local headers = {}
+  local raw = read_file(path)
+  local in_headers = false
+  local aliases = {
+    ["user-agent"] = "User-Agent",
+    ["accept-encoding"] = "Accept-Encoding",
+    ["connection"] = "Connection",
+    ["x-device-os"] = "X-Device-Os",
+    ["x-device-locale"] = "X-Device-Locale",
+    ["x-device-model"] = "X-Device-Model",
+    ["x-ver-os"] = "X-Ver-Os",
+    ["x-hwid"] = "X-Hwid",
+    ["x-real-ip"] = "X-Real-Ip",
+    ["x-forwarded-for"] = "X-Forwarded-For",
+  }
+  for line in (raw .. "\n"):gmatch("([^\n]*)\n") do
+    line = trim(line)
+    if line == "HTTP HEADERS:" then
+      in_headers = true
+    elseif line == "REQUEST BODY:" then
+      break
+    elseif in_headers and line ~= "" then
+      local name, value = line:match("^([^:]+):%s*(.*)$")
+      if name and value then
+        local key = aliases[trim(name):lower()] or trim(name)
+        headers[key] = value
+      end
+    end
+  end
+  return headers
+end
+
+local function capture_url(token, port)
+  if token == "" then return "" end
+  local host = http.getenv("HTTP_HOST") or "192.168.1.1"
+  host = host:gsub(":%d+$", "")
+  port = tostring(port or "18088")
+  return "http://" .. host .. ":" .. port .. "/" .. token
+end
+
+local function subscription_enabled(sub)
+  return sub.enabled == true or sub.enabled == "1" or sub.enabled == 1
+end
+
+local function default_happ_headers(captured)
+  captured = captured or {}
+  return {
+    ["User-Agent"] = captured["User-Agent"] or "Happ/3.13.0",
+    ["X-Device-Os"] = captured["X-Device-Os"] or "Android",
+    ["X-Device-Locale"] = captured["X-Device-Locale"] or "ru",
+    ["X-Device-Model"] = captured["X-Device-Model"] or "ELP-NX1",
+    ["X-Ver-Os"] = captured["X-Ver-Os"] or "15",
+    ["Accept-Encoding"] = captured["Accept-Encoding"] or "gzip",
+    ["Connection"] = captured["Connection"] or "close",
+    ["X-Hwid"] = captured["X-Hwid"] or "",
+    ["X-Real-Ip"] = captured["X-Real-Ip"] or "",
+    ["X-Forwarded-For"] = captured["X-Forwarded-For"] or "",
+  }
+end
+
+local function collect_subscription_form(existing)
+  existing = existing or {}
+  local typ = trim(http.formvalue("sub_type"))
+  if typ ~= "happ" and typ ~= "json" then typ = "happ" end
+  return {
+    id = tonumber(http.formvalue("sub_id")) or existing.id,
+    type = typ,
+    name = trim(http.formvalue("sub_name")),
+    enabled = http.formvalue("sub_enabled") and true or false,
+    url = trim(http.formvalue("sub_url")),
+    timeout = parse_int(http.formvalue("sub_timeout"), 30),
+    refresh_interval = parse_int(http.formvalue("sub_refresh_interval"), 10800),
+    headers = {
+      ["User-Agent"] = trim(http.formvalue("sub_h_user_agent")),
+      ["X-Device-Os"] = trim(http.formvalue("sub_h_device_os")),
+      ["X-Device-Locale"] = trim(http.formvalue("sub_h_device_locale")),
+      ["X-Device-Model"] = trim(http.formvalue("sub_h_device_model")),
+      ["X-Ver-Os"] = trim(http.formvalue("sub_h_ver_os")),
+      ["Accept-Encoding"] = trim(http.formvalue("sub_h_accept_encoding")),
+      ["Connection"] = trim(http.formvalue("sub_h_connection")),
+      ["X-Hwid"] = trim(http.formvalue("sub_h_hwid")),
+      ["X-Real-Ip"] = trim(http.formvalue("sub_h_real_ip")),
+      ["X-Forwarded-For"] = trim(http.formvalue("sub_h_forwarded_for")),
+    },
+    extra_headers = trim(http.formvalue("sub_extra_headers")),
+    last_update = existing.last_update,
+    last_update_human = existing.last_update_human,
+    last_status = existing.last_status,
+    last_error = existing.last_error,
+    last_count = existing.last_count,
+  }
 end
 
 local function parse_kv_text(text)
@@ -336,6 +543,126 @@ local function render(ctx)
   end
 
   local links_path = getu("watchdog_links_file", "/etc/tproxy-manager/watchdog.links")
+  local subscriptions_path = getu("watchdog_subscriptions_file", DEFAULT_SUBSCRIPTIONS_FILE)
+  local capture_log = getu("watchdog_happ_capture_log", DEFAULT_CAPTURE_LOG)
+  local capture_defaults = nil
+  local show_capture_details = false
+
+  math.randomseed(os.time())
+
+  if http.formvalue("_sub_start_capture") == "1" then
+    local ttl = parse_int(http.formvalue("happ_capture_start_ttl"), parse_int(getu("watchdog_happ_capture_ttl", "600"), 600))
+    if ttl < 1 then ttl = 600 end
+    local port = parse_int(http.formvalue("happ_capture_start_port"), parse_int(getu("watchdog_happ_capture_port", "18088"), 18088))
+    if port < 1 or port > 65535 then port = 18088 end
+    local form_capture_log = trim(http.formvalue("happ_capture_start_log"))
+    if form_capture_log ~= "" then capture_log = form_capture_log end
+    local rc, out = run_subscription_command({ "capture-start", tostring(ttl), tostring(port), capture_log })
+    if rc == 0 then
+      set_err(nil)
+      set_info("Happ capture включён. Скопируйте ссылку из блока подписок и откройте её с телефона.\n" .. out)
+    else
+      set_err(out ~= "" and out or "Не удалось запустить Happ capture.")
+    end
+    helpers.redirect_watchdog()
+    return m
+  end
+
+  if http.formvalue("_sub_stop_capture") == "1" then
+    local rc, out = run_subscription_command({ "capture-stop" })
+    if rc == 0 then
+      set_err(nil)
+      set_info(out ~= "" and out or "Happ capture выключен.")
+    else
+      set_err(out ~= "" and out or "Не удалось остановить Happ capture.")
+    end
+    helpers.redirect_watchdog()
+    return m
+  end
+
+  if http.formvalue("_sub_fill_happ_capture") == "1" then
+    capture_defaults = parse_capture_headers(capture_log)
+    show_capture_details = true
+    if next(capture_defaults) then
+      set_err(nil)
+      set_info("Поля Happ заполнены из последнего capture-запроса. Проверьте URL подписки и сохраните подписку.")
+    else
+      set_err("В capture-логе нет сохранённых заголовков.")
+    end
+  end
+
+  if http.formvalue("_sub_show_capture") == "1" then
+    show_capture_details = true
+  end
+
+  if http.formvalue("_sub_save") == "1" then
+    local db = read_subscription_db(subscriptions_path)
+    local id = tonumber(http.formvalue("sub_id"))
+    local existing = id and find_subscription(db, id) or nil
+    local sub = collect_subscription_form(existing)
+    if sub.url == "" then
+      set_err("Нужно указать URL подписки.")
+    elseif sub.timeout < 1 then
+      set_err("Timeout подписки должен быть не меньше 1 секунды.")
+    elseif sub.refresh_interval < 1 then
+      set_err("Таймер обновления подписки должен быть не меньше 1 секунды.")
+    else
+      if existing then
+        sub.id = existing.id
+        local _, idx = find_subscription(db, existing.id)
+        db.subscriptions[idx] = sub
+      else
+        sub.id = next_subscription_id(db)
+        db.subscriptions[#db.subscriptions + 1] = sub
+      end
+      write_subscription_db(subscriptions_path, db)
+      set_err(nil)
+      set_info("Подписка сохранена.")
+      helpers.redirect_watchdog()
+      return m
+    end
+  end
+
+  if http.formvalue("_sub_delete") then
+    local db = read_subscription_db(subscriptions_path)
+    local sub, idx = find_subscription(db, http.formvalue("_sub_delete"))
+    if sub and idx then
+      remove_subscription_sources(db, sub)
+      table.remove(db.subscriptions, idx)
+      write_subscription_db(subscriptions_path, db)
+      run_subscription_command({ "sync-links" })
+      set_err(nil)
+      set_info("Подписка удалена.")
+      helpers.redirect_watchdog()
+      return m
+    end
+    set_err("Подписка не найдена.")
+  end
+
+  if http.formvalue("_sub_fetch") then
+    local id = trim(http.formvalue("_sub_fetch"))
+    local rc, out = run_subscription_command({ "fetch", id })
+    if rc == 0 then set_info(out ~= "" and out or ("Подписка обновлена: " .. id)) else set_err(out ~= "" and out or ("Не удалось обновить подписку: " .. id)) end
+    helpers.redirect_watchdog()
+    return m
+  end
+
+  if http.formvalue("_sub_fetch_all") == "1" then
+    local rc, out = run_subscription_command({ "fetch-all" })
+    if rc == 0 then set_info(out ~= "" and out or "Подписки обновлены.") else set_err(out ~= "" and out or "Не удалось обновить подписки.") end
+    helpers.redirect_watchdog()
+    return m
+  end
+
+  if http.formvalue("_sub_edit_start") then
+    helpers.redirect_watchdog("sub_edit_id=" .. http.urlencode(trim(http.formvalue("_sub_edit_start"))))
+    return m
+  end
+
+  if http.formvalue("_sub_edit_cancel") == "1" then
+    helpers.redirect_watchdog()
+    return m
+  end
 
   if http.formvalue("_watchdog_save_settings") == "1" then
     if helpers.save_watchdog_settings(ctx) then
@@ -449,6 +776,14 @@ local function render(ctx)
     return m
   end
 
+  if http.formvalue("_wd_exclude") then
+    local hash = trim(http.formvalue("_wd_exclude"))
+    local rc, out = run_subscription_command({ "exclude-link", hash })
+    if rc == 0 then set_info(out ~= "" and out or "Ссылка исключена из подписок.") else set_err(out ~= "" and out or "Не удалось исключить ссылку из подписок.") end
+    helpers.redirect_watchdog()
+    return m
+  end
+
   if http.formvalue("_wd_edit_start") then
     local hash = trim(http.formvalue("_wd_edit_start"))
     helpers.redirect_watchdog("wd_edit_hash=" .. http.urlencode(hash))
@@ -480,8 +815,11 @@ local function render(ctx)
     local hash = trim(http.formvalue("wd_edit_hash"))
     local idx = find_entry_index(entries, hash)
     local raw_link = trim(http.formvalue("wd_edit_link"))
+    local db = read_subscription_db(subscriptions_path)
     if not idx then
       set_err("Редактируемая ссылка не найдена.")
+    elseif is_subscription_link(db, hash) then
+      set_err("Ссылки из подписок нельзя редактировать напрямую. Исключите ссылку или измените подписку.")
     elseif not raw_link:match("^vless://") then
       set_err("Ссылка должна начинаться с vless://")
     else
@@ -530,6 +868,9 @@ local function render(ctx)
   local status_rc, status_out = helpers.run_watchdog_command({ "status" })
   local status = status_rc == 0 and helpers.parse_kv_text(status_out) or {}
   local edit_hash = trim(http.formvalue("wd_edit_hash"))
+  local edit_sub_id = trim(http.formvalue("sub_edit_id"))
+  local sub_db = read_subscription_db(subscriptions_path)
+  local edit_sub = edit_sub_id ~= "" and find_subscription(sub_db, edit_sub_id) or nil
   local links = parse_links_file(links_path)
 
   do
@@ -570,8 +911,14 @@ local function render(ctx)
       local ts = status.LAST_TS_HUMAN or status.LAST_TS or "-"
       local scan = status.LAST_LINK_SCAN_HUMAN or "-"
       local scan_status = status.LAST_LINK_SCAN_STATUS or "-"
-      local scan_alive = status.LAST_LINK_SCAN_ALIVE or "0"
-      local scan_total = status.LAST_LINK_SCAN_TOTAL or "0"
+      local scan_alive_num = 0
+      for _, entry in ipairs(links or {}) do
+        if entry.state and entry.state.LAST_STATUS == "alive" then
+          scan_alive_num = scan_alive_num + 1
+        end
+      end
+      local scan_alive = tostring(scan_alive_num)
+      local scan_total = tostring(#(links or {}))
       return string.format([[
 <div class="box" style="max-width:960px">
   <div class="inline-row" style="flex-wrap:wrap; gap:.8rem">
@@ -596,21 +943,202 @@ local function render(ctx)
   end
 
   do
+    local sec = m:section(SimpleSection, "Подписки")
+    local dv = sec:option(DummyValue, "_watchdog_subscriptions")
+    dv.rawhtml = true
+    function dv.cfgvalue()
+      local rows = {}
+      local capture_enabled = getu("watchdog_happ_capture_enabled", "0") == "1"
+      local capture_token = getu("watchdog_happ_capture_token", "")
+      local capture_until = tonumber(getu("watchdog_happ_capture_until", "0")) or 0
+      local capture_port = getu("watchdog_happ_capture_port", "18088")
+      local cap_rc, cap_out = run_subscription_command({ "capture-status" })
+      local cap_status = cap_rc == 0 and helpers.parse_kv_text(cap_out) or {}
+      local capture_running = cap_status.CAPTURE_RUNNING == "1"
+      if cap_status.CAPTURE_TOKEN and cap_status.CAPTURE_TOKEN ~= "" then capture_token = cap_status.CAPTURE_TOKEN end
+      if cap_status.CAPTURE_PORT and cap_status.CAPTURE_PORT ~= "" then capture_port = cap_status.CAPTURE_PORT end
+      if cap_status.CAPTURE_LOG and cap_status.CAPTURE_LOG ~= "" then capture_log = cap_status.CAPTURE_LOG end
+      if cap_status.CAPTURE_UNTIL and cap_status.CAPTURE_UNTIL ~= "" then capture_until = tonumber(cap_status.CAPTURE_UNTIL) or capture_until end
+      local capture_active = capture_enabled and capture_running and capture_token ~= "" and os.time() <= capture_until
+      local capture_link = capture_active and capture_url(capture_token, capture_port) or ""
+      local ttl = getu("watchdog_happ_capture_ttl", "600")
+      local until_text = capture_until > 0 and os.date("%Y-%m-%d %H:%M:%S", capture_until) or "-"
+      local form_sub = edit_sub or {
+        type = "happ",
+        enabled = true,
+        timeout = 30,
+        refresh_interval = 10800,
+        headers = default_happ_headers(capture_defaults),
+      }
+      if capture_defaults then
+        form_sub.headers = default_happ_headers(capture_defaults)
+      else
+        form_sub.headers = type(form_sub.headers) == "table" and form_sub.headers or default_happ_headers()
+      end
+      local h = form_sub.headers
+      local form_title = edit_sub and ("Редактирование подписки #" .. tostring(edit_sub.id)) or "Новая подписка"
+      local capture_open = (show_capture_details or capture_defaults or capture_active) and " open" or ""
+
+      rows[#rows + 1] = "<div class='box'>"
+      rows[#rows + 1] = "<details class='wd-details'" .. capture_open .. "><summary>Happ capture</summary>"
+      rows[#rows + 1] = "<div style='color:#6b7280;margin-bottom:.5rem'>Нажмите «Запустить capture», скопируйте ссылку и откройте её с телефона в приложении/браузере, который делает запрос подписки. Роутер сохранит заголовки и тело последнего запроса, затем ими можно заполнить форму Happ-подписки.</div>"
+      rows[#rows + 1] = string.format([[
+<div class="wd-grid">
+  <label>Статус</label><div>%s, действует до: %s</div>
+  <label>Время действия, сек</label><input type="number" min="1" name="happ_capture_start_ttl" value="%s">
+  <label>Порт capture-сервиса</label><input type="number" min="1" max="65535" name="happ_capture_start_port" value="%s">
+  <label>Лог capture</label><input type="text" name="happ_capture_start_log" value="%s">
+  <label>Ссылка для телефона</label>
+  <div class="inline-row" style="gap:.4rem">
+    <input id="happ_capture_url" type="text" readonly value="%s" style="width:100%%" onclick="this.select()">
+    <button type="button" class="cbi-button cbi-button-action" title="Скопировать" style="min-width:2.4rem;padding-left:.45rem;padding-right:.45rem" onclick="var e=document.getElementById('happ_capture_url');e.select();if(navigator.clipboard){navigator.clipboard.writeText(e.value);}else{document.execCommand('copy');}">💾</button>
+  </div>
+</div>
+<div style="margin-top:.6rem">
+  <button class="cbi-button cbi-button-apply" name="_sub_start_capture" value="1">Запустить capture</button>
+  <button class="cbi-button cbi-button-remove" name="_sub_stop_capture" value="1">Остановить capture</button>
+  <button class="cbi-button cbi-button-action" name="_sub_show_capture" value="1">Показать последний запрос</button>
+  <button class="cbi-button cbi-button-action" name="_sub_fill_happ_capture" value="1">Заполнить форму Happ из последнего запроса</button>
+</div>]],
+        capture_active and "<span class='svc-badge ok'>включён</span>" or "<span class='svc-badge'>выключен</span>",
+        pcdata(until_text), pcdata(ttl), pcdata(capture_port), pcdata(capture_log), pcdata(capture_link))
+
+      if show_capture_details then
+        local last_request = read_file(capture_log)
+        if last_request ~= "" then
+          rows[#rows + 1] = "<details class='wd-details' open><summary>Последний capture-запрос</summary><pre style='white-space:pre-wrap;max-height:18rem;overflow:auto;margin-top:.5rem'>" .. pcdata(last_request) .. "</pre></details>"
+        else
+          rows[#rows + 1] = "<div style='margin-top:.5rem;color:#6b7280'>Последний capture-запрос пока не сохранён.</div>"
+        end
+      end
+      rows[#rows + 1] = "</details>"
+
+      rows[#rows + 1] = "<h4>Список подписок</h4>"
+      rows[#rows + 1] = "<table class='wd-table'><thead><tr><th style='width:8%'>Тип</th><th style='width:6%'>ID</th><th style='width:16%'>Имя</th><th style='width:28%'>URL</th><th style='width:8%'>Вкл.</th><th style='width:10%'>Таймер</th><th style='width:12%'>Статус</th><th style='width:12%'>Действие</th></tr></thead><tbody>"
+      if #sub_db.subscriptions == 0 then
+        rows[#rows + 1] = "<tr><td colspan='8' style='color:#6b7280'>Подписки не настроены</td></tr>"
+      end
+      for _, sub in ipairs(sub_db.subscriptions) do
+        local st = sub.last_status or "never"
+        local st_html = st == "ok" and "<span class='svc-badge ok'>OK</span>" or (st == "error" and "<span class='svc-badge err'>Error</span>" or "<span class='svc-badge'>never</span>")
+        local detail = sub.last_error and sub.last_error ~= "" and ("<div style='color:#b91c1c'>" .. pcdata(sub.last_error) .. "</div>") or ""
+        rows[#rows + 1] = string.format([[
+<tr>
+  <td>%s</td>
+  <td>%s</td>
+  <td>%s</td>
+  <td class="wd-code" title="%s">%s</td>
+  <td>%s</td>
+  <td>%s сек</td>
+  <td>%s<div style="color:#6b7280">links: %s<br>%s</div>%s</td>
+  <td class="actions">
+    <button class="cbi-button cbi-button-action" name="_sub_fetch" value="%s">Обновить</button>
+    <button class="cbi-button cbi-button-action" name="_sub_edit_start" value="%s">Ред.</button>
+    <button class="cbi-button cbi-button-remove" name="_sub_delete" value="%s" onclick="return confirm('Удалить подписку и её ссылки?')">Удалить</button>
+  </td>
+</tr>]],
+          pcdata(sub.type or "happ"),
+          pcdata(sub.id or ""),
+          pcdata(sub.name ~= "" and sub.name or "—"),
+          pcdata(sub.url or ""),
+          pcdata(sub.url or ""),
+          subscription_enabled(sub) and "да" or "нет",
+          pcdata(sub.refresh_interval or "0"),
+          st_html,
+          pcdata(sub.last_count or "0"),
+          pcdata(sub.last_update_human or "-"),
+          detail,
+          pcdata(sub.id or ""), pcdata(sub.id or ""), pcdata(sub.id or ""))
+      end
+      rows[#rows + 1] = "</tbody></table>"
+      rows[#rows + 1] = "<div style='margin-top:.5rem'><button class='cbi-button cbi-button-action' name='_sub_fetch_all' value='1'>Обновить все подписки</button></div>"
+
+      rows[#rows + 1] = string.format([[
+<details class="wd-details" %s>
+  <summary>%s</summary>
+  <div class="box" style="margin-top:.5rem">
+    <input type="hidden" name="sub_id" value="%s">
+    <div class="wd-grid">
+      <label>Тип</label>
+      <select name="sub_type">
+        <option value="happ"%s>happ</option>
+        <option value="json"%s>json x-ui (зарезервировано)</option>
+      </select>
+      <label>Включена</label><input type="checkbox" name="sub_enabled" value="1" %s>
+      <label>Имя</label><input type="text" name="sub_name" value="%s">
+      <label>URL подписки</label><input type="text" name="sub_url" value="%s">
+      <label>Таймер обновления, сек</label><input type="number" min="1" name="sub_refresh_interval" value="%s">
+      <label>Timeout запроса, сек</label><input type="number" min="1" name="sub_timeout" value="%s">
+    </div>
+    <details class="wd-details" open>
+      <summary>Happ headers</summary>
+      <div class="wd-grid" style="margin-top:.5rem">
+        <label>User-Agent</label><input type="text" name="sub_h_user_agent" value="%s">
+        <label>X-Device-Os</label><input type="text" name="sub_h_device_os" value="%s">
+        <label>X-Device-Locale</label><input type="text" name="sub_h_device_locale" value="%s">
+        <label>X-Device-Model</label><input type="text" name="sub_h_device_model" value="%s">
+        <label>X-Ver-Os</label><input type="text" name="sub_h_ver_os" value="%s">
+        <label>Accept-Encoding</label><input type="text" name="sub_h_accept_encoding" value="%s">
+        <label>Connection</label><input type="text" name="sub_h_connection" value="%s">
+        <label>X-Hwid</label><input type="text" name="sub_h_hwid" value="%s">
+        <label>X-Real-Ip</label><input type="text" name="sub_h_real_ip" value="%s">
+        <label>X-Forwarded-For</label><input type="text" name="sub_h_forwarded_for" value="%s">
+      </div>
+      <div style="margin-top:.5rem;color:#6b7280">Дополнительные заголовки: по одному <code>Name: value</code> на строку.</div>
+      <textarea class="wd-textarea" name="sub_extra_headers" rows="4" spellcheck="false">%s</textarea>
+    </details>
+    <div style="margin-top:.6rem">
+      <button class="cbi-button cbi-button-apply" name="_sub_save" value="1">Сохранить подписку</button>
+      <button class="cbi-button cbi-button-reset" name="_sub_edit_cancel" value="1">Отмена</button>
+    </div>
+    <div style="margin-top:.5rem;color:#6b7280">JSON x-ui тип добавлен как заготовка. Fetch будет включён после примера реального JSON-ответа.</div>
+  </div>
+</details>]],
+        (edit_sub or capture_defaults) and "open" or "",
+        pcdata(form_title),
+        pcdata(form_sub.id or ""),
+        (form_sub.type or "happ") == "happ" and " selected" or "",
+        (form_sub.type or "happ") == "json" and " selected" or "",
+        subscription_enabled(form_sub) and "checked" or "",
+        pcdata(form_sub.name or ""),
+        pcdata(form_sub.url or ""),
+        pcdata(form_sub.refresh_interval or "10800"),
+        pcdata(form_sub.timeout or "30"),
+        pcdata(h["User-Agent"] or ""),
+        pcdata(h["X-Device-Os"] or ""),
+        pcdata(h["X-Device-Locale"] or ""),
+        pcdata(h["X-Device-Model"] or ""),
+        pcdata(h["X-Ver-Os"] or ""),
+        pcdata(h["Accept-Encoding"] or ""),
+        pcdata(h["Connection"] or ""),
+        pcdata(h["X-Hwid"] or ""),
+        pcdata(h["X-Real-Ip"] or ""),
+        pcdata(h["X-Forwarded-For"] or ""),
+        pcdata(form_sub.extra_headers or ""))
+
+      rows[#rows + 1] = "</div>"
+      return table.concat(rows, "\n")
+    end
+  end
+
+  do
     local sec = m:section(SimpleSection, "Список VLESS-ссылок")
     local dv = sec:option(DummyValue, "_watchdog_links")
     dv.rawhtml = true
     function dv.cfgvalue()
       local rows = {}
       rows[#rows + 1] = "<div class='box'>"
-      rows[#rows + 1] = "<table class='wd-table'><thead><tr><th style='width:18%'>Комментарий</th><th style='width:42%'>VLESS ссылка</th><th style='width:12%'>Статус</th><th style='width:12%'>Последняя проверка</th><th style='width:16%'>Действие</th></tr></thead><tbody>"
+      rows[#rows + 1] = "<table class='wd-table'><thead><tr><th style='width:10%'>Источник</th><th style='width:16%'>Комментарий</th><th style='width:36%'>VLESS ссылка</th><th style='width:10%'>Статус</th><th style='width:12%'>Последняя проверка</th><th style='width:16%'>Действие</th></tr></thead><tbody>"
       if #links == 0 then
-        rows[#rows + 1] = "<tr><td colspan='5' style='color:#6b7280'>Список ссылок пуст</td></tr>"
+        rows[#rows + 1] = "<tr><td colspan='6' style='color:#6b7280'>Список ссылок пуст</td></tr>"
       end
       for i, entry in ipairs(links) do
         local label, checked = helpers.status_label(entry, pcdata)
-        if edit_hash ~= "" and edit_hash == entry.hash then
+        local source_html, has_subscription_source = source_badges(sub_db, entry.hash)
+        if edit_hash ~= "" and edit_hash == entry.hash and not has_subscription_source then
           rows[#rows + 1] = string.format([[
 <tr>
+  <td>%s</td>
   <td><input type="hidden" name="wd_edit_hash" value="%s"><div style="color:#6b7280">%s</div></td>
   <td><input type="text" name="wd_edit_link" value="%s" style="width:100%%"></td>
   <td>%s</td>
@@ -620,10 +1148,20 @@ local function render(ctx)
     <button class="cbi-button cbi-button-reset" name="_wd_edit_cancel" value="1">Отмена</button>
   </td>
 </tr>]],
-            pcdata(entry.hash), pcdata(entry.comment or "—"), pcdata(entry.raw_link or ""), label, pcdata(checked))
+            source_html, pcdata(entry.hash), pcdata(entry.comment or "—"), pcdata(entry.raw_link or ""), label, pcdata(checked))
         else
+          local edit_delete_buttons
+          if has_subscription_source then
+            edit_delete_buttons = string.format([[
+    <button class="cbi-button cbi-button-remove" name="_wd_exclude" value="%s" onclick="return confirm('Исключить ссылку из подписок?')">Искл.</button>]], pcdata(entry.hash))
+          else
+            edit_delete_buttons = string.format([[
+    <button class="cbi-button cbi-button-action" name="_wd_edit_start" value="%s">Ред.</button>
+    <button class="cbi-button cbi-button-remove" name="_wd_delete" value="%s" onclick="return confirm('Удалить выбранную ссылку?')">Удалить</button>]], pcdata(entry.hash), pcdata(entry.hash))
+          end
           rows[#rows + 1] = string.format([[
 <tr>
+  <td>%s</td>
   <td>%s</td>
   <td class="wd-code" title="%s">%s</td>
   <td>%s</td>
@@ -631,24 +1169,25 @@ local function render(ctx)
   <td class="actions">
     <button class="cbi-button cbi-button-apply" name="_wd_apply" value="%s">Применить</button>
     <button class="cbi-button cbi-button-action" name="_wd_test" value="%s">Проверить</button>
-    <button class="cbi-button cbi-button-action" name="_wd_edit_start" value="%s">Ред.</button>
-    <button class="cbi-button cbi-button-remove" name="_wd_delete" value="%s" onclick="return confirm('Удалить выбранную ссылку?')">Удалить</button>
+%s
     <button class="cbi-button cbi-button-action" name="_wd_move_up" value="%s"%s>&uarr;</button>
     <button class="cbi-button cbi-button-action" name="_wd_move_down" value="%s"%s>&darr;</button>
   </td>
 </tr>]],
+            source_html,
             pcdata(entry.comment or "—"),
             pcdata(entry.raw_link or ""),
             pcdata(entry.link or ""),
             label,
             pcdata(checked),
-            pcdata(entry.hash), pcdata(entry.hash), pcdata(entry.hash), pcdata(entry.hash),
+            pcdata(entry.hash), pcdata(entry.hash), edit_delete_buttons,
             pcdata(entry.hash), i == 1 and " disabled" or "",
             pcdata(entry.hash), i == #links and " disabled" or "")
         end
       end
       rows[#rows + 1] = [[
 <tr>
+  <td><span class="svc-badge">local</span></td>
   <td style="color:#6b7280">Новая строка файла ссылок</td>
   <td><input type="text" name="wd_add_link" placeholder="vless://..." style="width:100%"></td>
   <td colspan="2" style="color:#6b7280">Комментарий будет взят из части после # внутри ссылки</td>
@@ -697,6 +1236,10 @@ local function render(ctx)
       <label>TEST_PORT</label><input type="number" min="1" max="65535" name="watchdog_test_port" value="%s">
       <label>Фоновая проверка ссылок</label><input type="checkbox" name="watchdog_background_check_enabled" value="1" %s>
       <label>Таймер фоновой проверки, сек</label><input type="number" min="1" name="watchdog_background_check_interval" value="%s">
+      <label>SUBSCRIPTIONS_FILE</label><input type="text" name="watchdog_subscriptions_file" value="%s">
+      <label>HAPP_CAPTURE_TTL</label><input type="number" min="1" name="watchdog_happ_capture_ttl" value="%s">
+      <label>HAPP_CAPTURE_PORT</label><input type="number" min="1" max="65535" name="watchdog_happ_capture_port" value="%s">
+      <label>HAPP_CAPTURE_LOG</label><input type="text" name="watchdog_happ_capture_log" value="%s">
     </div>
     <div style="margin-top:.6rem">
       <button class="cbi-button cbi-button-apply" name="_watchdog_save_settings" value="1">Сохранить настройки Watchdog</button>
@@ -720,7 +1263,11 @@ local function render(ctx)
         pcdata(getu("watchdog_dead_cooldown_minutes", "0")),
         pcdata(getu("watchdog_test_port", "10881")),
         getu("watchdog_background_check_enabled", "0") == "1" and "checked" or "",
-        pcdata(getu("watchdog_background_check_interval", "1800")))
+        pcdata(getu("watchdog_background_check_interval", "1800")),
+        pcdata(getu("watchdog_subscriptions_file", DEFAULT_SUBSCRIPTIONS_FILE)),
+        pcdata(getu("watchdog_happ_capture_ttl", "600")),
+        pcdata(getu("watchdog_happ_capture_port", "18088")),
+        pcdata(getu("watchdog_happ_capture_log", DEFAULT_CAPTURE_LOG)))
     end
   end
 
