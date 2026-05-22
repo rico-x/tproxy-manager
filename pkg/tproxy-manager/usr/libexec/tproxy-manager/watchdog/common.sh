@@ -5,6 +5,7 @@ PKG="tproxy-manager"
 STATE_FILE="/tmp/tproxy-manager-watchdog.state"
 LINK_STATE_DIR="/tmp/tproxy-manager-watchdog-links"
 LOCK_DIR="/tmp/tproxy-manager-watchdog.lock"
+SCAN_LOCK_DIR="/tmp/tproxy-manager-watchdog-scan.lock"
 LOG_FILE="/tmp/tproxy-manager-watchdog.log"
 LOG_TAG_DEFAULT="tproxy-manager-watchdog"
 
@@ -17,6 +18,7 @@ MAX_TIME_DEFAULT="20"
 LINKS_FILE_DEFAULT="/etc/tproxy-manager/watchdog.links"
 TEMPLATE_FILE_DEFAULT="/etc/tproxy-manager/watchdog-outbound.template.jsonc"
 TEST_TEMPLATE_FILE_DEFAULT="/etc/tproxy-manager/watchdog-test-config.template.jsonc"
+BATCH_TEST_TEMPLATE_FILE_DEFAULT="/etc/tproxy-manager/watchdog-batch-test-config.template.jsonc"
 OUTBOUND_FILE_DEFAULT="/etc/xray/04_outbounds.json"
 VLESS2JSON_DEFAULT="/usr/bin/vless2json.sh"
 SERVICE_PATH_DEFAULT="/etc/init.d/xray"
@@ -29,6 +31,11 @@ COOLDOWN_MINUTES_DEFAULT="0"
 TEST_PORT_DEFAULT="10881"
 BACKGROUND_CHECK_ENABLED_DEFAULT="0"
 BACKGROUND_CHECK_INTERVAL_DEFAULT="1800"
+BATCH_CHECK_ENABLED_DEFAULT="1"
+BATCH_CHECK_PORT_START_DEFAULT="10882"
+BATCH_CHECK_BATCH_SIZE_DEFAULT="64"
+BATCH_CHECK_CONCURRENCY_DEFAULT="8"
+BATCH_CHECK_FALLBACK_DEFAULT="1"
 
 TEST_PID=""
 TEST_DIR=""
@@ -53,7 +60,7 @@ log_msg() {
     ts="$(now_human)"
     printf '%s %s\n' "$ts" "$msg" >> "$LOG_FILE" 2>/dev/null || true
     logger -t "$LOG_TAG" "$msg" 2>/dev/null || true
-    printf '%s\n' "$msg" >&2
+    printf '%s\n' "$msg"
 }
 
 trim_text() {
@@ -120,6 +127,7 @@ load_config() {
     LINKS_FILE="$(uci_get watchdog_links_file)"
     TEMPLATE_FILE="$(uci_get watchdog_template_file)"
     TEST_TEMPLATE_FILE="$(uci_get watchdog_test_template_file)"
+    BATCH_TEST_TEMPLATE_FILE="$(uci_get watchdog_batch_test_template_file)"
     OUTBOUND_FILE="$(uci_get watchdog_outbound_file)"
     VLESS2JSON="$(uci_get watchdog_vless2json)"
     SERVICE_PATH="$(uci_get watchdog_service_path)"
@@ -132,6 +140,11 @@ load_config() {
     TEST_PORT="$(uci_get watchdog_test_port)"
     BACKGROUND_CHECK_ENABLED="$(uci_get watchdog_background_check_enabled)"
     BACKGROUND_CHECK_INTERVAL="$(uci_get watchdog_background_check_interval)"
+    BATCH_CHECK_ENABLED="$(uci_get watchdog_batch_check_enabled)"
+    BATCH_CHECK_PORT_START="$(uci_get watchdog_batch_check_port_start)"
+    BATCH_CHECK_BATCH_SIZE="$(uci_get watchdog_batch_check_batch_size)"
+    BATCH_CHECK_CONCURRENCY="$(uci_get watchdog_batch_check_concurrency)"
+    BATCH_CHECK_FALLBACK="$(uci_get watchdog_batch_check_fallback)"
     LOG_TAG="$(uci_get watchdog_log_tag)"
 
     [ -n "$CHECK_URL" ] || CHECK_URL="$CHECK_URL_DEFAULT"
@@ -139,6 +152,7 @@ load_config() {
     [ -n "$LINKS_FILE" ] || LINKS_FILE="$LINKS_FILE_DEFAULT"
     [ -n "$TEMPLATE_FILE" ] || TEMPLATE_FILE="$TEMPLATE_FILE_DEFAULT"
     [ -n "$TEST_TEMPLATE_FILE" ] || TEST_TEMPLATE_FILE="$TEST_TEMPLATE_FILE_DEFAULT"
+    [ -n "$BATCH_TEST_TEMPLATE_FILE" ] || BATCH_TEST_TEMPLATE_FILE="$BATCH_TEST_TEMPLATE_FILE_DEFAULT"
     [ -n "$OUTBOUND_FILE" ] || OUTBOUND_FILE="$OUTBOUND_FILE_DEFAULT"
     [ -n "$VLESS2JSON" ] || VLESS2JSON="$VLESS2JSON_DEFAULT"
     [ -n "$SERVICE_PATH" ] || SERVICE_PATH="$SERVICE_PATH_DEFAULT"
@@ -154,6 +168,9 @@ load_config() {
     COOLDOWN_MINUTES="$(require_number_or_default "$COOLDOWN_MINUTES" "$COOLDOWN_MINUTES_DEFAULT")"
     TEST_PORT="$(require_number_or_default "$TEST_PORT" "$TEST_PORT_DEFAULT")"
     BACKGROUND_CHECK_INTERVAL="$(require_number_or_default "$BACKGROUND_CHECK_INTERVAL" "$BACKGROUND_CHECK_INTERVAL_DEFAULT")"
+    BATCH_CHECK_PORT_START="$(require_number_or_default "$BATCH_CHECK_PORT_START" "$BATCH_CHECK_PORT_START_DEFAULT")"
+    BATCH_CHECK_BATCH_SIZE="$(require_number_or_default "$BATCH_CHECK_BATCH_SIZE" "$BATCH_CHECK_BATCH_SIZE_DEFAULT")"
+    BATCH_CHECK_CONCURRENCY="$(require_number_or_default "$BATCH_CHECK_CONCURRENCY" "$BATCH_CHECK_CONCURRENCY_DEFAULT")"
 
     [ "$INTERVAL" -ge 1 ] || INTERVAL="$INTERVAL_DEFAULT"
     [ "$FAIL_THRESHOLD" -ge 1 ] || FAIL_THRESHOLD="$FAIL_THRESHOLD_DEFAULT"
@@ -162,9 +179,19 @@ load_config() {
     [ "$MAX_TIME" -ge "$CONNECT_TIMEOUT" ] || MAX_TIME="$CONNECT_TIMEOUT"
     [ "$TEST_PORT" -ge 1 ] && [ "$TEST_PORT" -le 65535 ] || TEST_PORT="$TEST_PORT_DEFAULT"
     [ "$BACKGROUND_CHECK_INTERVAL" -ge 1 ] || BACKGROUND_CHECK_INTERVAL="$BACKGROUND_CHECK_INTERVAL_DEFAULT"
+    [ "$BATCH_CHECK_PORT_START" -ge 1 ] && [ "$BATCH_CHECK_PORT_START" -le 65535 ] || BATCH_CHECK_PORT_START="$BATCH_CHECK_PORT_START_DEFAULT"
+    [ "$BATCH_CHECK_BATCH_SIZE" -ge 1 ] || BATCH_CHECK_BATCH_SIZE="$BATCH_CHECK_BATCH_SIZE_DEFAULT"
+    [ "$BATCH_CHECK_CONCURRENCY" -ge 1 ] || BATCH_CHECK_CONCURRENCY="$BATCH_CHECK_CONCURRENCY_DEFAULT"
+    batch_end=$((BATCH_CHECK_PORT_START + BATCH_CHECK_BATCH_SIZE - 1))
+    if [ "$BATCH_CHECK_PORT_START" -le "$TEST_PORT" ] && [ "$batch_end" -ge "$TEST_PORT" ] && [ "$TEST_PORT" -lt 65535 ]; then
+        BATCH_CHECK_PORT_START=$((TEST_PORT + 1))
+    fi
+    max_batch_size=$((65535 - BATCH_CHECK_PORT_START + 1))
+    [ "$BATCH_CHECK_BATCH_SIZE" -le "$max_batch_size" ] || BATCH_CHECK_BATCH_SIZE="$max_batch_size"
+    [ "$BATCH_CHECK_CONCURRENCY" -le "$BATCH_CHECK_BATCH_SIZE" ] || BATCH_CHECK_CONCURRENCY="$BATCH_CHECK_BATCH_SIZE"
 
     case "$SELECTION_MODE" in
-        random|ordered) : ;;
+        random|ordered|fastest) : ;;
         *) SELECTION_MODE="$SELECTION_MODE_DEFAULT" ;;
     esac
     case "$EXCLUDE_DEAD" in
@@ -174,6 +201,14 @@ load_config() {
     case "$BACKGROUND_CHECK_ENABLED" in
         0|1) : ;;
         *) BACKGROUND_CHECK_ENABLED="$BACKGROUND_CHECK_ENABLED_DEFAULT" ;;
+    esac
+    case "$BATCH_CHECK_ENABLED" in
+        0|1) : ;;
+        *) BATCH_CHECK_ENABLED="$BATCH_CHECK_ENABLED_DEFAULT" ;;
+    esac
+    case "$BATCH_CHECK_FALLBACK" in
+        0|1) : ;;
+        *) BATCH_CHECK_FALLBACK="$BATCH_CHECK_FALLBACK_DEFAULT" ;;
     esac
 
     COOLDOWN_SECONDS=$((COOLDOWN_HOURS * 3600 + COOLDOWN_MINUTES * 60))
@@ -310,12 +345,18 @@ write_link_state() {
     checked_human="$5"
     cooldown_ts="$6"
     cooldown_human="$7"
+    request_ms="${8:-0}"
+    request_text="${9:-}"
+    validate_number "$request_ms" || request_ms=0
+    [ -n "$request_text" ] || request_text="-"
     cat > "$(link_state_file "$hash")" <<EOF
 LINK_HASH=$hash
 LAST_STATUS=$status
 LAST_HTTP_CODE=$code
 LAST_CHECKED_TS=$checked_ts
 LAST_CHECKED_HUMAN=$checked_human
+LAST_REQUEST_TIME_MS=$request_ms
+LAST_REQUEST_TIME_TEXT=$request_text
 COOLDOWN_UNTIL_TS=$cooldown_ts
 COOLDOWN_UNTIL_HUMAN=$cooldown_human
 EOF
@@ -324,14 +365,18 @@ EOF
 mark_link_alive() {
     hash="$1"
     code="$2"
+    request_ms="${3:-0}"
+    request_text="${4:-}"
     ts="$(now_ts)"
     human="$(now_human)"
-    write_link_state "$hash" "alive" "$code" "$ts" "$human" "0" "-"
+    write_link_state "$hash" "alive" "$code" "$ts" "$human" "0" "-" "$request_ms" "$request_text"
 }
 
 mark_link_dead() {
     hash="$1"
     code="$2"
+    request_ms="${3:-0}"
+    request_text="${4:-}"
     ts="$(now_ts)"
     human="$(now_human)"
     cooldown_ts=0
@@ -340,7 +385,7 @@ mark_link_dead() {
         cooldown_ts=$((ts + COOLDOWN_SECONDS))
         cooldown_human="$(date -d "@$cooldown_ts" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "$cooldown_ts")"
     fi
-    write_link_state "$hash" "dead" "$code" "$ts" "$human" "$cooldown_ts" "$cooldown_human"
+    write_link_state "$hash" "dead" "$code" "$ts" "$human" "$cooldown_ts" "$cooldown_human" "$request_ms" "$request_text"
 }
 
 cooldown_active() {
@@ -364,31 +409,51 @@ cleanup_test_instance() {
     fi
 }
 
-acquire_lock() {
-    if mkdir "$LOCK_DIR" 2>/dev/null; then
-        printf '%s\n' "$$" > "$LOCK_DIR/pid" 2>/dev/null || true
+acquire_lock_dir() {
+    lock_dir="$1"
+    busy_msg="$2"
+    if mkdir "$lock_dir" 2>/dev/null; then
+        printf '%s\n' "$$" > "$lock_dir/pid" 2>/dev/null || true
         return 0
     fi
-    if [ -f "$LOCK_DIR/pid" ]; then
-        holder_pid="$(cat "$LOCK_DIR/pid" 2>/dev/null)"
+    if [ -f "$lock_dir/pid" ]; then
+        holder_pid="$(cat "$lock_dir/pid" 2>/dev/null)"
         if ! validate_number "$holder_pid" || ! kill -0 "$holder_pid" 2>/dev/null; then
-            rm -f "$LOCK_DIR/pid" 2>/dev/null || true
-            rmdir "$LOCK_DIR" 2>/dev/null || true
-            if mkdir "$LOCK_DIR" 2>/dev/null; then
-                printf '%s\n' "$$" > "$LOCK_DIR/pid" 2>/dev/null || true
+            rm -f "$lock_dir/pid" 2>/dev/null || true
+            rmdir "$lock_dir" 2>/dev/null || true
+            if mkdir "$lock_dir" 2>/dev/null; then
+                printf '%s\n' "$$" > "$lock_dir/pid" 2>/dev/null || true
                 log_msg "обнаружен stale lock, выполнено восстановление"
                 return 0
             fi
         fi
     fi
-    log_msg "watchdog занят другой операцией"
+    [ -n "$busy_msg" ] && log_msg "$busy_msg"
     return 1
+}
+
+release_lock_dir() {
+    lock_dir="$1"
+    rm -f "$lock_dir/pid" 2>/dev/null || true
+    rmdir "$lock_dir" 2>/dev/null || true
+}
+
+acquire_lock() {
+    acquire_lock_dir "$LOCK_DIR" "watchdog занят другой операцией"
+}
+
+acquire_scan_lock() {
+    acquire_lock_dir "$SCAN_LOCK_DIR" "check-all уже выполняется"
 }
 
 release_lock() {
     cleanup_test_instance
-    rm -f "$LOCK_DIR/pid" 2>/dev/null || true
-    rmdir "$LOCK_DIR" 2>/dev/null || true
+    release_lock_dir "$LOCK_DIR"
+}
+
+release_scan_lock() {
+    cleanup_test_instance
+    release_lock_dir "$SCAN_LOCK_DIR"
 }
 
 with_lock_begin() {
@@ -397,4 +462,12 @@ with_lock_begin() {
 
 with_lock_end() {
     release_lock
+}
+
+with_scan_lock_begin() {
+    acquire_scan_lock || return 1
+}
+
+with_scan_lock_end() {
+    release_scan_lock
 }

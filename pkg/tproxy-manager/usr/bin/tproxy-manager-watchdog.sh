@@ -12,6 +12,7 @@ WATCHDOG_LIB_DIR="/usr/libexec/tproxy-manager/watchdog"
 . "$WATCHDOG_LIB_DIR/common.sh"
 . "$WATCHDOG_LIB_DIR/render_apply.sh"
 . "$WATCHDOG_LIB_DIR/probe.sh"
+. "$WATCHDOG_LIB_DIR/batch.sh"
 . "$WATCHDOG_LIB_DIR/links.sh"
 . "$WATCHDOG_LIB_DIR/loop_status.sh"
 

@@ -91,15 +91,37 @@ run_apply_link() {
 }
 
 run_check_all() {
-    with_lock_begin || return 1
+    with_scan_lock_begin || return 1
     tmp_file="$(mktemp /tmp/tproxy-manager-watchdog-all.XXXXXX 2>/dev/null || printf '')"
     if [ -z "$tmp_file" ]; then
-        with_lock_end
+        with_scan_lock_end
         log_msg "ошибка: не удалось создать временный список ссылок"
         return 1
     fi
 
     build_links_index > "$tmp_file"
+    if probe_links_batch_runtime "$tmp_file"; then
+        alive="$BATCH_ALIVE"
+        total="$BATCH_TOTAL"
+        rm -f "$tmp_file"
+        set_last_link_scan "OK" "$alive" "$total"
+        log_msg "проверка всех ссылок завершена: alive=$alive total=$total mode=batch"
+        with_scan_lock_end
+        return 0
+    fi
+
+    if [ "$BATCH_CHECK_ENABLED" = "1" ] && [ "$BATCH_CHECK_FALLBACK" = "1" ]; then
+        log_msg "batch-проверка недоступна, выполняется fallback на индивидуальную проверку"
+    elif [ "$BATCH_CHECK_ENABLED" = "1" ]; then
+        rm -f "$tmp_file"
+        set_last_link_scan "BATCH_FAILED" "0" "0"
+        log_msg "batch-проверка завершилась ошибкой, fallback выключен"
+        with_scan_lock_end
+        return 1
+    fi
+
+    original_test_port="$TEST_PORT"
+    TEST_PORT="$BATCH_CHECK_PORT_START"
     total=0
     alive=0
     while IFS="$(printf '\t')" read -r hash link comment lineno; do
@@ -110,11 +132,11 @@ run_check_all() {
         fi
         cleanup_test_instance
     done < "$tmp_file"
-
+    TEST_PORT="$original_test_port"
     rm -f "$tmp_file"
     set_last_link_scan "OK" "$alive" "$total"
-    log_msg "проверка всех ссылок завершена: alive=$alive total=$total"
-    with_lock_end
+    log_msg "проверка всех ссылок завершена: alive=$alive total=$total mode=single"
+    with_scan_lock_end
     return 0
 }
 
@@ -128,7 +150,7 @@ maybe_run_background_check() {
         return 1
     fi
     log_msg "запуск фоновой проверки ссылок по таймеру"
-    run_check_all
+    /usr/bin/tproxy-manager-watchdog.sh check-all >/dev/null 2>&1 &
 }
 
 maybe_run_subscription_fetch() {
@@ -159,6 +181,7 @@ MAX_TIME=$MAX_TIME
 LINKS_FILE=$LINKS_FILE
 TEMPLATE_FILE=$TEMPLATE_FILE
 TEST_TEMPLATE_FILE=$TEST_TEMPLATE_FILE
+BATCH_TEST_TEMPLATE_FILE=$BATCH_TEST_TEMPLATE_FILE
 OUTBOUND_FILE=$OUTBOUND_FILE
 VLESS2JSON=$VLESS2JSON
 SERVICE_PATH=$SERVICE_PATH
@@ -171,6 +194,11 @@ DEAD_COOLDOWN_MINUTES=$COOLDOWN_MINUTES
 TEST_PORT=$TEST_PORT
 BACKGROUND_CHECK_ENABLED=$BACKGROUND_CHECK_ENABLED
 BACKGROUND_CHECK_INTERVAL=$BACKGROUND_CHECK_INTERVAL
+BATCH_CHECK_ENABLED=$BATCH_CHECK_ENABLED
+BATCH_CHECK_PORT_START=$BATCH_CHECK_PORT_START
+BATCH_CHECK_BATCH_SIZE=$BATCH_CHECK_BATCH_SIZE
+BATCH_CHECK_CONCURRENCY=$BATCH_CHECK_CONCURRENCY
+BATCH_CHECK_FALLBACK=$BATCH_CHECK_FALLBACK
 FAILCOUNT=$OVERALL_FAILCOUNT
 LAST_HTTP_CODE=$OVERALL_LAST_HTTP_CODE
 LAST_STATUS=$OVERALL_LAST_STATUS

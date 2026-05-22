@@ -56,6 +56,10 @@ if [ ! -e /etc/tproxy-manager/watchdog-test-config.template.jsonc ] && [ -f /usr
   cp /usr/share/tproxy-manager/watchdog-test-config.template.jsonc /etc/tproxy-manager/watchdog-test-config.template.jsonc
 fi
 
+if [ ! -e /etc/tproxy-manager/watchdog-batch-test-config.template.jsonc ] && [ -f /usr/share/tproxy-manager/watchdog-batch-test-config.template.jsonc ]; then
+  cp /usr/share/tproxy-manager/watchdog-batch-test-config.template.jsonc /etc/tproxy-manager/watchdog-batch-test-config.template.jsonc
+fi
+
 # --- UCI доступен? ---
 command -v uci >/dev/null 2>&1 || exit 0
 
@@ -120,6 +124,12 @@ set_default tproxy-manager main watchdog_dead_cooldown_minutes '0'
 set_default tproxy-manager main watchdog_test_port '10881'
 set_default tproxy-manager main watchdog_background_check_enabled '0'
 set_default tproxy-manager main watchdog_background_check_interval '1800'
+set_default tproxy-manager main watchdog_batch_check_enabled '1'
+set_default tproxy-manager main watchdog_batch_check_port_start '10882'
+set_default tproxy-manager main watchdog_batch_check_batch_size '64'
+set_default tproxy-manager main watchdog_batch_check_concurrency '8'
+set_default tproxy-manager main watchdog_batch_check_fallback '1'
+set_default tproxy-manager main watchdog_batch_test_template_file '/etc/tproxy-manager/watchdog-batch-test-config.template.jsonc'
 set_default tproxy-manager main watchdog_subscriptions_file '/etc/tproxy-manager/watchdog-subscriptions.json'
 set_default tproxy-manager main watchdog_happ_capture_enabled '0'
 set_default tproxy-manager main watchdog_happ_capture_token ''

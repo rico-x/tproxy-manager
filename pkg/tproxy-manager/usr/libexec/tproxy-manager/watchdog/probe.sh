@@ -58,12 +58,15 @@ probe_link_runtime() {
     render_test_config "$array_file" "$config_file" "$TEST_PORT" || return 1
     start_test_instance "$config_file" "$log_file" || return 1
 
-    code="$(probe_proxy_url "socks5h://127.0.0.1:$TEST_PORT")"
+    probe_result="$(probe_proxy_url_with_time "socks5h://127.0.0.1:$TEST_PORT")"
+    code="$(printf '%s\n' "$probe_result" | awk -F '\t' '{print $1}')"
+    request_ms="$(printf '%s\n' "$probe_result" | awk -F '\t' '{print $2}')"
+    request_text="$(printf '%s\n' "$probe_result" | awk -F '\t' '{print $3}')"
     if [ "$code" = "200" ]; then
-        mark_link_alive "$hash" "$code"
+        mark_link_alive "$hash" "$code" "$request_ms" "$request_text"
         return 0
     fi
 
-    mark_link_dead "$hash" "$code"
+    mark_link_dead "$hash" "$code" "$request_ms" "$request_text"
     return 1
 }

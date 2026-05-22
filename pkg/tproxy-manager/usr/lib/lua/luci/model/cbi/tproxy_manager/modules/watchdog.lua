@@ -62,6 +62,19 @@ local function urldecode_component(s)
   end))
 end
 
+local function parse_query(query)
+  local out = {}
+  for pair in (query or ""):gmatch("([^&]+)") do
+    local k, v = pair:match("^([^=]+)=(.*)$")
+    if k then
+      out[urldecode_component(k)] = urldecode_component(v)
+    else
+      out[urldecode_component(pair)] = ""
+    end
+  end
+  return out
+end
+
 local function parse_link_line(line)
   local value = trim(line)
   if value == "" or value:match("^#") then return nil end
@@ -252,6 +265,86 @@ local function source_badges(db, hash)
   return table.concat(out, " "), true
 end
 
+local function active_source_text(db, entry)
+  if not entry then return "-" end
+  local labels = subscription_sources_for_hash(db, entry.hash)
+  local source = #labels > 0 and table.concat(labels, ", ") or "local"
+  local comment = trim(entry.comment or "")
+  local hash = tostring(entry.hash or "")
+  local short_hash = hash ~= "" and hash:sub(1, 8) or "-"
+  if comment ~= "" then
+    return string.format("%s · %s · %s", source, comment, short_hash)
+  end
+  return string.format("%s · %s", source, short_hash)
+end
+
+local function vless_signature(raw_link)
+  raw_link = trim(raw_link)
+  local without_fragment = raw_link:gsub("#.*$", "")
+  local base, query = without_fragment, ""
+  if without_fragment:find("?", 1, true) then
+    base = without_fragment:match("^(.-)%?") or without_fragment
+    query = without_fragment:match("%?(.*)$") or ""
+  end
+  local auth = base:match("^vless://(.+)$")
+  if not auth then return nil end
+  local uuid, hostport = auth:match("^(.-)@(.+)$")
+  if not uuid or not hostport then return nil end
+  local address, port
+  if hostport:match("^%[") then
+    address, port = hostport:match("^%[([^%]]+)%]:(%d+)$")
+  else
+    address, port = hostport:match("^([^:]+):(%d+)$")
+  end
+  if not address or not port then return nil end
+  local params = parse_query(query)
+  return {
+    uuid = trim(uuid),
+    address = trim(address),
+    port = tostring(port),
+    public_key = trim(params.pbk ~= "" and params.pbk or params.publicKey or ""),
+    short_id = trim(params.sid ~= "" and params.sid or params.shortId or ""),
+    server_name = trim(params.sni ~= "" and params.sni or params.serverName or params.host or "")
+  }
+end
+
+local function config_contains_signature(config_text, sig)
+  if not sig or config_text == "" then return false end
+  if sig.uuid == "" or sig.address == "" or sig.port == "" then return false end
+  if not config_text:find(sig.uuid, 1, true) then return false end
+  if not config_text:find(sig.address, 1, true) then return false end
+  if not config_text:find(sig.port, 1, true) then return false end
+  local strong = 0
+  if sig.public_key ~= "" and config_text:find(sig.public_key, 1, true) then strong = strong + 1 end
+  if sig.short_id ~= "" and config_text:find(sig.short_id, 1, true) then strong = strong + 1 end
+  if sig.server_name ~= "" and config_text:find(sig.server_name, 1, true) then strong = strong + 1 end
+  return strong > 0 or (sig.public_key == "" and sig.short_id == "" and sig.server_name == "")
+end
+
+local function find_active_entry(links, status)
+  local outbound_file = trim(status.OUTBOUND_FILE or "")
+  if outbound_file ~= "" then
+    local config_text = read_file(outbound_file)
+    if config_text ~= "" then
+      for _, entry in ipairs(links or {}) do
+        if config_contains_signature(config_text, vless_signature(entry.raw_link or entry.link or "")) then
+          return entry, "config"
+        end
+      end
+    end
+  end
+
+  local applied_hash = trim(status.LAST_APPLIED_HASH or "")
+  if applied_hash ~= "" then
+    for _, entry in ipairs(links or {}) do
+      if entry.hash == applied_hash then
+        return entry, "state"
+      end
+    end
+  end
+  return nil, ""
+end
+
 local function parse_capture_headers(path)
   local headers = {}
   local raw = read_file(path)
@@ -433,14 +526,23 @@ local function status_label(entry)
   local status = state.LAST_STATUS or "unknown"
   local checked = state.LAST_CHECKED_HUMAN or "-"
   local cooldown = state.COOLDOWN_UNTIL_HUMAN or "-"
+  local request_text = state.LAST_REQUEST_TIME_TEXT or ""
+  if request_text == "" or request_text == "-" then
+    local request_ms = tonumber(state.LAST_REQUEST_TIME_MS or "")
+    if request_ms and request_ms > 0 then request_text = tostring(request_ms) .. " ms" end
+  end
+  local speed = ""
+  if request_text ~= "" and request_text ~= "-" then
+    speed = " <span style='color:#6b7280'>· " .. pcdata(request_text) .. "</span>"
+  end
   if status == "alive" then
-    return "<span class='svc-badge ok'>OK</span>", checked
+    return "<span class='svc-badge ok'>OK</span>" .. speed, checked
   elseif status == "dead" then
     local suffix = ""
     if cooldown ~= "" and cooldown ~= "-" then
       suffix = " <span style='color:#9ca3af'>(искл. до " .. pcdata(cooldown) .. ")</span>"
     end
-    return "<span class='svc-badge err'>Error</span>" .. suffix, checked
+    return "<span class='svc-badge err'>Error</span>" .. speed .. suffix, checked
   end
   return "<span style='color:#6b7280'>Не проверялась</span>", "-"
 end
@@ -872,6 +974,25 @@ local function render(ctx)
   local sub_db = read_subscription_db(subscriptions_path)
   local edit_sub = edit_sub_id ~= "" and find_subscription(sub_db, edit_sub_id) or nil
   local links = parse_links_file(links_path)
+  local active_entry, active_detected_by = find_active_entry(links, status)
+  local active_hash = active_entry and active_entry.hash or ""
+  local active_text = active_entry and active_source_text(sub_db, active_entry) or "-"
+  local active_subscriptions = {}
+
+  if active_entry then
+    local active_item = sub_db.links and sub_db.links[active_hash]
+    if type(active_item) == "table" and type(active_item.sources) == "table" then
+      for _, source in pairs(active_item.sources) do
+        local key = tostring(source.type or "happ") .. ":" .. tostring(source.id or "")
+        active_subscriptions[key] = true
+      end
+    end
+    if active_detected_by == "config" then
+      active_text = active_text .. " · config"
+    elseif active_detected_by == "state" then
+      active_text = active_text .. " · state"
+    end
+  end
 
   do
     local css = m:section(SimpleSection)
@@ -885,11 +1006,13 @@ local function render(ctx)
 .wd-table{width:100%;border-collapse:collapse;table-layout:fixed;word-break:break-word}
 .wd-table th,.wd-table td{border:1px solid #e5e7eb;padding:.35rem;vertical-align:top}
 .wd-table th{background:#f9fafb}
+.wd-table tr.wd-active-row td{background:#ecfdf5!important;border-color:#86efac}
 .wd-table .actions .cbi-button{margin:0 .2rem .2rem 0}
 .wd-code{font-family:monospace;font-size:.92em}
 .wd-details{margin-top:.6rem}
 .wd-details summary{cursor:pointer;font-weight:600}
 .wd-textarea{width:100%;font-family:monospace;font-size:.92em}
+.wd-active-badge{display:inline-block;margin-left:.25rem;padding:.05rem .32rem;border-radius:.3rem;background:#16a34a;color:#fff;font-size:.78em;font-weight:700}
 </style>]]
     end
   end
@@ -911,6 +1034,7 @@ local function render(ctx)
       local ts = status.LAST_TS_HUMAN or status.LAST_TS or "-"
       local scan = status.LAST_LINK_SCAN_HUMAN or "-"
       local scan_status = status.LAST_LINK_SCAN_STATUS or "-"
+      local active = active_text
       local scan_alive_num = 0
       for _, entry in ipairs(links or {}) do
         if entry.state and entry.state.LAST_STATUS == "alive" then
@@ -929,6 +1053,7 @@ local function render(ctx)
     <span><strong>LAST_TS:</strong> %s</span>
     <span><strong>LAST_LINK_SCAN:</strong> %s</span>
     <span><strong>SCAN_RESULT:</strong> %s (%s/%s)</span>
+    <span><strong>ACTIVE:</strong> %s</span>
   </div>
   <div style="margin-top:.5rem">
     <button class="cbi-button cbi-button-apply" name="_watchdog_once" value="1">Проверить сейчас</button>
@@ -938,7 +1063,8 @@ local function render(ctx)
   </div>
 </div>]],
         pcdata(running), pcdata(failcount), pcdata(code), pcdata(st), pcdata(ts),
-        pcdata(scan), pcdata(scan_status), pcdata(scan_alive), pcdata(scan_total))
+        pcdata(scan), pcdata(scan_status), pcdata(scan_alive), pcdata(scan_total),
+        pcdata(active))
     end
   end
 
@@ -1021,9 +1147,14 @@ local function render(ctx)
       for _, sub in ipairs(sub_db.subscriptions) do
         local st = sub.last_status or "never"
         local st_html = st == "ok" and "<span class='svc-badge ok'>OK</span>" or (st == "error" and "<span class='svc-badge err'>Error</span>" or "<span class='svc-badge'>never</span>")
+        local is_active_sub = active_subscriptions[subscription_source_key(sub)] == true
+        local row_class = is_active_sub and " class='wd-active-row'" or ""
+        if is_active_sub then
+          st_html = st_html .. " <span class='wd-active-badge'>ACTIVE</span>"
+        end
         local detail = sub.last_error and sub.last_error ~= "" and ("<div style='color:#b91c1c'>" .. pcdata(sub.last_error) .. "</div>") or ""
         rows[#rows + 1] = string.format([[
-<tr>
+<tr%s>
   <td>%s</td>
   <td>%s</td>
   <td>%s</td>
@@ -1037,6 +1168,7 @@ local function render(ctx)
     <button class="cbi-button cbi-button-remove" name="_sub_delete" value="%s" onclick="return confirm('Удалить подписку и её ссылки?')">Удалить</button>
   </td>
 </tr>]],
+          row_class,
           pcdata(sub.type or "happ"),
           pcdata(sub.id or ""),
           pcdata(sub.name ~= "" and sub.name or "—"),
@@ -1135,9 +1267,14 @@ local function render(ctx)
       for i, entry in ipairs(links) do
         local label, checked = helpers.status_label(entry, pcdata)
         local source_html, has_subscription_source = source_badges(sub_db, entry.hash)
+        local is_active_link = active_hash ~= "" and entry.hash == active_hash
+        local row_class = is_active_link and " class='wd-active-row'" or ""
+        if is_active_link then
+          label = label .. " <span class='wd-active-badge'>ACTIVE</span>"
+        end
         if edit_hash ~= "" and edit_hash == entry.hash and not has_subscription_source then
           rows[#rows + 1] = string.format([[
-<tr>
+<tr%s>
   <td>%s</td>
   <td><input type="hidden" name="wd_edit_hash" value="%s"><div style="color:#6b7280">%s</div></td>
   <td><input type="text" name="wd_edit_link" value="%s" style="width:100%%"></td>
@@ -1148,7 +1285,7 @@ local function render(ctx)
     <button class="cbi-button cbi-button-reset" name="_wd_edit_cancel" value="1">Отмена</button>
   </td>
 </tr>]],
-            source_html, pcdata(entry.hash), pcdata(entry.comment or "—"), pcdata(entry.raw_link or ""), label, pcdata(checked))
+            row_class, source_html, pcdata(entry.hash), pcdata(entry.comment or "—"), pcdata(entry.raw_link or ""), label, pcdata(checked))
         else
           local edit_delete_buttons
           if has_subscription_source then
@@ -1160,7 +1297,7 @@ local function render(ctx)
     <button class="cbi-button cbi-button-remove" name="_wd_delete" value="%s" onclick="return confirm('Удалить выбранную ссылку?')">Удалить</button>]], pcdata(entry.hash), pcdata(entry.hash))
           end
           rows[#rows + 1] = string.format([[
-<tr>
+<tr%s>
   <td>%s</td>
   <td>%s</td>
   <td class="wd-code" title="%s">%s</td>
@@ -1174,6 +1311,7 @@ local function render(ctx)
     <button class="cbi-button cbi-button-action" name="_wd_move_down" value="%s"%s>&darr;</button>
   </td>
 </tr>]],
+            row_class,
             source_html,
             pcdata(entry.comment or "—"),
             pcdata(entry.raw_link or ""),
@@ -1229,6 +1367,7 @@ local function render(ctx)
       <select name="watchdog_selection_mode">
         <option value="ordered"%s>по порядку</option>
         <option value="random"%s>случайно</option>
+        <option value="fastest"%s>самый быстрый</option>
       </select>
       <label>Исключать нерабочие ссылки</label><input type="checkbox" name="watchdog_exclude_dead" value="1" %s>
       <label>Период исключения: часы</label><input type="number" min="0" name="watchdog_dead_cooldown_hours" value="%s">
@@ -1236,6 +1375,12 @@ local function render(ctx)
       <label>TEST_PORT</label><input type="number" min="1" max="65535" name="watchdog_test_port" value="%s">
       <label>Фоновая проверка ссылок</label><input type="checkbox" name="watchdog_background_check_enabled" value="1" %s>
       <label>Таймер фоновой проверки, сек</label><input type="number" min="1" name="watchdog_background_check_interval" value="%s">
+      <label>Batch-проверка ссылок</label><input type="checkbox" name="watchdog_batch_check_enabled" value="1" %s>
+      <label>Batch template</label><input type="text" name="watchdog_batch_test_template_file" value="%s">
+      <label>Стартовый порт batch</label><input type="number" min="1" max="65535" name="watchdog_batch_check_port_start" value="%s">
+      <label>Размер пачки batch</label><input type="number" min="1" name="watchdog_batch_check_batch_size" value="%s">
+      <label>Параллельность batch</label><input type="number" min="1" name="watchdog_batch_check_concurrency" value="%s">
+      <label>Fallback на старую проверку</label><input type="checkbox" name="watchdog_batch_check_fallback" value="1" %s>
       <label>SUBSCRIPTIONS_FILE</label><input type="text" name="watchdog_subscriptions_file" value="%s">
       <label>HAPP_CAPTURE_TTL</label><input type="number" min="1" name="watchdog_happ_capture_ttl" value="%s">
       <label>HAPP_CAPTURE_PORT</label><input type="number" min="1" max="65535" name="watchdog_happ_capture_port" value="%s">
@@ -1258,12 +1403,19 @@ local function render(ctx)
         pcdata(getu("watchdog_test_command", "/usr/bin/xray -c {config}")),
         getu("watchdog_selection_mode", "random") == "ordered" and " selected" or "",
         getu("watchdog_selection_mode", "random") == "random" and " selected" or "",
+        getu("watchdog_selection_mode", "random") == "fastest" and " selected" or "",
         getu("watchdog_exclude_dead", "0") == "1" and "checked" or "",
         pcdata(getu("watchdog_dead_cooldown_hours", "0")),
         pcdata(getu("watchdog_dead_cooldown_minutes", "0")),
         pcdata(getu("watchdog_test_port", "10881")),
         getu("watchdog_background_check_enabled", "0") == "1" and "checked" or "",
         pcdata(getu("watchdog_background_check_interval", "1800")),
+        getu("watchdog_batch_check_enabled", "1") == "1" and "checked" or "",
+        pcdata(getu("watchdog_batch_test_template_file", "/etc/tproxy-manager/watchdog-batch-test-config.template.jsonc")),
+        pcdata(getu("watchdog_batch_check_port_start", "10882")),
+        pcdata(getu("watchdog_batch_check_batch_size", "64")),
+        pcdata(getu("watchdog_batch_check_concurrency", "8")),
+        getu("watchdog_batch_check_fallback", "1") == "1" and "checked" or "",
         pcdata(getu("watchdog_subscriptions_file", DEFAULT_SUBSCRIPTIONS_FILE)),
         pcdata(getu("watchdog_happ_capture_ttl", "600")),
         pcdata(getu("watchdog_happ_capture_port", "18088")),

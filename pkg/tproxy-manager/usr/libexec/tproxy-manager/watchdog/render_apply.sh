@@ -2,15 +2,29 @@
 
 probe_proxy_url() {
     proxy_url="$1"
-    http_code="$(curl -sS -o /dev/null -w '%{http_code}' \
+    probe_proxy_url_with_time "$proxy_url" | awk -F '\t' '{print $1}'
+}
+
+probe_proxy_url_with_time() {
+    proxy_url="$1"
+    result="$(curl -sS -o /dev/null -w '%{http_code}\t%{time_total}' \
         --proxy "$proxy_url" \
         --connect-timeout "$CONNECT_TIMEOUT" \
         --max-time "$MAX_TIME" \
         "$CHECK_URL" 2>/dev/null)"
-    if [ $? -ne 0 ] || ! validate_number "$http_code"; then
+    rc=$?
+    http_code="$(printf '%s\n' "$result" | awk -F '\t' '{print $1}')"
+    time_total="$(printf '%s\n' "$result" | awk -F '\t' '{print $2}')"
+    if [ $rc -ne 0 ] || ! validate_number "$http_code"; then
         http_code="000"
+        request_ms=0
+        request_text="timeout"
+    else
+        request_ms="$(awk -v t="$time_total" 'BEGIN { if (t ~ /^[0-9]+([.][0-9]+)?$/) printf "%d", (t * 1000) + 0.5; else printf "0" }')"
+        validate_number "$request_ms" || request_ms=0
+        request_text="${request_ms} ms"
     fi
-    printf '%s\n' "$http_code"
+    printf '%s\t%s\t%s\n' "$http_code" "$request_ms" "$request_text"
 }
 
 generate_rendered_config() {

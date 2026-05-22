@@ -3,11 +3,13 @@
 local function usage()
   io.stderr:write([[
 Usage:
-  vless2json.sh -r <links_file> -t <template_file>
+  vless2json.sh -r <links_file> -t <template_file> [--tag <outbound_tag>] [--one-outbound]
 
 Description:
   Reads the first valid VLESS link from <links_file>, applies its values to the
   JSON/JSONC template from <template_file> and prints rendered JSON to stdout.
+  --tag rewrites the first rendered outbound tag.
+  --one-outbound prints only the first rendered outbound object.
 ]])
 end
 
@@ -326,8 +328,26 @@ local function build_placeholders(link)
   }
 end
 
+local function first_outbound(rendered)
+  if type(rendered) ~= "table" then
+    return nil
+  end
+  if type(rendered.outbounds) == "table" and type(rendered.outbounds[1]) == "table" then
+    return rendered.outbounds[1]
+  end
+  if type(rendered[1]) == "table" then
+    return rendered[1]
+  end
+  return nil
+end
+
 local function parse_args(argv)
-  local args = { links_file = nil, template_file = nil }
+  local args = {
+    links_file = nil,
+    template_file = nil,
+    outbound_tag = nil,
+    one_outbound = false
+  }
   local i = 1
   while i <= #argv do
     local arg = argv[i]
@@ -337,6 +357,11 @@ local function parse_args(argv)
     elseif arg == "-t" then
       i = i + 1
       args.template_file = argv[i]
+    elseif arg == "--tag" then
+      i = i + 1
+      args.outbound_tag = argv[i]
+    elseif arg == "--one-outbound" then
+      args.one_outbound = true
     elseif arg == "-h" or arg == "--help" then
       usage()
       os.exit(0)
@@ -347,6 +372,9 @@ local function parse_args(argv)
   end
   if not args.links_file or not args.template_file then
     return nil, "both -r and -t are required"
+  end
+  if args.outbound_tag ~= nil and args.outbound_tag == "" then
+    return nil, "--tag requires a non-empty value"
   end
   return args
 end
@@ -378,6 +406,24 @@ end
 
 local placeholders = build_placeholders(parsed_link)
 local rendered = replace_placeholders(deepcopy(template), placeholders)
+local outbound = first_outbound(rendered)
+
+if args.outbound_tag then
+  if not outbound then
+    io.stderr:write("vless2json: rendered template has no first outbound for --tag\n")
+    os.exit(1)
+  end
+  outbound.tag = args.outbound_tag
+end
+
+if args.one_outbound then
+  if not outbound then
+    io.stderr:write("vless2json: rendered template has no first outbound for --one-outbound\n")
+    os.exit(1)
+  end
+  rendered = outbound
+end
+
 local jsonc = jsonc_or_err
 local output = jsonc.stringify(rendered, true)
 if not output or output == "" then

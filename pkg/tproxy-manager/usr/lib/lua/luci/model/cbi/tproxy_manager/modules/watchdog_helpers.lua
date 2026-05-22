@@ -152,14 +152,23 @@ function M.status_label(entry, pcdata)
   local status = state.LAST_STATUS or "unknown"
   local checked = state.LAST_CHECKED_HUMAN or "-"
   local cooldown = state.COOLDOWN_UNTIL_HUMAN or "-"
+  local request_text = state.LAST_REQUEST_TIME_TEXT or ""
+  if request_text == "" or request_text == "-" then
+    local request_ms = tonumber(state.LAST_REQUEST_TIME_MS or "")
+    if request_ms and request_ms > 0 then request_text = tostring(request_ms) .. " ms" end
+  end
+  local speed = ""
+  if request_text ~= "" and request_text ~= "-" then
+    speed = " <span style='color:#6b7280'>· " .. pcdata(request_text) .. "</span>"
+  end
   if status == "alive" then
-    return "<span class='svc-badge ok'>OK</span>", checked
+    return "<span class='svc-badge ok'>OK</span>" .. speed, checked
   elseif status == "dead" then
     local suffix = ""
     if cooldown ~= "" and cooldown ~= "-" then
       suffix = " <span style='color:#9ca3af'>(искл. до " .. pcdata(cooldown) .. ")</span>"
     end
-    return "<span class='svc-badge err'>Error</span>" .. suffix, checked
+    return "<span class='svc-badge err'>Error</span>" .. speed .. suffix, checked
   end
   return "<span style='color:#6b7280'>Не проверялась</span>", "-"
 end
@@ -199,6 +208,9 @@ function M.save_watchdog_settings(ctx)
   local cooldown_minutes = parse_int(http.formvalue("watchdog_dead_cooldown_minutes"), 0)
   local test_port = parse_int(http.formvalue("watchdog_test_port"), 0)
   local background_check_interval = parse_int(http.formvalue("watchdog_background_check_interval"), 0)
+  local batch_check_port_start = parse_int(http.formvalue("watchdog_batch_check_port_start"), 0)
+  local batch_check_batch_size = parse_int(http.formvalue("watchdog_batch_check_batch_size"), 0)
+  local batch_check_concurrency = parse_int(http.formvalue("watchdog_batch_check_concurrency"), 0)
   local happ_capture_ttl = parse_int(http.formvalue("watchdog_happ_capture_ttl"), 0)
   local happ_capture_port = parse_int(http.formvalue("watchdog_happ_capture_port"), 0)
   local mode = trim(http.formvalue("watchdog_selection_mode"))
@@ -216,9 +228,17 @@ function M.save_watchdog_settings(ctx)
   if background_check_interval < 1 then set_err("Таймер фоновой проверки должен быть не меньше 1 секунды."); return false end
   if happ_capture_ttl < 1 then set_err("Время действия Happ capture должно быть не меньше 1 секунды."); return false end
   if happ_capture_port < 1 or happ_capture_port > 65535 then set_err("Порт Happ capture должен быть в диапазоне 1..65535."); return false end
-  if mode ~= "random" and mode ~= "ordered" then set_err("Неизвестный режим выбора ссылок."); return false end
+  if mode ~= "random" and mode ~= "ordered" and mode ~= "fastest" then set_err("Неизвестный режим выбора ссылок."); return false end
   if service_path == "" or not utils.is_abs_path(service_path) then set_err("Нужно указать корректный абсолютный путь к сервису."); return false end
   if not test_command then set_err(test_command_err); return false end
+  if batch_check_port_start < 1 or batch_check_port_start > 65535 then set_err("Стартовый порт batch-проверки должен быть в диапазоне 1..65535."); return false end
+  if batch_check_batch_size < 1 then set_err("Размер пачки batch-проверки должен быть не меньше 1."); return false end
+  if batch_check_concurrency < 1 then set_err("Параллельность batch-проверки должна быть не меньше 1."); return false end
+  if batch_check_port_start + batch_check_batch_size - 1 > 65535 then set_err("Диапазон портов batch-проверки выходит за предел 65535."); return false end
+  if batch_check_port_start <= test_port and (batch_check_port_start + batch_check_batch_size - 1) >= test_port then
+    set_err("Диапазон портов batch-проверки не должен включать TEST_PORT watchdog."); return false
+  end
+  if batch_check_concurrency > batch_check_batch_size then batch_check_concurrency = batch_check_batch_size end
 
   local text_fields = {
     watchdog_check_url = trim(http.formvalue("watchdog_check_url")),
@@ -228,6 +248,7 @@ function M.save_watchdog_settings(ctx)
     watchdog_test_template_file = trim(http.formvalue("watchdog_test_template_file")),
     watchdog_outbound_file = trim(http.formvalue("watchdog_outbound_file")),
     watchdog_vless2json = trim(http.formvalue("watchdog_vless2json")),
+    watchdog_batch_test_template_file = trim(http.formvalue("watchdog_batch_test_template_file")),
     watchdog_subscriptions_file = trim(http.formvalue("watchdog_subscriptions_file")),
     watchdog_happ_capture_log = trim(http.formvalue("watchdog_happ_capture_log")),
   }
@@ -263,6 +284,11 @@ function M.save_watchdog_settings(ctx)
   S("watchdog_test_port", tostring(test_port))
   S("watchdog_background_check_enabled", http.formvalue("watchdog_background_check_enabled") and "1" or "0")
   S("watchdog_background_check_interval", tostring(background_check_interval))
+  S("watchdog_batch_check_enabled", http.formvalue("watchdog_batch_check_enabled") and "1" or "0")
+  S("watchdog_batch_check_port_start", tostring(batch_check_port_start))
+  S("watchdog_batch_check_batch_size", tostring(batch_check_batch_size))
+  S("watchdog_batch_check_concurrency", tostring(batch_check_concurrency))
+  S("watchdog_batch_check_fallback", http.formvalue("watchdog_batch_check_fallback") and "1" or "0")
   S("watchdog_happ_capture_ttl", tostring(happ_capture_ttl))
   S("watchdog_happ_capture_port", tostring(happ_capture_port))
   uci:commit(PKG)

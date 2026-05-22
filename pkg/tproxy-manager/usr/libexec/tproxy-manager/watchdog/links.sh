@@ -96,6 +96,35 @@ reorder_ordered() {
     cat "$input_file"
 }
 
+reorder_fastest() {
+    input_file="$1"
+    fastest_file="${input_file}.fastest"
+    rest_file="${input_file}.fastest-rest"
+    : > "$fastest_file"
+    : > "$rest_file"
+
+    while IFS="$(printf '\t')" read -r hash link comment lineno; do
+        [ -n "$hash" ] || continue
+        status="$(link_state_get "$hash" LAST_STATUS)"
+        request_ms="$(link_state_get "$hash" LAST_REQUEST_TIME_MS)"
+        if [ "$status" = "alive" ] && validate_number "$request_ms" && [ "$request_ms" -gt 0 ]; then
+            printf '%s\t%s\t%s\t%s\t%s\n' "$request_ms" "$hash" "$link" "$comment" "$lineno" >> "$fastest_file"
+        else
+            printf '%s\t%s\t%s\t%s\n' "$hash" "$link" "$comment" "$lineno" >> "$rest_file"
+        fi
+    done < "$input_file"
+
+    if [ -s "$fastest_file" ]; then
+        sort -n "$fastest_file" | cut -f2-
+        cat "$rest_file"
+    else
+        log_msg "режим fastest: нет alive-ссылок с временем проверки, fallback на ordered"
+        reorder_ordered "$input_file"
+    fi
+
+    rm -f "$fastest_file" "$rest_file"
+}
+
 build_candidate_file() {
     temp_file="$1"
     build_links_index > "$temp_file"
@@ -131,6 +160,9 @@ rotate_candidates() {
     case "$SELECTION_MODE" in
         ordered)
             reorder_ordered "$temp_file" > "$ordered_file"
+            ;;
+        fastest)
+            reorder_fastest "$temp_file" > "$ordered_file"
             ;;
         *)
             reorder_random "$temp_file" > "$ordered_file"
