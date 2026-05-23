@@ -134,6 +134,9 @@ load_config() {
     RESTART_CMD="$(uci_get watchdog_restart_cmd)"
     TEST_COMMAND="$(uci_get watchdog_test_command)"
     SELECTION_MODE="$(uci_get watchdog_selection_mode)"
+    if [ -n "${WATCHDOG_SELECTION_MODE:-}" ]; then
+        SELECTION_MODE="$WATCHDOG_SELECTION_MODE"
+    fi
     EXCLUDE_DEAD="$(uci_get watchdog_exclude_dead)"
     COOLDOWN_HOURS="$(uci_get watchdog_dead_cooldown_hours)"
     COOLDOWN_MINUTES="$(uci_get watchdog_dead_cooldown_minutes)"

@@ -44,6 +44,7 @@ run_once() {
 
 test_rotate() {
     with_lock_begin || return 1
+    log_msg "принудительная ротация: selection_mode=$SELECTION_MODE"
     rotate_candidates
     rc=$?
     if [ $rc -eq 0 ]; then

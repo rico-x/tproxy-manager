@@ -62,8 +62,15 @@ local function run_cmd_capture(cmd)
   return rc, trim(out)
 end
 
-function M.run_watchdog_command(args)
-  local parts = { utils.shellescape(WATCHDOG_SCRIPT) }
+function M.run_watchdog_command(args, env)
+  local parts = {}
+  for key, value in pairs(env or {}) do
+    key = tostring(key or "")
+    if key:match("^[A-Z0-9_]+$") then
+      parts[#parts + 1] = key .. "=" .. utils.shellescape(value)
+    end
+  end
+  parts[#parts + 1] = utils.shellescape(WATCHDOG_SCRIPT)
   for _, arg in ipairs(args or {}) do
     parts[#parts + 1] = utils.shellescape(arg)
   end

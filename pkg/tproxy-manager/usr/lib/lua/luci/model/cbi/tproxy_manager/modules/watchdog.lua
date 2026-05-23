@@ -849,7 +849,12 @@ local function render(ctx)
   end
 
   if http.formvalue("_watchdog_test_rotate") == "1" then
-    local rc, out = helpers.run_watchdog_command({ "test-rotate" })
+    local rotate_mode = trim(http.formvalue("watchdog_selection_mode"))
+    local env = {}
+    if rotate_mode == "random" or rotate_mode == "ordered" or rotate_mode == "fastest" then
+      env.WATCHDOG_SELECTION_MODE = rotate_mode
+    end
+    local rc, out = helpers.run_watchdog_command({ "test-rotate" }, env)
     if rc == 0 then set_info(out ~= "" and out or "Ротация выполнена.") else set_err(out ~= "" and out or "Ротация завершилась ошибкой.") end
     helpers.redirect_watchdog()
     return m

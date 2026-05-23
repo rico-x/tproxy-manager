@@ -157,6 +157,7 @@ rotate_candidates() {
     fi
 
     ordered_file="${temp_file}.ordered"
+    log_msg "режим выбора ссылок: $SELECTION_MODE"
     case "$SELECTION_MODE" in
         ordered)
             reorder_ordered "$temp_file" > "$ordered_file"
