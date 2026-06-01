@@ -1018,7 +1018,11 @@ local function render(ctx)
 .wd-details summary{cursor:pointer;font-weight:600}
 .wd-textarea{width:100%;font-family:monospace;font-size:.92em}
 .wd-active-badge{display:inline-block;margin-left:.25rem;padding:.05rem .32rem;border-radius:.3rem;background:#16a34a;color:#fff;font-size:.78em;font-weight:700}
-</style>]]
+.happ-decrypt-actions{margin-top:.6rem;display:flex;gap:.35rem;flex-wrap:wrap}
+.wd-subblock{border:1px solid #e5e7eb;border-radius:.45rem;padding:.75rem;margin:.75rem 0}
+.wd-subblock h4{margin-top:0}
+</style>
+<script src="/luci-static/resources/tproxy-manager/happ-decrypt.js"></script>]]
     end
   end
 
@@ -1108,10 +1112,11 @@ local function render(ctx)
       end
       local h = form_sub.headers
       local form_title = edit_sub and ("Редактирование подписки #" .. tostring(edit_sub.id)) or "Новая подписка"
-      local capture_open = (show_capture_details or capture_defaults or capture_active) and " open" or ""
+      local happ_open = (show_capture_details or capture_defaults or capture_active) and " open" or ""
 
       rows[#rows + 1] = "<div class='box'>"
-      rows[#rows + 1] = "<details class='wd-details'" .. capture_open .. "><summary>Happ capture</summary>"
+      rows[#rows + 1] = "<details class='wd-details'" .. happ_open .. "><summary>Happ</summary>"
+      rows[#rows + 1] = "<div class='wd-subblock'><h4>Happ capture</h4>"
       rows[#rows + 1] = "<div style='color:#6b7280;margin-bottom:.5rem'>Нажмите «Запустить capture», скопируйте ссылку и откройте её с телефона в приложении/браузере, который делает запрос подписки. Роутер сохранит заголовки и тело последнего запроса, затем ими можно заполнить форму Happ-подписки.</div>"
       rows[#rows + 1] = string.format([[
 <div class="wd-grid">
@@ -1142,7 +1147,25 @@ local function render(ctx)
           rows[#rows + 1] = "<div style='margin-top:.5rem;color:#6b7280'>Последний capture-запрос пока не сохранён.</div>"
         end
       end
-      rows[#rows + 1] = "</details>"
+      rows[#rows + 1] = "</div>"
+
+      rows[#rows + 1] = [[
+<div class="wd-subblock">
+  <h4>Happ decrypt</h4>
+  <div style="color:#6b7280;margin-bottom:.5rem">
+    Расшифровывает <code>happ://crypt/</code>, <code>crypt2</code>, <code>crypt3</code>, <code>crypt4</code> и <code>crypt5</code> прямо в браузере.
+    Результат только выводится на экран и не добавляется в список ссылок или подписки.
+  </div>
+  <label style="display:block;font-weight:600;margin-bottom:.25rem">Happ link(s)</label>
+  <textarea id="happ_decrypt_input" class="wd-textarea" rows="5" spellcheck="false" placeholder="happ://crypt/...&#10;happ://crypt5/..."></textarea>
+  <div class="happ-decrypt-actions">
+    <button type="button" id="happ_decrypt_run" class="cbi-button cbi-button-apply">Расшифровать</button>
+    <button type="button" id="happ_decrypt_clear" class="cbi-button cbi-button-reset">Очистить</button>
+  </div>
+  <label style="display:block;font-weight:600;margin:.65rem 0 .25rem">Результат</label>
+  <textarea id="happ_decrypt_output" class="wd-textarea" rows="6" spellcheck="false" readonly></textarea>
+</div>
+</details>]]
 
       rows[#rows + 1] = "<h4>Список подписок</h4>"
       rows[#rows + 1] = "<table class='wd-table'><thead><tr><th style='width:8%'>Тип</th><th style='width:6%'>ID</th><th style='width:16%'>Имя</th><th style='width:28%'>URL</th><th style='width:8%'>Вкл.</th><th style='width:10%'>Таймер</th><th style='width:12%'>Статус</th><th style='width:12%'>Действие</th></tr></thead><tbody>"
