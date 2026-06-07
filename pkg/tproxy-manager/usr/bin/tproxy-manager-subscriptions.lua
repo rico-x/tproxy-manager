@@ -2,6 +2,7 @@
 
 local jsonc = require "luci.jsonc"
 local ok_nixio, nixio = pcall(require, "nixio")
+local happ_decrypt = require "tproxy_manager.happ_decrypt"
 
 local PKG = "tproxy-manager"
 local DEFAULT_DB = "/etc/tproxy-manager/watchdog-subscriptions.json"
@@ -144,26 +145,161 @@ local function base64_decode(data)
   return decoded ~= "" and decoded or nil
 end
 
+local function urlencode(value)
+  return tostring(value or ""):gsub("([^A-Za-z0-9%-%._~])", function(c)
+    return string.format("%%%02X", c:byte())
+  end)
+end
+
+local function resolve_subscription_url(url)
+  return happ_decrypt.resolve_subscription_url(url)
+end
+
+local function add_vless_link(out, seen, link)
+  link = trim(link)
+  if not link:match("^vless://") then return end
+  local hash = md5(link)
+  if hash ~= "" and not seen[hash] then
+    out[#out + 1] = { hash = hash, raw_link = link }
+    seen[hash] = true
+  end
+end
+
+local function host_for_vless(address)
+  address = tostring(address or "")
+  if address:find(":", 1, true) and not address:match("^%[.*%]$") then
+    return "[" .. address .. "]"
+  end
+  return address
+end
+
+local function value_or_empty(value)
+  if value == nil then return "" end
+  return tostring(value)
+end
+
+local function csv_value(value)
+  if type(value) == "table" then
+    local out = {}
+    for _, item in ipairs(value) do out[#out + 1] = tostring(item) end
+    return table.concat(out, ",")
+  end
+  return value_or_empty(value)
+end
+
+local function add_query(params, key, value)
+  value = value_or_empty(value)
+  if value ~= "" then params[#params + 1] = urlencode(key) .. "=" .. urlencode(value) end
+end
+
+local function outbound_to_vless(config, outbound, suffix)
+  if type(outbound) ~= "table" or outbound.protocol ~= "vless" then return nil end
+  local settings = type(outbound.settings) == "table" and outbound.settings or {}
+  local vnext = type(settings.vnext) == "table" and settings.vnext[1] or nil
+  if type(vnext) ~= "table" then return nil end
+  local users = type(vnext.users) == "table" and vnext.users[1] or nil
+  if type(users) ~= "table" then return nil end
+  local address = value_or_empty(vnext.address)
+  local port = tonumber(vnext.port)
+  local uuid = value_or_empty(users.id)
+  if address == "" or not port or uuid == "" then return nil end
+
+  local stream = type(outbound.streamSettings) == "table" and outbound.streamSettings or {}
+  local params = {}
+  add_query(params, "security", stream.security or "none")
+  add_query(params, "encryption", users.encryption or "none")
+  add_query(params, "type", stream.network or "tcp")
+  add_query(params, "flow", users.flow)
+
+  local reality = type(stream.realitySettings) == "table" and stream.realitySettings or {}
+  add_query(params, "sni", reality.serverName)
+  add_query(params, "pbk", reality.publicKey)
+  add_query(params, "fp", reality.fingerprint)
+  add_query(params, "sid", reality.shortId)
+  add_query(params, "spx", reality.spiderX)
+
+  local tls = type(stream.tlsSettings) == "table" and stream.tlsSettings or {}
+  if value_or_empty(reality.serverName) == "" then add_query(params, "sni", tls.serverName) end
+  if value_or_empty(reality.fingerprint) == "" then add_query(params, "fp", tls.fingerprint) end
+  add_query(params, "alpn", csv_value(tls.alpn))
+  if tls.allowInsecure ~= nil then add_query(params, "allowInsecure", tls.allowInsecure and "1" or "0") end
+
+  local tcp = type(stream.tcpSettings) == "table" and stream.tcpSettings or {}
+  local header = type(tcp.header) == "table" and tcp.header or {}
+  add_query(params, "headerType", header.type)
+
+  local ws = type(stream.wsSettings) == "table" and stream.wsSettings or {}
+  add_query(params, "path", ws.path)
+  if type(ws.headers) == "table" then add_query(params, "host", ws.headers.Host or ws.headers.host) end
+
+  local grpc = type(stream.grpcSettings) == "table" and stream.grpcSettings or {}
+  add_query(params, "serviceName", grpc.serviceName)
+  add_query(params, "mode", grpc.mode or (grpc.multiMode and "multi" or ""))
+
+  local remarks = value_or_empty(type(config) == "table" and config.remarks or "")
+  if suffix and suffix ~= "" then
+    remarks = remarks ~= "" and (remarks .. " " .. suffix) or suffix
+  end
+  return string.format("vless://%s@%s:%d?%s#%s",
+    urlencode(uuid),
+    host_for_vless(address),
+    port,
+    table.concat(params, "&"),
+    urlencode(remarks))
+end
+
+local function extract_json_vless(node, out, seen)
+  local function walk(value)
+    if type(value) ~= "table" then return end
+    if type(value.outbounds) == "table" then
+      local vless_outbounds = {}
+      for _, outbound in ipairs(value.outbounds) do
+        if type(outbound) == "table" and outbound.protocol == "vless" then
+          vless_outbounds[#vless_outbounds + 1] = outbound
+        end
+      end
+      for _, outbound in ipairs(vless_outbounds) do
+        local suffix = #vless_outbounds > 1 and value_or_empty(outbound.tag) or ""
+        add_vless_link(out, seen, outbound_to_vless(value, outbound, suffix) or "")
+      end
+    else
+      for _, child in pairs(value) do walk(child) end
+    end
+  end
+  walk(node)
+end
+
 local function extract_vless_links(text)
   local out, seen = {}, {}
   local function add_from(source)
-    for line in ((source or "") .. "\n"):gmatch("([^\n]*)\n") do
-      local link = trim(line):match("(vless://%S+)")
-      if link then
-        local hash = md5(link)
-        if hash ~= "" and not seen[hash] then
-          out[#out + 1] = { hash = hash, raw_link = link }
-          seen[hash] = true
-        end
-      end
+    source = tostring(source or "")
+    for link in source:gmatch("(vless://[^%s\"'<>]+)") do
+      add_vless_link(out, seen, link)
+    end
+    local ok, parsed = pcall(jsonc.parse, source)
+    if ok and type(parsed) == "table" then
+      extract_json_vless(parsed, out, seen)
     end
   end
   add_from(text)
-  if #out == 0 then
-    local decoded = base64_decode(text)
-    if decoded then add_from(decoded) end
-  end
+  local decoded = base64_decode(text)
+  if decoded then add_from(decoded) end
   return out
+end
+
+local function classify_subscription_response(text)
+  if #extract_vless_links(text) > 0 then
+    local ok, parsed = pcall(jsonc.parse, text)
+    if ok and type(parsed) == "table" then return "json" end
+    local decoded = base64_decode(text)
+    if decoded then
+      local ok_decoded, parsed_decoded = pcall(jsonc.parse, decoded)
+      if ok_decoded and type(parsed_decoded) == "table" then return "base64-json" end
+      return "base64-text"
+    end
+    return "text"
+  end
+  return "unknown"
 end
 
 local function normalize_db(db)
@@ -178,11 +314,11 @@ local function normalize_db(db)
 end
 
 local function db_path()
-  return uci_get("watchdog_subscriptions_file", DEFAULT_DB)
+  return os.getenv("TPROXY_MANAGER_SUBSCRIPTIONS_FILE") or uci_get("watchdog_subscriptions_file", DEFAULT_DB)
 end
 
 local function links_path()
-  return uci_get("watchdog_links_file", DEFAULT_LINKS)
+  return os.getenv("TPROXY_MANAGER_LINKS_FILE") or uci_get("watchdog_links_file", DEFAULT_LINKS)
 end
 
 local function load_db()
@@ -253,7 +389,7 @@ local function header_list(sub)
   return headers
 end
 
-local function fetch_url(sub)
+local function fetch_url(sub, resolved_url)
   local body = string.format("/tmp/tproxy-manager-subscription.%d.%d.body", os.time(), math.random(1, 1000000))
   local err = body .. ".err"
   local parts = {
@@ -267,7 +403,7 @@ local function fetch_url(sub)
     parts[#parts + 1] = "--header"
     parts[#parts + 1] = shellescape(header)
   end
-  parts[#parts + 1] = shellescape(sub.url or "")
+  parts[#parts + 1] = shellescape(resolved_url or sub.url or "")
   local cmd = table.concat(parts, " ") .. " 2>" .. shellescape(err)
   local p = io.popen(cmd)
   local code = p and trim(p:read("*a") or "") or "000"
@@ -292,6 +428,7 @@ local function clear_source(db, sub, new_hashes)
   for hash, item in pairs(db.links) do
     if type(item) == "table" and type(item.sources) == "table" and item.sources[skey] and not new_hashes[hash] then
       item.sources[skey] = nil
+      db.excluded[skey .. "|" .. hash] = nil
       local has_source = false
       for _ in pairs(item.sources) do has_source = true; break end
       if not has_source then
@@ -309,24 +446,21 @@ local function apply_subscription_links(db, sub, links)
   for _, link in ipairs(links) do new_hashes[link.hash] = true end
   clear_source(db, sub, new_hashes)
   for _, link in ipairs(links) do
-    local excluded_key = skey .. "|" .. link.hash
-    if not db.excluded[excluded_key] then
-      local item = db.links[link.hash]
-      if type(item) ~= "table" then
-        item = { hash = link.hash, raw_link = link.raw_link, sources = {}, first_seen = ts }
-        db.links[link.hash] = item
-      end
-      item.raw_link = item.raw_link or link.raw_link
-      item.last_seen = ts
-      item.sources = type(item.sources) == "table" and item.sources or {}
-      item.sources[skey] = {
-        type = sub.type or "happ",
-        id = tonumber(sub.id) or sub.id,
-        label = source_label(sub),
-        last_seen = ts,
-      }
-      db.removed[link.hash] = nil
+    local item = db.links[link.hash]
+    if type(item) ~= "table" then
+      item = { hash = link.hash, raw_link = link.raw_link, sources = {}, first_seen = ts }
+      db.links[link.hash] = item
     end
+    item.raw_link = link.raw_link or item.raw_link
+    item.last_seen = ts
+    item.sources = type(item.sources) == "table" and item.sources or {}
+    item.sources[skey] = {
+      type = sub.type or "happ",
+      id = tonumber(sub.id) or sub.id,
+      label = source_label(sub),
+      last_seen = ts,
+    }
+    db.removed[link.hash] = nil
   end
 end
 
@@ -334,9 +468,14 @@ local function active_subscription_links(db)
   local active = {}
   for hash, item in pairs(db.links or {}) do
     if type(item) == "table" and type(item.sources) == "table" then
-      local has_source = false
-      for _ in pairs(item.sources) do has_source = true; break end
-      if has_source and item.raw_link and item.raw_link ~= "" then
+      local has_active_source = false
+      for skey in pairs(item.sources) do
+        if not db.excluded[skey .. "|" .. hash] then
+          has_active_source = true
+          break
+        end
+      end
+      if has_active_source and item.raw_link and item.raw_link ~= "" then
         active[hash] = item.raw_link
       end
     end
@@ -346,6 +485,15 @@ end
 
 local function sync_links_file(db)
   local active = active_subscription_links(db)
+  local managed = {}
+  for hash, item in pairs(db.links or {}) do
+    if type(item) == "table" and type(item.sources) == "table" then
+      for _ in pairs(item.sources) do
+        managed[hash] = true
+        break
+      end
+    end
+  end
   local used, out = {}, {}
   for _, entry in ipairs(parse_links_text(read_file(links_path()))) do
     if active[entry.hash] then
@@ -353,6 +501,8 @@ local function sync_links_file(db)
         out[#out + 1] = active[entry.hash]
         used[entry.hash] = true
       end
+    elseif managed[entry.hash] then
+      -- Subscription links disabled through exclusions remain in the DB, but not in rotation.
     elseif not db.removed[entry.hash] then
       out[#out + 1] = entry.raw_link
     end
@@ -390,7 +540,16 @@ local function fetch_subscription(db, sub)
     return false, sub.last_error
   end
 
-  local code, response, err = fetch_url(sub)
+  local resolved_url, resolve_err = resolve_subscription_url(sub.url)
+  if not resolved_url then
+    sub.last_status = "error"
+    sub.last_error = resolve_err or "не удалось обработать URL подписки"
+    sub.last_update = now()
+    sub.last_update_human = now_human(sub.last_update)
+    return false, sub.last_error
+  end
+
+  local code, response, err = fetch_url(sub, resolved_url)
   if code ~= "200" or response == "" then
     sub.last_status = "error"
     sub.last_error = err ~= "" and err or ("HTTP " .. tostring(code))
@@ -399,6 +558,7 @@ local function fetch_subscription(db, sub)
     return false, sub.last_error
   end
 
+  local response_kind = classify_subscription_response(response)
   local links = extract_vless_links(response)
   if #links == 0 then
     sub.last_status = "error"
@@ -412,6 +572,7 @@ local function fetch_subscription(db, sub)
   sub.last_status = "ok"
   sub.last_error = ""
   sub.last_count = #links
+  sub.last_response_type = response_kind
   sub.last_update = now()
   sub.last_update_human = now_human(sub.last_update)
   return true, tostring(#links)
@@ -533,11 +694,32 @@ local function command_exclude_link(hash)
     for skey in pairs(item.sources) do
       db.excluded[skey .. "|" .. hash] = now()
     end
-    db.links[hash] = nil
-    db.removed[hash] = now()
+    db.removed[hash] = nil
     save_db(db)
     sync_links_file(db)
     return true, "link excluded"
+  end)
+end
+
+local function command_include_link(hash)
+  return with_lock(function()
+    local db = load_db()
+    local item = db.links[hash]
+    if type(item) ~= "table" or type(item.sources) ~= "table" then
+      return false, "subscription link not found"
+    end
+    local changed = false
+    for skey in pairs(item.sources) do
+      local key = skey .. "|" .. hash
+      if db.excluded[key] then
+        db.excluded[key] = nil
+        changed = true
+      end
+    end
+    db.removed[hash] = nil
+    save_db(db)
+    sync_links_file(db)
+    return true, changed and "link included" or "link already included"
   end)
 end
 
@@ -683,6 +865,7 @@ Usage:
   tproxy-manager-subscriptions.lua fetch-due
   tproxy-manager-subscriptions.lua sync-links
   tproxy-manager-subscriptions.lua exclude-link <hash>
+  tproxy-manager-subscriptions.lua include-link <hash>
   tproxy-manager-subscriptions.lua capture-start [ttl] [port] [log]
   tproxy-manager-subscriptions.lua capture-stop
   tproxy-manager-subscriptions.lua capture-status
@@ -709,6 +892,9 @@ elseif mode == "sync-links" then
 elseif mode == "exclude-link" then
   if not arg[2] then usage(); os.exit(1) end
   ok, detail = command_exclude_link(arg[2])
+elseif mode == "include-link" then
+  if not arg[2] then usage(); os.exit(1) end
+  ok, detail = command_include_link(arg[2])
 elseif mode == "capture-start" then
   ok, detail = command_capture_start(arg[2], arg[3], arg[4])
 elseif mode == "capture-stop" then

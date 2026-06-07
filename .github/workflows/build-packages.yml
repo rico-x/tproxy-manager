@@ -303,6 +303,19 @@ jobs:
             \( -path '*/usr/bin/*' -o -path '*/etc/init.d/*' -o -path '*/etc/uci-defaults/*' -o -path '*/usr/libexec/*' -o -path '*/CONTROL/*' \) \
             -type f -print0)
 
+      - name: Validate package payload tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          if find pkg/tproxy-manager -name '.DS_Store' -type f | grep -q .; then
+            find pkg/tproxy-manager -name '.DS_Store' -type f
+            echo ".DS_Store files must not be present in package payload" >&2
+            exit 1
+          fi
+          test -f pkg/tproxy-manager/usr/share/tproxy-manager/happ-decrypt-keys.json
+          test ! -e pkg/tproxy-manager/www/luci-static/resources/tproxy-manager/happ-decrypt.js
+          test ! -e pkg/tproxy-manager/www/luci-static/resources/tproxy-manager/happ-decrypt-keys.json
+
       - name: Download build artifacts
         uses: actions/download-artifact@v4
         with:

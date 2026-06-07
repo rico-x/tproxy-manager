@@ -312,6 +312,7 @@ function M.validate_test_command(value)
 end
 
 M.trim = trim
+M.parse_link_line = parse_link_line
 M.read_file = utils.read_file
 M.write_file = utils.write_file
 M.validate_jsonc_text = utils.validate_jsonc_text

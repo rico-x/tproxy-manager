@@ -1,53 +1,35 @@
 local cbi = require "luci.cbi"
 local SimpleSection, DummyValue = cbi.SimpleSection, cbi.DummyValue
 
-local fs = require "nixio.fs"
 local sys = require "luci.sys"
 local http = require "luci.http"
-local disp = require "luci.dispatcher"
 local xml = require "luci.xml"
 local jsonc = require "luci.jsonc"
 local helpers = require "luci.model.cbi.tproxy_manager.modules.watchdog_helpers"
+local utils = require "luci.model.cbi.tproxy_manager.utils"
+local happ_decrypt = require "tproxy_manager.happ_decrypt"
 
 local pcdata = xml.pcdata
 
-local WATCHDOG_SCRIPT = "/usr/bin/tproxy-manager-watchdog.sh"
 local SUBSCRIPTIONS_SCRIPT = "/usr/bin/tproxy-manager-subscriptions.lua"
 local WATCHDOG_LINK_STATE_DIR = "/tmp/tproxy-manager-watchdog-links"
-local WATCHDOG_LOG_FILE = "/tmp/tproxy-manager-watchdog.log"
 local DEFAULT_SUBSCRIPTIONS_FILE = "/etc/tproxy-manager/watchdog-subscriptions.json"
 local DEFAULT_CAPTURE_LOG = "/tmp/tproxy-manager-happ-capture.log"
-local MD5_CACHE = {}
-local STATE_CACHE = {}
-
-local function atomic_write(path, data)
-  data = (data or ""):gsub("\r\n", "\n")
-  local dir, base = path:match("^(.*)/([^/]+)$")
-  local tmpdir = dir and dir or "/tmp"
-  if dir and not fs.access(dir) then
-    sys.call("mkdir -p '" .. dir:gsub("'", "'\\''") .. "'")
-  end
-  local tmp = string.format("%s/.%s.%d.tmp", tmpdir, base or "tmp", math.random(1, 10^9))
-  fs.writefile(tmp, data or "")
-  fs.rename(tmp, path)
-end
 
 local function read_file(path)
-  return fs.readfile(path) or ""
+  return utils.read_file(path)
 end
 
 local function write_file(path, data)
-  atomic_write(path, data or "")
+  utils.write_file(path, data or "")
 end
 
 local function shellescape(s)
-  s = tostring(s or "")
-  if s == "" then return "''" end
-  return "'" .. s:gsub("'", "'\\''") .. "'"
+  return utils.shellescape(s)
 end
 
 local function trim(s)
-  return tostring(s or ""):gsub("\r", ""):gsub("^%s+", ""):gsub("%s+$", "")
+  return utils.trim(s)
 end
 
 local function parse_int(v, fallback)
@@ -75,69 +57,6 @@ local function parse_query(query)
   return out
 end
 
-local function parse_link_line(line)
-  local value = trim(line)
-  if value == "" or value:match("^#") then return nil end
-
-  local raw_link, external_comment = value, ""
-  if value:find(" # ", 1, true) then
-    raw_link = value:match("^(.-) # ") or value
-    external_comment = trim(value:match(" # (.*)$") or "")
-  end
-
-  raw_link = trim(raw_link)
-  if not raw_link:match("^vless://") then return nil end
-
-  local fragment = raw_link:match("#(.*)$") or ""
-  local display_link = raw_link:gsub("#.*$", "")
-  local comment = external_comment ~= "" and external_comment or trim(urldecode_component(fragment))
-
-  return {
-    raw_link = raw_link,
-    display_link = display_link,
-    comment = comment
-  }
-end
-
-local function strip_json_comments(s)
-  local out, i, n = {}, 1, #s
-  local in_str, esc = false, false
-  while i <= n do
-    local c = s:sub(i, i)
-    local d = s:sub(i + 1, i + 1)
-    if in_str then
-      out[#out + 1] = c
-      if esc then esc = false
-      elseif c == "\\" then esc = true
-      elseif c == '"' then in_str = false end
-      i = i + 1
-    else
-      if c == '"' then
-        in_str = true
-        out[#out + 1] = c
-        i = i + 1
-      elseif c == "/" and d == "/" then
-        i = i + 2
-        while i <= n and s:sub(i, i) ~= "\n" do i = i + 1 end
-      elseif c == "/" and d == "*" then
-        i = i + 2
-        while i <= n - 1 and not (s:sub(i, i) == "*" and s:sub(i + 1, i + 1) == "/") do i = i + 1 end
-        i = i + 2
-      else
-        out[#out + 1] = c
-        i = i + 1
-      end
-    end
-  end
-  return table.concat(out)
-end
-
-local function validate_jsonc_text(text)
-  local cleaned = strip_json_comments(text or "")
-  local ok, parsed = pcall(jsonc.parse, cleaned)
-  return ok and parsed ~= nil
-end
-
 local function run_cmd_capture(cmd)
   local marker = "__TPM_WD_RC__:"
   local wrapped = string.format("(%s) 2>&1; printf '\\n%s%%s' \"$?\"", cmd, marker)
@@ -145,14 +64,6 @@ local function run_cmd_capture(cmd)
   local rc = tonumber(out:match(marker .. "([%-%d]+)%s*$")) or 1
   out = out:gsub("\n?" .. marker .. "[%-%d]+%s*$", "")
   return rc, trim(out)
-end
-
-local function run_watchdog_command(args)
-  local parts = { shellescape(WATCHDOG_SCRIPT) }
-  for _, arg in ipairs(args or {}) do
-    parts[#parts + 1] = shellescape(arg)
-  end
-  return run_cmd_capture(table.concat(parts, " "))
 end
 
 local function run_subscription_command(args)
@@ -227,6 +138,7 @@ local function remove_subscription_sources(db, sub)
   for hash, item in pairs(db.links or {}) do
     if type(item) == "table" and type(item.sources) == "table" and item.sources[skey] then
       item.sources[skey] = nil
+      db.excluded[skey .. "|" .. hash] = nil
       local has_source = false
       for _ in pairs(item.sources) do has_source = true; break end
       if not has_source then
@@ -237,15 +149,29 @@ local function remove_subscription_sources(db, sub)
   end
 end
 
-local function subscription_sources_for_hash(db, hash)
+local function subscription_source_entries_for_hash(db, hash)
   local item = db.links and db.links[hash]
-  local labels = {}
+  local entries = {}
   if type(item) == "table" and type(item.sources) == "table" then
-    for _, source in pairs(item.sources) do
+    for skey, source in pairs(item.sources) do
       local typ = tostring(source.type or "happ")
       local id = tostring(source.id or "")
-      labels[#labels + 1] = trim((source.label and tostring(source.label) ~= "" and source.label) or (typ .. " " .. id))
+      entries[#entries + 1] = {
+        key = skey,
+        label = trim((source.label and tostring(source.label) ~= "" and source.label) or (typ .. " " .. id)),
+        excluded = db.excluded and db.excluded[skey .. "|" .. hash] ~= nil
+      }
     end
+  end
+  table.sort(entries, function(a, b) return tostring(a.label) < tostring(b.label) end)
+  return entries
+end
+
+local function subscription_sources_for_hash(db, hash)
+  local entries = subscription_source_entries_for_hash(db, hash)
+  local labels = {}
+  for _, source in ipairs(entries) do
+    labels[#labels + 1] = source.label
   end
   table.sort(labels)
   return labels
@@ -255,12 +181,25 @@ local function is_subscription_link(db, hash)
   return #subscription_sources_for_hash(db, hash) > 0
 end
 
+local function is_subscription_link_excluded(db, hash)
+  local entries = subscription_source_entries_for_hash(db, hash)
+  if #entries == 0 then return false end
+  for _, source in ipairs(entries) do
+    if not source.excluded then return false end
+  end
+  return true
+end
+
 local function source_badges(db, hash)
-  local labels = subscription_sources_for_hash(db, hash)
-  if #labels == 0 then return "<span class='svc-badge'>local</span>", false end
+  local entries = subscription_source_entries_for_hash(db, hash)
+  if #entries == 0 then return "<span class='svc-badge'>local</span>", false end
   local out = {}
-  for _, label in ipairs(labels) do
-    out[#out + 1] = "<span class='svc-badge ok'>" .. pcdata(label) .. "</span>"
+  for _, source in ipairs(entries) do
+    local class = source.excluded and "svc-badge" or "svc-badge ok"
+    out[#out + 1] = "<span class='" .. class .. "'>" .. pcdata(source.label) .. "</span>"
+  end
+  if is_subscription_link_excluded(db, hash) then
+    out[#out + 1] = "<span class='svc-badge'>Искл.</span>"
   end
   return table.concat(out, " "), true
 end
@@ -436,199 +375,40 @@ local function collect_subscription_form(existing)
     last_status = existing.last_status,
     last_error = existing.last_error,
     last_count = existing.last_count,
+    last_response_type = existing.last_response_type,
   }
 end
 
-local function parse_kv_text(text)
-  local data = {}
-  for line in (text .. "\n"):gmatch("([^\n]*)\n") do
-    local k, v = line:match("^([A-Z0-9_]+)=(.*)$")
-    if k then data[k] = v end
+local function merge_excluded_subscription_links(entries, db)
+  local seen, extra = {}, {}
+  for _, entry in ipairs(entries or {}) do
+    if entry.hash and entry.hash ~= "" then seen[entry.hash] = true end
   end
-  return data
-end
-
-local function read_state_file(path)
-  if STATE_CACHE[path] ~= nil then return STATE_CACHE[path] end
-  local parsed = parse_kv_text(read_file(path))
-  STATE_CACHE[path] = parsed
-  return parsed
-end
-
-local function md5_hash(link)
-  if MD5_CACHE[link] ~= nil then return MD5_CACHE[link] end
-  local rc, out = run_cmd_capture("printf %s " .. shellescape(link) .. " | md5sum | awk '{print $1}'")
-  local value = rc == 0 and trim(out) or ""
-  MD5_CACHE[link] = value
-  return value
-end
-
-local function parse_links_file(path)
-  local entries = {}
-  local raw = read_file(path)
-  local index = 0
-  for line in (raw .. "\n"):gmatch("([^\n]*)\n") do
-    local parsed = parse_link_line(line)
-    if parsed then
-      index = index + 1
-      local hash = md5_hash(parsed.raw_link)
-      local state = {}
-      if hash ~= "" then
-        state = read_state_file(WATCHDOG_LINK_STATE_DIR .. "/" .. hash .. ".state")
+  for hash, item in pairs(db.links or {}) do
+    if not seen[hash] and is_subscription_link_excluded(db, hash) and type(item) == "table" and trim(item.raw_link or "") ~= "" then
+      local parsed = helpers.parse_link_line(item.raw_link)
+      if parsed then
+        local state = utils.parse_kv_text(read_file(WATCHDOG_LINK_STATE_DIR .. "/" .. hash .. ".state"))
+        local labels = subscription_sources_for_hash(db, hash)
+        extra[#extra + 1] = {
+          index = #entries + #extra + 1,
+          hash = hash,
+          raw_link = parsed.raw_link,
+          link = parsed.display_link,
+          comment = parsed.comment,
+          state = state,
+          excluded = true,
+          sort_key = table.concat(labels, ",") .. "|" .. (parsed.comment or "") .. "|" .. hash
+        }
       end
-      entries[#entries + 1] = {
-        index = index,
-        hash = hash,
-        raw_link = parsed.raw_link,
-        link = parsed.display_link,
-        comment = parsed.comment,
-        state = state
-      }
     end
+  end
+  table.sort(extra, function(a, b) return tostring(a.sort_key) < tostring(b.sort_key) end)
+  for _, entry in ipairs(extra) do
+    entry.sort_key = nil
+    entries[#entries + 1] = entry
   end
   return entries
-end
-
-local function write_links_file(path, entries)
-  local out = {}
-  for _, entry in ipairs(entries or {}) do
-    local raw_link = trim(entry.raw_link or entry.link)
-    if raw_link ~= "" then
-      out[#out + 1] = raw_link
-    end
-  end
-  write_file(path, table.concat(out, "\n") .. (#out > 0 and "\n" or ""))
-  MD5_CACHE = {}
-  STATE_CACHE = {}
-end
-
-local function validate_links_text(text)
-  local line_no = 0
-  for line in ((text or "") .. "\n"):gmatch("([^\n]*)\n") do
-    line_no = line_no + 1
-    local value = trim(line)
-    if value ~= "" and not value:match("^#") and not parse_link_line(value) then
-      return false, line_no
-    end
-  end
-  return true
-end
-
-local function find_entry_index(entries, hash)
-  for i, entry in ipairs(entries or {}) do
-    if entry.hash == hash then return i end
-  end
-  return nil
-end
-
-local function status_label(entry)
-  local state = entry.state or {}
-  local status = state.LAST_STATUS or "unknown"
-  local checked = state.LAST_CHECKED_HUMAN or "-"
-  local cooldown = state.COOLDOWN_UNTIL_HUMAN or "-"
-  local request_text = state.LAST_REQUEST_TIME_TEXT or ""
-  if request_text == "" or request_text == "-" then
-    local request_ms = tonumber(state.LAST_REQUEST_TIME_MS or "")
-    if request_ms and request_ms > 0 then request_text = tostring(request_ms) .. " ms" end
-  end
-  local speed = ""
-  if request_text ~= "" and request_text ~= "-" then
-    speed = " <span style='color:#6b7280'>· " .. pcdata(request_text) .. "</span>"
-  end
-  if status == "alive" then
-    return "<span class='svc-badge ok'>OK</span>" .. speed, checked
-  elseif status == "dead" then
-    local suffix = ""
-    if cooldown ~= "" and cooldown ~= "-" then
-      suffix = " <span style='color:#9ca3af'>(искл. до " .. pcdata(cooldown) .. ")</span>"
-    end
-    return "<span class='svc-badge err'>Error</span>" .. speed .. suffix, checked
-  end
-  return "<span style='color:#6b7280'>Не проверялась</span>", "-"
-end
-
-local function watchdog_log()
-  if fs.access(WATCHDOG_LOG_FILE) then
-    local rc, out = run_cmd_capture("tail -n 200 " .. shellescape(WATCHDOG_LOG_FILE))
-    if rc == 0 and out ~= "" then
-      return out
-    end
-  end
-  return "(лог пуст)"
-end
-
-local function clear_watchdog_log()
-  write_file(WATCHDOG_LOG_FILE, "")
-end
-
-local function redirect_watchdog(extra)
-  local url = disp.build_url("admin", "network", "tproxy_manager") .. "?tab=watchdog"
-  if extra and extra ~= "" then
-    url = url .. "&" .. extra
-  end
-  http.redirect(url)
-end
-
-local function save_watchdog_settings(ctx)
-  local uci = ctx.uci
-  local PKG = ctx.PKG
-  local set_err, set_info = ctx.set_err, ctx.set_info
-
-  local interval = parse_int(http.formvalue("watchdog_interval"), 0)
-  local fail_threshold = parse_int(http.formvalue("watchdog_fail_threshold"), 0)
-  local connect_timeout = parse_int(http.formvalue("watchdog_connect_timeout"), 0)
-  local max_time = parse_int(http.formvalue("watchdog_max_time"), 0)
-  local cooldown_hours = parse_int(http.formvalue("watchdog_dead_cooldown_hours"), 0)
-  local cooldown_minutes = parse_int(http.formvalue("watchdog_dead_cooldown_minutes"), 0)
-  local test_port = parse_int(http.formvalue("watchdog_test_port"), 0)
-  local background_check_interval = parse_int(http.formvalue("watchdog_background_check_interval"), 0)
-  local mode = trim(http.formvalue("watchdog_selection_mode"))
-  local service_path = trim(http.formvalue("watchdog_service_path"))
-  local test_command = trim(http.formvalue("watchdog_test_command"))
-
-  if interval < 1 then set_err("Интервал должен быть не меньше 1 секунды."); return false end
-  if fail_threshold < 1 then set_err("Порог ошибок должен быть не меньше 1."); return false end
-  if connect_timeout < 1 then set_err("Connect timeout должен быть не меньше 1."); return false end
-  if max_time < connect_timeout then set_err("Max time должен быть не меньше connect timeout."); return false end
-  if cooldown_hours < 0 or cooldown_minutes < 0 or cooldown_minutes > 59 then
-    set_err("Период исключения задан некорректно."); return false
-  end
-  if test_port < 1 or test_port > 65535 then set_err("Порт test-instance должен быть в диапазоне 1..65535."); return false end
-  if background_check_interval < 1 then set_err("Таймер фоновой проверки должен быть не меньше 1 секунды."); return false end
-  if mode ~= "random" and mode ~= "ordered" then set_err("Неизвестный режим выбора ссылок."); return false end
-  if service_path == "" then set_err("Нужно указать путь к сервису."); return false end
-  if test_command == "" then set_err("Нужно указать команду тестового запуска."); return false end
-
-  local function S(k, v)
-    if v ~= nil and v ~= "" then uci:set(PKG, "main", k, v) else uci:delete(PKG, "main", k) end
-  end
-
-  S("watchdog_check_url", trim(http.formvalue("watchdog_check_url")))
-  S("watchdog_proxy_url", trim(http.formvalue("watchdog_proxy_url")))
-  S("watchdog_interval", tostring(interval))
-  S("watchdog_fail_threshold", tostring(fail_threshold))
-  S("watchdog_connect_timeout", tostring(connect_timeout))
-  S("watchdog_max_time", tostring(max_time))
-  S("watchdog_links_file", trim(http.formvalue("watchdog_links_file")))
-  S("watchdog_template_file", trim(http.formvalue("watchdog_template_file")))
-  S("watchdog_test_template_file", trim(http.formvalue("watchdog_test_template_file")))
-  S("watchdog_outbound_file", trim(http.formvalue("watchdog_outbound_file")))
-  S("watchdog_vless2json", trim(http.formvalue("watchdog_vless2json")))
-  S("watchdog_service_path", service_path)
-  S("watchdog_restart_cmd", "restart")
-  S("watchdog_test_command", test_command)
-  S("watchdog_selection_mode", mode)
-  S("watchdog_exclude_dead", http.formvalue("watchdog_exclude_dead") and "1" or "0")
-  S("watchdog_dead_cooldown_hours", tostring(cooldown_hours))
-  S("watchdog_dead_cooldown_minutes", tostring(cooldown_minutes))
-  S("watchdog_test_port", tostring(test_port))
-  S("watchdog_background_check_enabled", http.formvalue("watchdog_background_check_enabled") and "1" or "0")
-  S("watchdog_background_check_interval", tostring(background_check_interval))
-  uci:commit(PKG)
-
-  set_err(nil)
-  set_info("Настройки watchdog сохранены.")
-  return true
 end
 
 local function render(ctx)
@@ -649,8 +429,24 @@ local function render(ctx)
   local capture_log = getu("watchdog_happ_capture_log", DEFAULT_CAPTURE_LOG)
   local capture_defaults = nil
   local show_capture_details = false
+  local happ_decrypt_input = http.formvalue("happ_decrypt_input") or ""
+  local happ_decrypt_output = ""
+  local happ_decrypt_open = false
 
   math.randomseed(os.time())
+
+  if http.formvalue("_happ_decrypt_clear") == "1" then
+    happ_decrypt_input = ""
+    happ_decrypt_output = ""
+    happ_decrypt_open = true
+  elseif http.formvalue("_happ_decrypt_run") == "1" then
+    happ_decrypt_input = tostring(happ_decrypt_input or ""):gsub("\r\n", "\n")
+    happ_decrypt_output = happ_decrypt.decrypt_lines(happ_decrypt_input)
+    if happ_decrypt_output == "" then
+      happ_decrypt_output = "Error: нет данных для расшифровки"
+    end
+    happ_decrypt_open = true
+  end
 
   if http.formvalue("_sub_start_capture") == "1" then
     local ttl = parse_int(http.formvalue("happ_capture_start_ttl"), parse_int(getu("watchdog_happ_capture_ttl", "600"), 600))
@@ -810,7 +606,7 @@ local function render(ctx)
   if http.formvalue("_watchdog_save_links_text") == "1" then
     local path = trim(http.formvalue("watchdog_links_file"))
     local text = (http.formvalue("watchdog_links_text") or ""):gsub("\r\n", "\n")
-    local ok, bad_line = validate_links_text(text)
+    local ok, bad_line = helpers.validate_links_text(text)
     if path == "" then
       set_err("Нужно указать путь к LINKS_FILE.")
     elseif not ok then
@@ -891,6 +687,14 @@ local function render(ctx)
     return m
   end
 
+  if http.formvalue("_wd_include") then
+    local hash = trim(http.formvalue("_wd_include"))
+    local rc, out = run_subscription_command({ "include-link", hash })
+    if rc == 0 then set_info(out ~= "" and out or "Ссылка возвращена в ротацию.") else set_err(out ~= "" and out or "Не удалось вернуть ссылку в ротацию.") end
+    helpers.redirect_watchdog()
+    return m
+  end
+
   if http.formvalue("_wd_edit_start") then
     local hash = trim(http.formvalue("_wd_edit_start"))
     helpers.redirect_watchdog("wd_edit_hash=" .. http.urlencode(hash))
@@ -903,13 +707,14 @@ local function render(ctx)
   end
 
   if http.formvalue("_wd_add") == "1" then
-    local entries = parse_links_file(links_path)
+    local entries = helpers.parse_links_file(links_path)
     local raw_link = trim(http.formvalue("wd_add_link"))
-    if not raw_link:match("^vless://") then
+    local parsed = helpers.parse_link_line(raw_link)
+    if not parsed then
       set_err("Добавляемая строка должна начинаться с vless://")
     else
-      entries[#entries + 1] = { raw_link = raw_link }
-      write_links_file(links_path, entries)
+      entries[#entries + 1] = { raw_link = parsed.raw_link }
+      helpers.write_links_file(links_path, entries)
       set_err(nil)
       set_info("Ссылка добавлена.")
       helpers.redirect_watchdog()
@@ -918,20 +723,21 @@ local function render(ctx)
   end
 
   if http.formvalue("_wd_edit_save") == "1" then
-    local entries = parse_links_file(links_path)
+    local entries = helpers.parse_links_file(links_path)
     local hash = trim(http.formvalue("wd_edit_hash"))
-    local idx = find_entry_index(entries, hash)
+    local idx = helpers.find_entry_index(entries, hash)
     local raw_link = trim(http.formvalue("wd_edit_link"))
+    local parsed = helpers.parse_link_line(raw_link)
     local db = read_subscription_db(subscriptions_path)
     if not idx then
       set_err("Редактируемая ссылка не найдена.")
     elseif is_subscription_link(db, hash) then
       set_err("Ссылки из подписок нельзя редактировать напрямую. Исключите ссылку или измените подписку.")
-    elseif not raw_link:match("^vless://") then
+    elseif not parsed then
       set_err("Ссылка должна начинаться с vless://")
     else
-      entries[idx].raw_link = raw_link
-      write_links_file(links_path, entries)
+      entries[idx].raw_link = parsed.raw_link
+      helpers.write_links_file(links_path, entries)
       set_err(nil)
       set_info("Ссылка обновлена.")
       helpers.redirect_watchdog()
@@ -940,12 +746,12 @@ local function render(ctx)
   end
 
   if http.formvalue("_wd_delete") then
-    local entries = parse_links_file(links_path)
+    local entries = helpers.parse_links_file(links_path)
     local hash = trim(http.formvalue("_wd_delete"))
-    local idx = find_entry_index(entries, hash)
+    local idx = helpers.find_entry_index(entries, hash)
     if idx then
       table.remove(entries, idx)
-      write_links_file(links_path, entries)
+      helpers.write_links_file(links_path, entries)
       set_err(nil)
       set_info("Ссылка удалена.")
       helpers.redirect_watchdog()
@@ -955,14 +761,14 @@ local function render(ctx)
   end
 
   if http.formvalue("_wd_move_up") or http.formvalue("_wd_move_down") then
-    local entries = parse_links_file(links_path)
+    local entries = helpers.parse_links_file(links_path)
     local hash = trim(http.formvalue("_wd_move_up") or http.formvalue("_wd_move_down"))
-    local idx = find_entry_index(entries, hash)
+    local idx = helpers.find_entry_index(entries, hash)
     if idx then
       local swap_idx = http.formvalue("_wd_move_up") and (idx - 1) or (idx + 1)
       if swap_idx >= 1 and swap_idx <= #entries then
         entries[idx], entries[swap_idx] = entries[swap_idx], entries[idx]
-        write_links_file(links_path, entries)
+        helpers.write_links_file(links_path, entries)
         set_err(nil)
         set_info("Порядок ссылок обновлён.")
       end
@@ -978,7 +784,8 @@ local function render(ctx)
   local edit_sub_id = trim(http.formvalue("sub_edit_id"))
   local sub_db = read_subscription_db(subscriptions_path)
   local edit_sub = edit_sub_id ~= "" and find_subscription(sub_db, edit_sub_id) or nil
-  local links = parse_links_file(links_path)
+  local links = helpers.parse_links_file(links_path)
+  links = merge_excluded_subscription_links(links, sub_db)
   local active_entry, active_detected_by = find_active_entry(links, status)
   local active_hash = active_entry and active_entry.hash or ""
   local active_text = active_entry and active_source_text(sub_db, active_entry) or "-"
@@ -1012,6 +819,8 @@ local function render(ctx)
 .wd-table th,.wd-table td{border:1px solid #e5e7eb;padding:.35rem;vertical-align:top}
 .wd-table th{background:#f9fafb}
 .wd-table tr.wd-active-row td{background:#ecfdf5!important;border-color:#86efac}
+.wd-table tr.wd-excluded-row td{background:#f3f4f6!important;color:#6b7280}
+.wd-table tr.wd-excluded-row .wd-code{color:#9ca3af}
 .wd-table .actions .cbi-button{margin:0 .2rem .2rem 0}
 .wd-code{font-family:monospace;font-size:.92em}
 .wd-details{margin-top:.6rem}
@@ -1022,7 +831,7 @@ local function render(ctx)
 .wd-subblock{border:1px solid #e5e7eb;border-radius:.45rem;padding:.75rem;margin:.75rem 0}
 .wd-subblock h4{margin-top:0}
 </style>
-<script src="/luci-static/resources/tproxy-manager/happ-decrypt.js"></script>]]
+]]
     end
   end
 
@@ -1112,7 +921,7 @@ local function render(ctx)
       end
       local h = form_sub.headers
       local form_title = edit_sub and ("Редактирование подписки #" .. tostring(edit_sub.id)) or "Новая подписка"
-      local happ_open = (show_capture_details or capture_defaults or capture_active) and " open" or ""
+      local happ_open = (show_capture_details or capture_defaults or capture_active or happ_decrypt_open) and " open" or ""
 
       rows[#rows + 1] = "<div class='box'>"
       rows[#rows + 1] = "<details class='wd-details'" .. happ_open .. "><summary>Happ</summary>"
@@ -1149,23 +958,23 @@ local function render(ctx)
       end
       rows[#rows + 1] = "</div>"
 
-      rows[#rows + 1] = [[
+      rows[#rows + 1] = string.format([[
 <div class="wd-subblock">
   <h4>Happ decrypt</h4>
   <div style="color:#6b7280;margin-bottom:.5rem">
-    Расшифровывает <code>happ://crypt/</code>, <code>crypt2</code>, <code>crypt3</code>, <code>crypt4</code> и <code>crypt5</code> прямо в браузере.
+    Расшифровывает <code>happ://crypt/</code>, <code>crypt2</code>, <code>crypt3</code>, <code>crypt4</code> и <code>crypt5</code> через общий серверный механизм.
     Результат только выводится на экран и не добавляется в список ссылок или подписки.
   </div>
   <label style="display:block;font-weight:600;margin-bottom:.25rem">Happ link(s)</label>
-  <textarea id="happ_decrypt_input" class="wd-textarea" rows="5" spellcheck="false" placeholder="happ://crypt/...&#10;happ://crypt5/..."></textarea>
+  <textarea name="happ_decrypt_input" class="wd-textarea" rows="5" spellcheck="false" placeholder="happ://crypt/...&#10;happ://crypt5/...">%s</textarea>
   <div class="happ-decrypt-actions">
-    <button type="button" id="happ_decrypt_run" class="cbi-button cbi-button-apply">Расшифровать</button>
-    <button type="button" id="happ_decrypt_clear" class="cbi-button cbi-button-reset">Очистить</button>
+    <button class="cbi-button cbi-button-apply" name="_happ_decrypt_run" value="1">Расшифровать</button>
+    <button class="cbi-button cbi-button-reset" name="_happ_decrypt_clear" value="1">Очистить</button>
   </div>
   <label style="display:block;font-weight:600;margin:.65rem 0 .25rem">Результат</label>
-  <textarea id="happ_decrypt_output" class="wd-textarea" rows="6" spellcheck="false" readonly></textarea>
+  <textarea class="wd-textarea" rows="6" spellcheck="false" readonly>%s</textarea>
 </div>
-</details>]]
+</details>]], pcdata(happ_decrypt_input), pcdata(happ_decrypt_output))
 
       rows[#rows + 1] = "<h4>Список подписок</h4>"
       rows[#rows + 1] = "<table class='wd-table'><thead><tr><th style='width:8%'>Тип</th><th style='width:6%'>ID</th><th style='width:16%'>Имя</th><th style='width:28%'>URL</th><th style='width:8%'>Вкл.</th><th style='width:10%'>Таймер</th><th style='width:12%'>Статус</th><th style='width:12%'>Действие</th></tr></thead><tbody>"
@@ -1218,15 +1027,12 @@ local function render(ctx)
   <summary>%s</summary>
   <div class="box" style="margin-top:.5rem">
     <input type="hidden" name="sub_id" value="%s">
+    <input type="hidden" name="sub_type" value="happ">
     <div class="wd-grid">
-      <label>Тип</label>
-      <select name="sub_type">
-        <option value="happ"%s>happ</option>
-        <option value="json"%s>json x-ui (зарезервировано)</option>
-      </select>
+      <label>Тип</label><div><span class="svc-badge ok">happ</span></div>
       <label>Включена</label><input type="checkbox" name="sub_enabled" value="1" %s>
       <label>Имя</label><input type="text" name="sub_name" value="%s">
-      <label>URL подписки</label><input type="text" name="sub_url" value="%s">
+      <label>URL или Happ link</label><input type="text" name="sub_url" value="%s">
       <label>Таймер обновления, сек</label><input type="number" min="1" name="sub_refresh_interval" value="%s">
       <label>Timeout запроса, сек</label><input type="number" min="1" name="sub_timeout" value="%s">
     </div>
@@ -1251,14 +1057,12 @@ local function render(ctx)
       <button class="cbi-button cbi-button-apply" name="_sub_save" value="1">Сохранить подписку</button>
       <button class="cbi-button cbi-button-reset" name="_sub_edit_cancel" value="1">Отмена</button>
     </div>
-    <div style="margin-top:.5rem;color:#6b7280">JSON x-ui тип добавлен как заготовка. Fetch будет включён после примера реального JSON-ответа.</div>
+    <div style="margin-top:.5rem;color:#6b7280">Для Happ можно указать обычный <code>https://</code> URL или encrypted <code>happ://crypt*</code> ссылку. Raw, base64 и JSON-ответы Happ-подписок разбираются автоматически.</div>
   </div>
 </details>]],
         (edit_sub or capture_defaults) and "open" or "",
         pcdata(form_title),
         pcdata(form_sub.id or ""),
-        (form_sub.type or "happ") == "happ" and " selected" or "",
-        (form_sub.type or "happ") == "json" and " selected" or "",
         subscription_enabled(form_sub) and "checked" or "",
         pcdata(form_sub.name or ""),
         pcdata(form_sub.url or ""),
@@ -1295,9 +1099,17 @@ local function render(ctx)
       for i, entry in ipairs(links) do
         local label, checked = helpers.status_label(entry, pcdata)
         local source_html, has_subscription_source = source_badges(sub_db, entry.hash)
+        local is_excluded_link = is_subscription_link_excluded(sub_db, entry.hash)
         local is_active_link = active_hash ~= "" and entry.hash == active_hash
-        local row_class = is_active_link and " class='wd-active-row'" or ""
-        if is_active_link then
+        local row_class = ""
+        if is_excluded_link then
+          row_class = " class='wd-excluded-row'"
+        elseif is_active_link then
+          row_class = " class='wd-active-row'"
+        end
+        if is_excluded_link then
+          label = label .. " <span class='svc-badge'>ИСКЛ.</span>"
+        elseif is_active_link then
           label = label .. " <span class='wd-active-badge'>ACTIVE</span>"
         end
         if edit_hash ~= "" and edit_hash == entry.hash and not has_subscription_source then
@@ -1315,14 +1127,35 @@ local function render(ctx)
 </tr>]],
             row_class, source_html, pcdata(entry.hash), pcdata(entry.comment or "—"), pcdata(entry.raw_link or ""), label, pcdata(checked))
         else
-          local edit_delete_buttons
-          if has_subscription_source then
-            edit_delete_buttons = string.format([[
-    <button class="cbi-button cbi-button-remove" name="_wd_exclude" value="%s" onclick="return confirm('Исключить ссылку из подписок?')">Искл.</button>]], pcdata(entry.hash))
+          local action_buttons
+          if is_excluded_link then
+            action_buttons = string.format([[
+    <button class="cbi-button cbi-button-apply" disabled>Применить</button>
+    <button class="cbi-button cbi-button-action" disabled>Проверить</button>
+    <button class="cbi-button cbi-button-apply" name="_wd_include" value="%s" onclick="return confirm('Вернуть ссылку в ротацию?')">Вкл.</button>
+    <button class="cbi-button cbi-button-action" disabled>&uarr;</button>
+    <button class="cbi-button cbi-button-action" disabled>&darr;</button>]], pcdata(entry.hash))
+          elseif has_subscription_source then
+            action_buttons = string.format([[
+    <button class="cbi-button cbi-button-apply" name="_wd_apply" value="%s">Применить</button>
+    <button class="cbi-button cbi-button-action" name="_wd_test" value="%s">Проверить</button>
+    <button class="cbi-button cbi-button-remove" name="_wd_exclude" value="%s" onclick="return confirm('Исключить ссылку из ротации?')">Искл.</button>
+    <button class="cbi-button cbi-button-action" name="_wd_move_up" value="%s"%s>&uarr;</button>
+    <button class="cbi-button cbi-button-action" name="_wd_move_down" value="%s"%s>&darr;</button>]],
+              pcdata(entry.hash), pcdata(entry.hash), pcdata(entry.hash),
+              pcdata(entry.hash), i == 1 and " disabled" or "",
+              pcdata(entry.hash), i == #links and " disabled" or "")
           else
-            edit_delete_buttons = string.format([[
+            action_buttons = string.format([[
+    <button class="cbi-button cbi-button-apply" name="_wd_apply" value="%s">Применить</button>
+    <button class="cbi-button cbi-button-action" name="_wd_test" value="%s">Проверить</button>
     <button class="cbi-button cbi-button-action" name="_wd_edit_start" value="%s">Ред.</button>
-    <button class="cbi-button cbi-button-remove" name="_wd_delete" value="%s" onclick="return confirm('Удалить выбранную ссылку?')">Удалить</button>]], pcdata(entry.hash), pcdata(entry.hash))
+    <button class="cbi-button cbi-button-remove" name="_wd_delete" value="%s" onclick="return confirm('Удалить выбранную ссылку?')">Удалить</button>
+    <button class="cbi-button cbi-button-action" name="_wd_move_up" value="%s"%s>&uarr;</button>
+    <button class="cbi-button cbi-button-action" name="_wd_move_down" value="%s"%s>&darr;</button>]],
+              pcdata(entry.hash), pcdata(entry.hash), pcdata(entry.hash), pcdata(entry.hash),
+              pcdata(entry.hash), i == 1 and " disabled" or "",
+              pcdata(entry.hash), i == #links and " disabled" or "")
           end
           rows[#rows + 1] = string.format([[
 <tr%s>
@@ -1332,11 +1165,7 @@ local function render(ctx)
   <td>%s</td>
   <td>%s</td>
   <td class="actions">
-    <button class="cbi-button cbi-button-apply" name="_wd_apply" value="%s">Применить</button>
-    <button class="cbi-button cbi-button-action" name="_wd_test" value="%s">Проверить</button>
 %s
-    <button class="cbi-button cbi-button-action" name="_wd_move_up" value="%s"%s>&uarr;</button>
-    <button class="cbi-button cbi-button-action" name="_wd_move_down" value="%s"%s>&darr;</button>
   </td>
 </tr>]],
             row_class,
@@ -1346,9 +1175,7 @@ local function render(ctx)
             pcdata(entry.link or ""),
             label,
             pcdata(checked),
-            pcdata(entry.hash), pcdata(entry.hash), edit_delete_buttons,
-            pcdata(entry.hash), i == 1 and " disabled" or "",
-            pcdata(entry.hash), i == #links and " disabled" or "")
+            action_buttons)
         end
       end
       rows[#rows + 1] = [[
