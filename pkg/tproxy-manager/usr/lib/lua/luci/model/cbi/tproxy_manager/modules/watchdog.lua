@@ -8,6 +8,7 @@ local jsonc = require "luci.jsonc"
 local helpers = require "luci.model.cbi.tproxy_manager.modules.watchdog_helpers"
 local utils = require "luci.model.cbi.tproxy_manager.utils"
 local happ_decrypt = require "tproxy_manager.happ_decrypt"
+local _ = require "luci.model.cbi.tproxy_manager.i18n"
 
 local pcdata = xml.pcdata
 
@@ -68,7 +69,7 @@ end
 
 local function run_subscription_command(args)
   local parts = { shellescape(SUBSCRIPTIONS_SCRIPT) }
-  for _, arg in ipairs(args or {}) do
+  for __, arg in ipairs(args or {}) do
     parts[#parts + 1] = shellescape(arg)
   end
   return run_cmd_capture(table.concat(parts, " "))
@@ -111,7 +112,7 @@ end
 local function next_subscription_id(db)
   local id = tonumber(db.next_id) or 1
   local max_id = 0
-  for _, sub in ipairs(db.subscriptions or {}) do
+  for __, sub in ipairs(db.subscriptions or {}) do
     local sub_id = tonumber(sub.id) or 0
     if sub_id > max_id then max_id = sub_id end
   end
@@ -170,7 +171,7 @@ end
 local function subscription_sources_for_hash(db, hash)
   local entries = subscription_source_entries_for_hash(db, hash)
   local labels = {}
-  for _, source in ipairs(entries) do
+  for __, source in ipairs(entries) do
     labels[#labels + 1] = source.label
   end
   table.sort(labels)
@@ -184,7 +185,7 @@ end
 local function is_subscription_link_excluded(db, hash)
   local entries = subscription_source_entries_for_hash(db, hash)
   if #entries == 0 then return false end
-  for _, source in ipairs(entries) do
+  for __, source in ipairs(entries) do
     if not source.excluded then return false end
   end
   return true
@@ -194,12 +195,12 @@ local function source_badges(db, hash)
   local entries = subscription_source_entries_for_hash(db, hash)
   if #entries == 0 then return "<span class='svc-badge'>local</span>", false end
   local out = {}
-  for _, source in ipairs(entries) do
+  for __, source in ipairs(entries) do
     local class = source.excluded and "svc-badge" or "svc-badge ok"
     out[#out + 1] = "<span class='" .. class .. "'>" .. pcdata(source.label) .. "</span>"
   end
   if is_subscription_link_excluded(db, hash) then
-    out[#out + 1] = "<span class='svc-badge'>Искл.</span>"
+    out[#out + 1] = "<span class='svc-badge'>" .. _("Excluded") .. "</span>"
   end
   return table.concat(out, " "), true
 end
@@ -265,7 +266,7 @@ local function find_active_entry(links, status)
   if outbound_file ~= "" then
     local config_text = read_file(outbound_file)
     if config_text ~= "" then
-      for _, entry in ipairs(links or {}) do
+      for __, entry in ipairs(links or {}) do
         if config_contains_signature(config_text, vless_signature(entry.raw_link or entry.link or "")) then
           return entry, "config"
         end
@@ -275,7 +276,7 @@ local function find_active_entry(links, status)
 
   local applied_hash = trim(status.LAST_APPLIED_HASH or "")
   if applied_hash ~= "" then
-    for _, entry in ipairs(links or {}) do
+    for __, entry in ipairs(links or {}) do
       if entry.hash == applied_hash then
         return entry, "state"
       end
@@ -381,7 +382,7 @@ end
 
 local function merge_excluded_subscription_links(entries, db)
   local seen, extra = {}, {}
-  for _, entry in ipairs(entries or {}) do
+  for __, entry in ipairs(entries or {}) do
     if entry.hash and entry.hash ~= "" then seen[entry.hash] = true end
   end
   for hash, item in pairs(db.links or {}) do
@@ -404,7 +405,7 @@ local function merge_excluded_subscription_links(entries, db)
     end
   end
   table.sort(extra, function(a, b) return tostring(a.sort_key) < tostring(b.sort_key) end)
-  for _, entry in ipairs(extra) do
+  for __, entry in ipairs(extra) do
     entry.sort_key = nil
     entries[#entries + 1] = entry
   end
@@ -420,7 +421,13 @@ local function render(ctx)
 
   local function getu(k, def)
     local v = uci:get(PKG, "main", k)
-    if v == nil or v == "" then return def or "" end
+    if v ~= nil and v ~= false and v ~= "" then return v end
+
+    local out = sys.exec("uci -q get " .. shellescape(PKG .. ".main." .. k) .. " 2>/dev/null") or ""
+    out = trim(out)
+    if out ~= "" then return out end
+
+    if v == nil or v == false or v == "" then return def or "" end
     return v
   end
 
@@ -443,7 +450,7 @@ local function render(ctx)
     happ_decrypt_input = tostring(happ_decrypt_input or ""):gsub("\r\n", "\n")
     happ_decrypt_output = happ_decrypt.decrypt_lines(happ_decrypt_input)
     if happ_decrypt_output == "" then
-      happ_decrypt_output = "Error: нет данных для расшифровки"
+      happ_decrypt_output = _("Error: no data to decrypt")
     end
     happ_decrypt_open = true
   end
@@ -458,9 +465,9 @@ local function render(ctx)
     local rc, out = run_subscription_command({ "capture-start", tostring(ttl), tostring(port), capture_log })
     if rc == 0 then
       set_err(nil)
-      set_info("Happ capture включён. Скопируйте ссылку из блока подписок и откройте её с телефона.\n" .. out)
+      set_info(_("Happ capture enabled. Copy the link from the subscriptions block and open it from the phone.") .. "\n" .. out)
     else
-      set_err(out ~= "" and out or "Не удалось запустить Happ capture.")
+      set_err(out ~= "" and out or _("Failed to start Happ capture."))
     end
     helpers.redirect_watchdog()
     return m
@@ -470,9 +477,9 @@ local function render(ctx)
     local rc, out = run_subscription_command({ "capture-stop" })
     if rc == 0 then
       set_err(nil)
-      set_info(out ~= "" and out or "Happ capture выключен.")
+      set_info(out ~= "" and out or _("Happ capture disabled."))
     else
-      set_err(out ~= "" and out or "Не удалось остановить Happ capture.")
+      set_err(out ~= "" and out or _("Failed to stop Happ capture."))
     end
     helpers.redirect_watchdog()
     return m
@@ -483,9 +490,9 @@ local function render(ctx)
     show_capture_details = true
     if next(capture_defaults) then
       set_err(nil)
-      set_info("Поля Happ заполнены из последнего capture-запроса. Проверьте URL подписки и сохраните подписку.")
+      set_info(_("Happ fields were filled from the last capture request. Check the subscription URL and save the subscription."))
     else
-      set_err("В capture-логе нет сохранённых заголовков.")
+      set_err(_("Capture log does not contain saved headers."))
     end
   end
 
@@ -499,15 +506,15 @@ local function render(ctx)
     local existing = id and find_subscription(db, id) or nil
     local sub = collect_subscription_form(existing)
     if sub.url == "" then
-      set_err("Нужно указать URL подписки.")
+      set_err(_("Subscription URL is required."))
     elseif sub.timeout < 1 then
-      set_err("Timeout подписки должен быть не меньше 1 секунды.")
+      set_err(_("Subscription timeout must be at least 1 second."))
     elseif sub.refresh_interval < 1 then
-      set_err("Таймер обновления подписки должен быть не меньше 1 секунды.")
+      set_err(_("Subscription refresh timer must be at least 1 second."))
     else
       if existing then
         sub.id = existing.id
-        local _, idx = find_subscription(db, existing.id)
+        local _unused, idx = find_subscription(db, existing.id)
         db.subscriptions[idx] = sub
       else
         sub.id = next_subscription_id(db)
@@ -515,7 +522,7 @@ local function render(ctx)
       end
       write_subscription_db(subscriptions_path, db)
       set_err(nil)
-      set_info("Подписка сохранена.")
+      set_info(_("Subscription saved."))
       helpers.redirect_watchdog()
       return m
     end
@@ -530,24 +537,24 @@ local function render(ctx)
       write_subscription_db(subscriptions_path, db)
       run_subscription_command({ "sync-links" })
       set_err(nil)
-      set_info("Подписка удалена.")
+      set_info(_("Subscription deleted."))
       helpers.redirect_watchdog()
       return m
     end
-    set_err("Подписка не найдена.")
+    set_err(_("Subscription not found."))
   end
 
   if http.formvalue("_sub_fetch") then
     local id = trim(http.formvalue("_sub_fetch"))
     local rc, out = run_subscription_command({ "fetch", id })
-    if rc == 0 then set_info(out ~= "" and out or ("Подписка обновлена: " .. id)) else set_err(out ~= "" and out or ("Не удалось обновить подписку: " .. id)) end
+    if rc == 0 then set_info(out ~= "" and out or (_("Subscription updated: ") .. id)) else set_err(out ~= "" and out or (_("Failed to update subscription: ") .. id)) end
     helpers.redirect_watchdog()
     return m
   end
 
   if http.formvalue("_sub_fetch_all") == "1" then
     local rc, out = run_subscription_command({ "fetch-all" })
-    if rc == 0 then set_info(out ~= "" and out or "Подписки обновлены.") else set_err(out ~= "" and out or "Не удалось обновить подписки.") end
+    if rc == 0 then set_info(out ~= "" and out or _("Subscriptions updated.")) else set_err(out ~= "" and out or _("Failed to update subscriptions.")) end
     helpers.redirect_watchdog()
     return m
   end
@@ -573,15 +580,15 @@ local function render(ctx)
     local path = trim(http.formvalue("watchdog_template_file"))
     local text = http.formvalue("watchdog_template_text") or ""
     if path == "" then
-      set_err("Нужно указать путь к файлу шаблона.")
+      set_err(_("Template file path is required."))
     elseif not helpers.validate_jsonc_text(text) then
-      set_err("Некорректный JSON/JSONC шаблона.")
+      set_err(_("Invalid template JSON/JSONC."))
     else
       uci:set(PKG, "main", "watchdog_template_file", path)
       uci:commit(PKG)
       write_file(path, text)
       set_err(nil)
-      set_info("Шаблон watchdog сохранён: " .. path)
+      set_info(_("Watchdog template saved: ") .. path)
       helpers.redirect_watchdog()
       return m
     end
@@ -591,13 +598,13 @@ local function render(ctx)
     local path = trim(http.formvalue("watchdog_test_template_file"))
     local text = http.formvalue("watchdog_test_template_text") or ""
     if path == "" then
-      set_err("Нужно указать путь к файлу тестового шаблона.")
+      set_err(_("Test template file path is required."))
     else
       uci:set(PKG, "main", "watchdog_test_template_file", path)
       uci:commit(PKG)
       write_file(path, text)
       set_err(nil)
-      set_info("Тестовый шаблон сохранён: " .. path)
+      set_info(_("Test template saved: ") .. path)
       helpers.redirect_watchdog()
       return m
     end
@@ -608,15 +615,15 @@ local function render(ctx)
     local text = (http.formvalue("watchdog_links_text") or ""):gsub("\r\n", "\n")
     local ok, bad_line = helpers.validate_links_text(text)
     if path == "" then
-      set_err("Нужно указать путь к LINKS_FILE.")
+      set_err(_("LINKS_FILE path is required."))
     elseif not ok then
-      set_err("Некорректная строка в LINKS_FILE: " .. tostring(bad_line))
+      set_err(_("Invalid line in LINKS_FILE: ") .. tostring(bad_line))
     else
       uci:set(PKG, "main", "watchdog_links_file", path)
       uci:commit(PKG)
       write_file(path, text ~= "" and (text:gsub("\n*$", "") .. "\n") or "")
       set_err(nil)
-      set_info("LINKS_FILE сохранён: " .. path)
+      set_info(_("LINKS_FILE saved: ") .. path)
       helpers.redirect_watchdog()
       return m
     end
@@ -625,21 +632,21 @@ local function render(ctx)
   if http.formvalue("_watchdog_clear_log") == "1" then
     helpers.clear_watchdog_log()
     set_err(nil)
-    set_info("Лог watchdog очищен.")
+    set_info(_("Watchdog log cleared."))
     helpers.redirect_watchdog()
     return m
   end
 
   if http.formvalue("_watchdog_once") == "1" then
     local rc, out = helpers.run_watchdog_command({ "once" })
-    if rc == 0 then set_info(out ~= "" and out or "Проверка watchdog выполнена.") else set_err(out ~= "" and out or "Проверка watchdog завершилась ошибкой.") end
+    if rc == 0 then set_info(out ~= "" and out or _("Watchdog check completed.")) else set_err(out ~= "" and out or _("Watchdog check failed.")) end
     helpers.redirect_watchdog()
     return m
   end
 
   if http.formvalue("_watchdog_reset") == "1" then
     local rc, out = helpers.run_watchdog_command({ "reset" })
-    if rc == 0 then set_info(out ~= "" and out or "Счётчик ошибок сброшен.") else set_err(out ~= "" and out or "Не удалось сбросить счётчик ошибок.") end
+    if rc == 0 then set_info(out ~= "" and out or _("Failure counter reset.")) else set_err(out ~= "" and out or _("Failed to reset failure counter.")) end
     helpers.redirect_watchdog()
     return m
   end
@@ -651,14 +658,14 @@ local function render(ctx)
       env.WATCHDOG_SELECTION_MODE = rotate_mode
     end
     local rc, out = helpers.run_watchdog_command({ "test-rotate" }, env)
-    if rc == 0 then set_info(out ~= "" and out or "Ротация выполнена.") else set_err(out ~= "" and out or "Ротация завершилась ошибкой.") end
+    if rc == 0 then set_info(out ~= "" and out or _("Rotation completed.")) else set_err(out ~= "" and out or _("Rotation failed.")) end
     helpers.redirect_watchdog()
     return m
   end
 
   if http.formvalue("_watchdog_check_all") == "1" then
     local rc, out = helpers.run_watchdog_command({ "check-all" })
-    if rc == 0 then set_info(out ~= "" and out or "Проверка всех ссылок выполнена.") else set_err(out ~= "" and out or "Проверка ссылок завершилась ошибкой.") end
+    if rc == 0 then set_info(out ~= "" and out or _("All links check completed.")) else set_err(out ~= "" and out or _("Links check failed.")) end
     helpers.redirect_watchdog()
     return m
   end
@@ -666,7 +673,7 @@ local function render(ctx)
   if http.formvalue("_wd_apply") then
     local hash = trim(http.formvalue("_wd_apply"))
     local rc, out = helpers.run_watchdog_command({ "apply-link", hash })
-    if rc == 0 then set_info(out ~= "" and out or ("Ссылка применена: " .. hash)) else set_err(out ~= "" and out or ("Не удалось применить ссылку: " .. hash)) end
+    if rc == 0 then set_info(out ~= "" and out or (_("Link applied: ") .. hash)) else set_err(out ~= "" and out or (_("Failed to apply link: ") .. hash)) end
     helpers.redirect_watchdog()
     return m
   end
@@ -674,7 +681,7 @@ local function render(ctx)
   if http.formvalue("_wd_test") then
     local hash = trim(http.formvalue("_wd_test"))
     local rc, out = helpers.run_watchdog_command({ "test-link", hash })
-    if rc == 0 then set_info(out ~= "" and out or ("Ссылка проверена: " .. hash)) else set_err(out ~= "" and out or ("Ссылка не прошла проверку: " .. hash)) end
+    if rc == 0 then set_info(out ~= "" and out or (_("Link checked: ") .. hash)) else set_err(out ~= "" and out or (_("Link check failed: ") .. hash)) end
     helpers.redirect_watchdog()
     return m
   end
@@ -682,7 +689,7 @@ local function render(ctx)
   if http.formvalue("_wd_exclude") then
     local hash = trim(http.formvalue("_wd_exclude"))
     local rc, out = run_subscription_command({ "exclude-link", hash })
-    if rc == 0 then set_info(out ~= "" and out or "Ссылка исключена из подписок.") else set_err(out ~= "" and out or "Не удалось исключить ссылку из подписок.") end
+    if rc == 0 then set_info(out ~= "" and out or _("Link excluded from subscriptions.")) else set_err(out ~= "" and out or _("Failed to exclude link from subscriptions.")) end
     helpers.redirect_watchdog()
     return m
   end
@@ -690,7 +697,7 @@ local function render(ctx)
   if http.formvalue("_wd_include") then
     local hash = trim(http.formvalue("_wd_include"))
     local rc, out = run_subscription_command({ "include-link", hash })
-    if rc == 0 then set_info(out ~= "" and out or "Ссылка возвращена в ротацию.") else set_err(out ~= "" and out or "Не удалось вернуть ссылку в ротацию.") end
+    if rc == 0 then set_info(out ~= "" and out or _("Link returned to rotation.")) else set_err(out ~= "" and out or _("Failed to return link to rotation.")) end
     helpers.redirect_watchdog()
     return m
   end
@@ -711,12 +718,12 @@ local function render(ctx)
     local raw_link = trim(http.formvalue("wd_add_link"))
     local parsed = helpers.parse_link_line(raw_link)
     if not parsed then
-      set_err("Добавляемая строка должна начинаться с vless://")
+      set_err(_("Added line must start with vless://"))
     else
       entries[#entries + 1] = { raw_link = parsed.raw_link }
       helpers.write_links_file(links_path, entries)
       set_err(nil)
-      set_info("Ссылка добавлена.")
+      set_info(_("Link added."))
       helpers.redirect_watchdog()
       return m
     end
@@ -730,16 +737,16 @@ local function render(ctx)
     local parsed = helpers.parse_link_line(raw_link)
     local db = read_subscription_db(subscriptions_path)
     if not idx then
-      set_err("Редактируемая ссылка не найдена.")
+      set_err(_("Editable link not found."))
     elseif is_subscription_link(db, hash) then
-      set_err("Ссылки из подписок нельзя редактировать напрямую. Исключите ссылку или измените подписку.")
+      set_err(_("Subscription links cannot be edited directly. Exclude the link or edit the subscription."))
     elseif not parsed then
-      set_err("Ссылка должна начинаться с vless://")
+      set_err(_("Link must start with vless://"))
     else
       entries[idx].raw_link = parsed.raw_link
       helpers.write_links_file(links_path, entries)
       set_err(nil)
-      set_info("Ссылка обновлена.")
+      set_info(_("Link updated."))
       helpers.redirect_watchdog()
       return m
     end
@@ -753,11 +760,11 @@ local function render(ctx)
       table.remove(entries, idx)
       helpers.write_links_file(links_path, entries)
       set_err(nil)
-      set_info("Ссылка удалена.")
+      set_info(_("Link deleted."))
       helpers.redirect_watchdog()
       return m
     end
-    set_err("Удаляемая ссылка не найдена.")
+    set_err(_("Link to delete was not found."))
   end
 
   if http.formvalue("_wd_move_up") or http.formvalue("_wd_move_down") then
@@ -770,12 +777,12 @@ local function render(ctx)
         entries[idx], entries[swap_idx] = entries[swap_idx], entries[idx]
         helpers.write_links_file(links_path, entries)
         set_err(nil)
-        set_info("Порядок ссылок обновлён.")
+        set_info(_("Link order updated."))
       end
       helpers.redirect_watchdog()
       return m
     end
-    set_err("Ссылка для изменения порядка не найдена.")
+    set_err(_("Link to reorder was not found."))
   end
 
   local status_rc, status_out = helpers.run_watchdog_command({ "status" })
@@ -794,7 +801,7 @@ local function render(ctx)
   if active_entry then
     local active_item = sub_db.links and sub_db.links[active_hash]
     if type(active_item) == "table" and type(active_item.sources) == "table" then
-      for _, source in pairs(active_item.sources) do
+      for __, source in pairs(active_item.sources) do
         local key = tostring(source.type or "happ") .. ":" .. tostring(source.id or "")
         active_subscriptions[key] = true
       end
@@ -836,7 +843,7 @@ local function render(ctx)
   end
 
   do
-    local ss = m:section(SimpleSection, "Статус и управление сервисом Watchdog")
+    local ss = m:section(SimpleSection, _("Watchdog service status and controls"))
     service_block(ss, "tproxy-manager-watchdog", "Watchdog", "watchdog")
   end
 
@@ -854,7 +861,7 @@ local function render(ctx)
       local scan_status = status.LAST_LINK_SCAN_STATUS or "-"
       local active = active_text
       local scan_alive_num = 0
-      for _, entry in ipairs(links or {}) do
+      for __, entry in ipairs(links or {}) do
         if entry.state and entry.state.LAST_STATUS == "alive" then
           scan_alive_num = scan_alive_num + 1
         end
@@ -874,20 +881,24 @@ local function render(ctx)
     <span><strong>ACTIVE:</strong> %s</span>
   </div>
   <div style="margin-top:.5rem">
-    <button class="cbi-button cbi-button-apply" name="_watchdog_once" value="1">Проверить сейчас</button>
-    <button class="cbi-button cbi-button-action" name="_watchdog_check_all" value="1">Проверить все ссылки</button>
-    <button class="cbi-button cbi-button-action" name="_watchdog_test_rotate" value="1">Принудительная ротация</button>
-    <button class="cbi-button cbi-button-remove" name="_watchdog_reset" value="1">Сбросить счётчик</button>
+    <button class="cbi-button cbi-button-apply" name="_watchdog_once" value="1">%s</button>
+    <button class="cbi-button cbi-button-action" name="_watchdog_check_all" value="1">%s</button>
+    <button class="cbi-button cbi-button-action" name="_watchdog_test_rotate" value="1">%s</button>
+    <button class="cbi-button cbi-button-remove" name="_watchdog_reset" value="1">%s</button>
   </div>
 </div>]],
         pcdata(running), pcdata(failcount), pcdata(code), pcdata(st), pcdata(ts),
         pcdata(scan), pcdata(scan_status), pcdata(scan_alive), pcdata(scan_total),
-        pcdata(active))
+        pcdata(active),
+        pcdata(_("Check now")),
+        pcdata(_("Check all links")),
+        pcdata(_("Force rotation")),
+        pcdata(_("Reset counter")))
     end
   end
 
   do
-    local sec = m:section(SimpleSection, "Подписки")
+    local sec = m:section(SimpleSection, _("Subscriptions"))
     local dv = sec:option(DummyValue, "_watchdog_subscriptions")
     dv.rawhtml = true
     function dv.cfgvalue()
@@ -920,40 +931,55 @@ local function render(ctx)
         form_sub.headers = type(form_sub.headers) == "table" and form_sub.headers or default_happ_headers()
       end
       local h = form_sub.headers
-      local form_title = edit_sub and ("Редактирование подписки #" .. tostring(edit_sub.id)) or "Новая подписка"
+      local form_title = edit_sub and (_("Edit subscription #") .. tostring(edit_sub.id)) or _("New subscription")
       local happ_open = (show_capture_details or capture_defaults or capture_active or happ_decrypt_open) and " open" or ""
 
       rows[#rows + 1] = "<div class='box'>"
       rows[#rows + 1] = "<details class='wd-details'" .. happ_open .. "><summary>Happ</summary>"
       rows[#rows + 1] = "<div class='wd-subblock'><h4>Happ capture</h4>"
-      rows[#rows + 1] = "<div style='color:#6b7280;margin-bottom:.5rem'>Нажмите «Запустить capture», скопируйте ссылку и откройте её с телефона в приложении/браузере, который делает запрос подписки. Роутер сохранит заголовки и тело последнего запроса, затем ими можно заполнить форму Happ-подписки.</div>"
+      rows[#rows + 1] = "<div style='color:#6b7280;margin-bottom:.5rem'>" .. _("Click Start capture, copy the link and open it from the phone in the app/browser that performs the subscription request. The router will save headers and body of the last request, then they can be used to fill the Happ subscription form.") .. "</div>"
       rows[#rows + 1] = string.format([[
 <div class="wd-grid">
-  <label>Статус</label><div>%s, действует до: %s</div>
-  <label>Время действия, сек</label><input type="number" min="1" name="happ_capture_start_ttl" value="%s">
-  <label>Порт capture-сервиса</label><input type="number" min="1" max="65535" name="happ_capture_start_port" value="%s">
-  <label>Лог capture</label><input type="text" name="happ_capture_start_log" value="%s">
-  <label>Ссылка для телефона</label>
+  <label>%s</label><div>%s, %s: %s</div>
+  <label>%s</label><input type="number" min="1" name="happ_capture_start_ttl" value="%s">
+  <label>%s</label><input type="number" min="1" max="65535" name="happ_capture_start_port" value="%s">
+  <label>%s</label><input type="text" name="happ_capture_start_log" value="%s">
+  <label>%s</label>
   <div class="inline-row" style="gap:.4rem">
     <input id="happ_capture_url" type="text" readonly value="%s" style="width:100%%" onclick="this.select()">
-    <button type="button" class="cbi-button cbi-button-action" title="Скопировать" style="min-width:2.4rem;padding-left:.45rem;padding-right:.45rem" onclick="var e=document.getElementById('happ_capture_url');e.select();if(navigator.clipboard){navigator.clipboard.writeText(e.value);}else{document.execCommand('copy');}">💾</button>
+    <button type="button" class="cbi-button cbi-button-action" title="%s" style="min-width:2.4rem;padding-left:.45rem;padding-right:.45rem" onclick="var e=document.getElementById('happ_capture_url');e.select();if(navigator.clipboard){navigator.clipboard.writeText(e.value);}else{document.execCommand('copy');}">💾</button>
   </div>
 </div>
 <div style="margin-top:.6rem">
-  <button class="cbi-button cbi-button-apply" name="_sub_start_capture" value="1">Запустить capture</button>
-  <button class="cbi-button cbi-button-remove" name="_sub_stop_capture" value="1">Остановить capture</button>
-  <button class="cbi-button cbi-button-action" name="_sub_show_capture" value="1">Показать последний запрос</button>
-  <button class="cbi-button cbi-button-action" name="_sub_fill_happ_capture" value="1">Заполнить форму Happ из последнего запроса</button>
+  <button class="cbi-button cbi-button-apply" name="_sub_start_capture" value="1">%s</button>
+  <button class="cbi-button cbi-button-remove" name="_sub_stop_capture" value="1">%s</button>
+  <button class="cbi-button cbi-button-action" name="_sub_show_capture" value="1">%s</button>
+  <button class="cbi-button cbi-button-action" name="_sub_fill_happ_capture" value="1">%s</button>
 </div>]],
-        capture_active and "<span class='svc-badge ok'>включён</span>" or "<span class='svc-badge'>выключен</span>",
-        pcdata(until_text), pcdata(ttl), pcdata(capture_port), pcdata(capture_log), pcdata(capture_link))
+        pcdata(_("Status")),
+        capture_active and "<span class='svc-badge ok'>" .. _("enabled") .. "</span>" or "<span class='svc-badge'>" .. _("disabled") .. "</span>",
+        pcdata(_("valid until")),
+        pcdata(until_text),
+        pcdata(_("TTL, sec")),
+        pcdata(ttl),
+        pcdata(_("Capture service port")),
+        pcdata(capture_port),
+        pcdata(_("Capture log")),
+        pcdata(capture_log),
+        pcdata(_("Phone link")),
+        pcdata(capture_link),
+        pcdata(_("Copy")),
+        pcdata(_("Start capture")),
+        pcdata(_("Stop capture")),
+        pcdata(_("Show last request")),
+        pcdata(_("Fill Happ form from the last request")))
 
       if show_capture_details then
         local last_request = read_file(capture_log)
         if last_request ~= "" then
-          rows[#rows + 1] = "<details class='wd-details' open><summary>Последний capture-запрос</summary><pre style='white-space:pre-wrap;max-height:18rem;overflow:auto;margin-top:.5rem'>" .. pcdata(last_request) .. "</pre></details>"
+          rows[#rows + 1] = "<details class='wd-details' open><summary>" .. _("Last capture request") .. "</summary><pre style='white-space:pre-wrap;max-height:18rem;overflow:auto;margin-top:.5rem'>" .. pcdata(last_request) .. "</pre></details>"
         else
-          rows[#rows + 1] = "<div style='margin-top:.5rem;color:#6b7280'>Последний capture-запрос пока не сохранён.</div>"
+          rows[#rows + 1] = "<div style='margin-top:.5rem;color:#6b7280'>" .. _("No capture request has been saved yet.") .. "</div>"
         end
       end
       rows[#rows + 1] = "</div>"
@@ -962,26 +988,33 @@ local function render(ctx)
 <div class="wd-subblock">
   <h4>Happ decrypt</h4>
   <div style="color:#6b7280;margin-bottom:.5rem">
-    Расшифровывает <code>happ://crypt/</code>, <code>crypt2</code>, <code>crypt3</code>, <code>crypt4</code> и <code>crypt5</code> через общий серверный механизм.
-    Результат только выводится на экран и не добавляется в список ссылок или подписки.
+    %s
+    %s
   </div>
   <label style="display:block;font-weight:600;margin-bottom:.25rem">Happ link(s)</label>
   <textarea name="happ_decrypt_input" class="wd-textarea" rows="5" spellcheck="false" placeholder="happ://crypt/...&#10;happ://crypt5/...">%s</textarea>
   <div class="happ-decrypt-actions">
-    <button class="cbi-button cbi-button-apply" name="_happ_decrypt_run" value="1">Расшифровать</button>
-    <button class="cbi-button cbi-button-reset" name="_happ_decrypt_clear" value="1">Очистить</button>
+    <button class="cbi-button cbi-button-apply" name="_happ_decrypt_run" value="1">%s</button>
+    <button class="cbi-button cbi-button-reset" name="_happ_decrypt_clear" value="1">%s</button>
   </div>
-  <label style="display:block;font-weight:600;margin:.65rem 0 .25rem">Результат</label>
+  <label style="display:block;font-weight:600;margin:.65rem 0 .25rem">%s</label>
   <textarea class="wd-textarea" rows="6" spellcheck="false" readonly>%s</textarea>
 </div>
-</details>]], pcdata(happ_decrypt_input), pcdata(happ_decrypt_output))
+</details>]],
+        pcdata(_("Decrypts happ://crypt/, crypt2, crypt3, crypt4 and crypt5 through the shared server-side mechanism.")),
+        pcdata(_("The result is only displayed and is not added to the link list or subscriptions.")),
+        pcdata(happ_decrypt_input),
+        pcdata(_("Decrypt")),
+        pcdata(_("Clear")),
+        pcdata(_("Result")),
+        pcdata(happ_decrypt_output))
 
-      rows[#rows + 1] = "<h4>Список подписок</h4>"
-      rows[#rows + 1] = "<table class='wd-table'><thead><tr><th style='width:8%'>Тип</th><th style='width:6%'>ID</th><th style='width:16%'>Имя</th><th style='width:28%'>URL</th><th style='width:8%'>Вкл.</th><th style='width:10%'>Таймер</th><th style='width:12%'>Статус</th><th style='width:12%'>Действие</th></tr></thead><tbody>"
+      rows[#rows + 1] = "<h4>" .. _("Subscription list") .. "</h4>"
+      rows[#rows + 1] = "<table class='wd-table'><thead><tr><th style='width:8%'>" .. _("Type") .. "</th><th style='width:6%'>ID</th><th style='width:16%'>" .. _("Name") .. "</th><th style='width:28%'>URL</th><th style='width:8%'>" .. _("Enabled") .. "</th><th style='width:10%'>" .. _("Timer") .. "</th><th style='width:12%'>" .. _("Status") .. "</th><th style='width:12%'>" .. _("Action") .. "</th></tr></thead><tbody>"
       if #sub_db.subscriptions == 0 then
-        rows[#rows + 1] = "<tr><td colspan='8' style='color:#6b7280'>Подписки не настроены</td></tr>"
+        rows[#rows + 1] = "<tr><td colspan='8' style='color:#6b7280'>" .. _("No subscriptions configured") .. "</td></tr>"
       end
-      for _, sub in ipairs(sub_db.subscriptions) do
+      for __, sub in ipairs(sub_db.subscriptions) do
         local st = sub.last_status or "never"
         local st_html = st == "ok" and "<span class='svc-badge ok'>OK</span>" or (st == "error" and "<span class='svc-badge err'>Error</span>" or "<span class='svc-badge'>never</span>")
         local is_active_sub = active_subscriptions[subscription_source_key(sub)] == true
@@ -997,12 +1030,12 @@ local function render(ctx)
   <td>%s</td>
   <td class="wd-code" title="%s">%s</td>
   <td>%s</td>
-  <td>%s сек</td>
+  <td>%s %s</td>
   <td>%s<div style="color:#6b7280">links: %s<br>%s</div>%s</td>
   <td class="actions">
-    <button class="cbi-button cbi-button-action" name="_sub_fetch" value="%s">Обновить</button>
-    <button class="cbi-button cbi-button-action" name="_sub_edit_start" value="%s">Ред.</button>
-    <button class="cbi-button cbi-button-remove" name="_sub_delete" value="%s" onclick="return confirm('Удалить подписку и её ссылки?')">Удалить</button>
+    <button class="cbi-button cbi-button-action" name="_sub_fetch" value="%s">%s</button>
+    <button class="cbi-button cbi-button-action" name="_sub_edit_start" value="%s">%s</button>
+    <button class="cbi-button cbi-button-remove" name="_sub_delete" value="%s" onclick="return confirm('%s')">%s</button>
   </td>
 </tr>]],
           row_class,
@@ -1011,16 +1044,19 @@ local function render(ctx)
           pcdata(sub.name ~= "" and sub.name or "—"),
           pcdata(sub.url or ""),
           pcdata(sub.url or ""),
-          subscription_enabled(sub) and "да" or "нет",
+          subscription_enabled(sub) and _("yes") or _("no"),
           pcdata(sub.refresh_interval or "0"),
+          pcdata(_("sec")),
           st_html,
           pcdata(sub.last_count or "0"),
           pcdata(sub.last_update_human or "-"),
           detail,
-          pcdata(sub.id or ""), pcdata(sub.id or ""), pcdata(sub.id or ""))
+          pcdata(sub.id or ""), pcdata(_("Update")),
+          pcdata(sub.id or ""), pcdata(_("Edit")),
+          pcdata(sub.id or ""), pcdata(_("Delete subscription and its links?")), pcdata(_("Delete")))
       end
       rows[#rows + 1] = "</tbody></table>"
-      rows[#rows + 1] = "<div style='margin-top:.5rem'><button class='cbi-button cbi-button-action' name='_sub_fetch_all' value='1'>Обновить все подписки</button></div>"
+      rows[#rows + 1] = "<div style='margin-top:.5rem'><button class='cbi-button cbi-button-action' name='_sub_fetch_all' value='1'>" .. _("Update all subscriptions") .. "</button></div>"
 
       rows[#rows + 1] = string.format([[
 <details class="wd-details" %s>
@@ -1029,12 +1065,12 @@ local function render(ctx)
     <input type="hidden" name="sub_id" value="%s">
     <input type="hidden" name="sub_type" value="happ">
     <div class="wd-grid">
-      <label>Тип</label><div><span class="svc-badge ok">happ</span></div>
-      <label>Включена</label><input type="checkbox" name="sub_enabled" value="1" %s>
-      <label>Имя</label><input type="text" name="sub_name" value="%s">
-      <label>URL или Happ link</label><input type="text" name="sub_url" value="%s">
-      <label>Таймер обновления, сек</label><input type="number" min="1" name="sub_refresh_interval" value="%s">
-      <label>Timeout запроса, сек</label><input type="number" min="1" name="sub_timeout" value="%s">
+      <label>%s</label><div><span class="svc-badge ok">happ</span></div>
+      <label>%s</label><input type="checkbox" name="sub_enabled" value="1" %s>
+      <label>%s</label><input type="text" name="sub_name" value="%s">
+      <label>%s</label><input type="text" name="sub_url" value="%s">
+      <label>%s</label><input type="number" min="1" name="sub_refresh_interval" value="%s">
+      <label>%s</label><input type="number" min="1" name="sub_timeout" value="%s">
     </div>
     <details class="wd-details" open>
       <summary>Happ headers</summary>
@@ -1050,23 +1086,29 @@ local function render(ctx)
         <label>X-Real-Ip</label><input type="text" name="sub_h_real_ip" value="%s">
         <label>X-Forwarded-For</label><input type="text" name="sub_h_forwarded_for" value="%s">
       </div>
-      <div style="margin-top:.5rem;color:#6b7280">Дополнительные заголовки: по одному <code>Name: value</code> на строку.</div>
+      <div style="margin-top:.5rem;color:#6b7280">%s</div>
       <textarea class="wd-textarea" name="sub_extra_headers" rows="4" spellcheck="false">%s</textarea>
     </details>
     <div style="margin-top:.6rem">
-      <button class="cbi-button cbi-button-apply" name="_sub_save" value="1">Сохранить подписку</button>
-      <button class="cbi-button cbi-button-reset" name="_sub_edit_cancel" value="1">Отмена</button>
+      <button class="cbi-button cbi-button-apply" name="_sub_save" value="1">%s</button>
+      <button class="cbi-button cbi-button-reset" name="_sub_edit_cancel" value="1">%s</button>
     </div>
-    <div style="margin-top:.5rem;color:#6b7280">Для Happ можно указать обычный <code>https://</code> URL или encrypted <code>happ://crypt*</code> ссылку. Raw, base64 и JSON-ответы Happ-подписок разбираются автоматически.</div>
+    <div style="margin-top:.5rem;color:#6b7280">%s</div>
   </div>
 </details>]],
         (edit_sub or capture_defaults) and "open" or "",
         pcdata(form_title),
         pcdata(form_sub.id or ""),
+        pcdata(_("Type")),
+        pcdata(_("Enabled")),
         subscription_enabled(form_sub) and "checked" or "",
+        pcdata(_("Name")),
         pcdata(form_sub.name or ""),
+        pcdata(_("URL or Happ link")),
         pcdata(form_sub.url or ""),
+        pcdata(_("Refresh timer, sec")),
         pcdata(form_sub.refresh_interval or "10800"),
+        pcdata(_("Request timeout, sec")),
         pcdata(form_sub.timeout or "30"),
         pcdata(h["User-Agent"] or ""),
         pcdata(h["X-Device-Os"] or ""),
@@ -1078,7 +1120,11 @@ local function render(ctx)
         pcdata(h["X-Hwid"] or ""),
         pcdata(h["X-Real-Ip"] or ""),
         pcdata(h["X-Forwarded-For"] or ""),
-        pcdata(form_sub.extra_headers or ""))
+        pcdata(_("Additional headers: one Name: value pair per line.")),
+        pcdata(form_sub.extra_headers or ""),
+        pcdata(_("Save subscription")),
+        pcdata(_("Cancel")),
+        pcdata(_("For Happ, you can specify a regular https:// URL or an encrypted happ://crypt* link. Raw, base64 and JSON responses of Happ subscriptions are parsed automatically.")))
 
       rows[#rows + 1] = "</div>"
       return table.concat(rows, "\n")
@@ -1086,15 +1132,15 @@ local function render(ctx)
   end
 
   do
-    local sec = m:section(SimpleSection, "Список VLESS-ссылок")
+    local sec = m:section(SimpleSection, _("VLESS link list"))
     local dv = sec:option(DummyValue, "_watchdog_links")
     dv.rawhtml = true
     function dv.cfgvalue()
       local rows = {}
       rows[#rows + 1] = "<div class='box'>"
-      rows[#rows + 1] = "<table class='wd-table'><thead><tr><th style='width:10%'>Источник</th><th style='width:16%'>Комментарий</th><th style='width:36%'>VLESS ссылка</th><th style='width:10%'>Статус</th><th style='width:12%'>Последняя проверка</th><th style='width:16%'>Действие</th></tr></thead><tbody>"
+      rows[#rows + 1] = "<table class='wd-table'><thead><tr><th style='width:10%'>" .. _("Source") .. "</th><th style='width:16%'>" .. _("Comment") .. "</th><th style='width:36%'>" .. _("VLESS link") .. "</th><th style='width:10%'>" .. _("Status") .. "</th><th style='width:12%'>" .. _("Last check") .. "</th><th style='width:16%'>" .. _("Action") .. "</th></tr></thead><tbody>"
       if #links == 0 then
-        rows[#rows + 1] = "<tr><td colspan='6' style='color:#6b7280'>Список ссылок пуст</td></tr>"
+        rows[#rows + 1] = "<tr><td colspan='6' style='color:#6b7280'>" .. _("Link list is empty") .. "</td></tr>"
       end
       for i, entry in ipairs(links) do
         local label, checked = helpers.status_label(entry, pcdata)
@@ -1108,7 +1154,7 @@ local function render(ctx)
           row_class = " class='wd-active-row'"
         end
         if is_excluded_link then
-          label = label .. " <span class='svc-badge'>ИСКЛ.</span>"
+          label = label .. " <span class='svc-badge'>" .. _("EXCLUDED") .. "</span>"
         elseif is_active_link then
           label = label .. " <span class='wd-active-badge'>ACTIVE</span>"
         end
@@ -1121,39 +1167,48 @@ local function render(ctx)
   <td>%s</td>
   <td>%s</td>
   <td class="actions">
-    <button class="cbi-button cbi-button-apply" name="_wd_edit_save" value="1">Сохранить</button>
-    <button class="cbi-button cbi-button-reset" name="_wd_edit_cancel" value="1">Отмена</button>
+    <button class="cbi-button cbi-button-apply" name="_wd_edit_save" value="1">%s</button>
+    <button class="cbi-button cbi-button-reset" name="_wd_edit_cancel" value="1">%s</button>
   </td>
 </tr>]],
-            row_class, source_html, pcdata(entry.hash), pcdata(entry.comment or "—"), pcdata(entry.raw_link or ""), label, pcdata(checked))
+            row_class, source_html, pcdata(entry.hash), pcdata(entry.comment or "—"), pcdata(entry.raw_link or ""), label, pcdata(checked),
+            pcdata(_("Save")), pcdata(_("Cancel")))
         else
           local action_buttons
           if is_excluded_link then
             action_buttons = string.format([[
-    <button class="cbi-button cbi-button-apply" disabled>Применить</button>
-    <button class="cbi-button cbi-button-action" disabled>Проверить</button>
-    <button class="cbi-button cbi-button-apply" name="_wd_include" value="%s" onclick="return confirm('Вернуть ссылку в ротацию?')">Вкл.</button>
+    <button class="cbi-button cbi-button-apply" disabled>%s</button>
+    <button class="cbi-button cbi-button-action" disabled>%s</button>
+    <button class="cbi-button cbi-button-apply" name="_wd_include" value="%s" onclick="return confirm('%s')">%s</button>
     <button class="cbi-button cbi-button-action" disabled>&uarr;</button>
-    <button class="cbi-button cbi-button-action" disabled>&darr;</button>]], pcdata(entry.hash))
+    <button class="cbi-button cbi-button-action" disabled>&darr;</button>]],
+              pcdata(_("Apply")),
+              pcdata(_("Check")),
+              pcdata(entry.hash), pcdata(_("Return link to rotation?")), pcdata(_("Enable")))
           elseif has_subscription_source then
             action_buttons = string.format([[
-    <button class="cbi-button cbi-button-apply" name="_wd_apply" value="%s">Применить</button>
-    <button class="cbi-button cbi-button-action" name="_wd_test" value="%s">Проверить</button>
-    <button class="cbi-button cbi-button-remove" name="_wd_exclude" value="%s" onclick="return confirm('Исключить ссылку из ротации?')">Искл.</button>
+    <button class="cbi-button cbi-button-apply" name="_wd_apply" value="%s">%s</button>
+    <button class="cbi-button cbi-button-action" name="_wd_test" value="%s">%s</button>
+    <button class="cbi-button cbi-button-remove" name="_wd_exclude" value="%s" onclick="return confirm('%s')">%s</button>
     <button class="cbi-button cbi-button-action" name="_wd_move_up" value="%s"%s>&uarr;</button>
     <button class="cbi-button cbi-button-action" name="_wd_move_down" value="%s"%s>&darr;</button>]],
-              pcdata(entry.hash), pcdata(entry.hash), pcdata(entry.hash),
+              pcdata(entry.hash), pcdata(_("Apply")),
+              pcdata(entry.hash), pcdata(_("Check")),
+              pcdata(entry.hash), pcdata(_("Exclude link from rotation?")), pcdata(_("Exclude")),
               pcdata(entry.hash), i == 1 and " disabled" or "",
               pcdata(entry.hash), i == #links and " disabled" or "")
           else
             action_buttons = string.format([[
-    <button class="cbi-button cbi-button-apply" name="_wd_apply" value="%s">Применить</button>
-    <button class="cbi-button cbi-button-action" name="_wd_test" value="%s">Проверить</button>
-    <button class="cbi-button cbi-button-action" name="_wd_edit_start" value="%s">Ред.</button>
-    <button class="cbi-button cbi-button-remove" name="_wd_delete" value="%s" onclick="return confirm('Удалить выбранную ссылку?')">Удалить</button>
+    <button class="cbi-button cbi-button-apply" name="_wd_apply" value="%s">%s</button>
+    <button class="cbi-button cbi-button-action" name="_wd_test" value="%s">%s</button>
+    <button class="cbi-button cbi-button-action" name="_wd_edit_start" value="%s">%s</button>
+    <button class="cbi-button cbi-button-remove" name="_wd_delete" value="%s" onclick="return confirm('%s')">%s</button>
     <button class="cbi-button cbi-button-action" name="_wd_move_up" value="%s"%s>&uarr;</button>
     <button class="cbi-button cbi-button-action" name="_wd_move_down" value="%s"%s>&darr;</button>]],
-              pcdata(entry.hash), pcdata(entry.hash), pcdata(entry.hash), pcdata(entry.hash),
+              pcdata(entry.hash), pcdata(_("Apply")),
+              pcdata(entry.hash), pcdata(_("Check")),
+              pcdata(entry.hash), pcdata(_("Edit")),
+              pcdata(entry.hash), pcdata(_("Delete selected link?")), pcdata(_("Delete")),
               pcdata(entry.hash), i == 1 and " disabled" or "",
               pcdata(entry.hash), i == #links and " disabled" or "")
           end
@@ -1181,17 +1236,17 @@ local function render(ctx)
       rows[#rows + 1] = [[
 <tr>
   <td><span class="svc-badge">local</span></td>
-  <td style="color:#6b7280">Новая строка файла ссылок</td>
+  <td style="color:#6b7280">]] .. pcdata(_("New link file line")) .. [[</td>
   <td><input type="text" name="wd_add_link" placeholder="vless://..." style="width:100%"></td>
-  <td colspan="2" style="color:#6b7280">Комментарий будет взят из части после # внутри ссылки</td>
-  <td class="actions"><button class="cbi-button cbi-button-apply" name="_wd_add" value="1">Добавить</button></td>
+  <td colspan="2" style="color:#6b7280">]] .. pcdata(_("Comment will be taken from the part after # inside the link")) .. [[</td>
+  <td class="actions"><button class="cbi-button cbi-button-apply" name="_wd_add" value="1">]] .. pcdata(_("Add")) .. [[</button></td>
 </tr>]]
       rows[#rows + 1] = "</tbody></table>"
-      rows[#rows + 1] = "<details class='wd-details'><summary>Редактор LINKS_FILE</summary><div class='box editor-wrap editor-wide' style='margin-top:.5rem'>"
+      rows[#rows + 1] = "<details class='wd-details'><summary>" .. _("LINKS_FILE editor") .. "</summary><div class='box editor-wrap editor-wide' style='margin-top:.5rem'>"
       rows[#rows + 1] = string.format("<div class='wd-grid'><label>LINKS_FILE</label><input type='text' name='watchdog_links_file' value='%s'></div>", pcdata(links_path))
-      rows[#rows + 1] = "<div style='margin:.5rem 0;color:#6b7280'>Для массовой вставки: одна VLESS-ссылка на строку. Пустые строки и строки, начинающиеся с <code>#</code>, допускаются.</div>"
+      rows[#rows + 1] = "<div style='margin:.5rem 0;color:#6b7280'>" .. _("For bulk paste: one VLESS link per line. Empty lines and lines starting with # are allowed.") .. "</div>"
       rows[#rows + 1] = string.format("<textarea class='wd-textarea' name='watchdog_links_text' rows='12' spellcheck='false'>%s</textarea>", pcdata(read_file(links_path)))
-      rows[#rows + 1] = "<div style='margin-top:.5rem'><button class='cbi-button cbi-button-apply' name='_watchdog_save_links_text' value='1'>Сохранить LINKS_FILE</button></div>"
+      rows[#rows + 1] = "<div style='margin-top:.5rem'><button class='cbi-button cbi-button-apply' name='_watchdog_save_links_text' value='1'>" .. _("Save LINKS_FILE") .. "</button></div>"
       rows[#rows + 1] = "</div></details></div>"
       return table.concat(rows, "\n")
     end
@@ -1204,77 +1259,110 @@ local function render(ctx)
     function dv.cfgvalue()
       return string.format([[
 <details class="wd-details">
-  <summary>Настройки Watchdog</summary>
+  <summary>%s</summary>
   <div class="box" style="margin-top:.5rem">
     <div class="wd-grid">
-      <label>CHECK_URL</label><input type="text" name="watchdog_check_url" value="%s">
-      <label>PROXY_URL</label><input type="text" name="watchdog_proxy_url" value="%s">
-      <label>INTERVAL</label><input type="number" min="1" name="watchdog_interval" value="%s">
-      <label>FAIL_THRESHOLD</label><input type="number" min="1" name="watchdog_fail_threshold" value="%s">
-      <label>CONNECT_TIMEOUT</label><input type="number" min="1" name="watchdog_connect_timeout" value="%s">
-      <label>MAX_TIME</label><input type="number" min="1" name="watchdog_max_time" value="%s">
-      <label>OUTBOUND_FILE</label><input type="text" name="watchdog_outbound_file" value="%s">
-      <label>VLESS2JSON</label><input type="text" name="watchdog_vless2json" value="%s">
-      <label>SERVICE_PATH</label><input type="text" name="watchdog_service_path" value="%s">
-      <label>RESTART_CMD</label><input type="text" value="restart" readonly>
-      <label>TEST_COMMAND</label><input type="text" name="watchdog_test_command" value="%s">
-      <label>SELECTION_MODE</label>
+      <label>%s</label><input type="text" name="watchdog_check_url" value="%s">
+      <label>%s</label><input type="text" name="watchdog_proxy_url" value="%s">
+      <label>%s</label><input type="number" min="1" name="watchdog_interval" value="%s">
+      <label>%s</label><input type="number" min="1" name="watchdog_fail_threshold" value="%s">
+      <label>%s</label><input type="number" min="1" name="watchdog_connect_timeout" value="%s">
+      <label>%s</label><input type="number" min="1" name="watchdog_max_time" value="%s">
+      <label>%s</label><input type="text" name="watchdog_outbound_file" value="%s">
+      <label>%s</label><input type="text" name="watchdog_vless2json" value="%s">
+      <label>%s</label><input type="text" name="watchdog_service_path" value="%s">
+      <label>%s</label><input type="text" value="restart" readonly>
+      <label>%s</label><input type="text" name="watchdog_test_command" value="%s">
+      <label>%s</label>
       <select name="watchdog_selection_mode">
-        <option value="ordered"%s>по порядку</option>
-        <option value="random"%s>случайно</option>
-        <option value="fastest"%s>самый быстрый</option>
+        <option value="ordered"%s>%s</option>
+        <option value="random"%s>%s</option>
+        <option value="fastest"%s>%s</option>
       </select>
-      <label>Исключать нерабочие ссылки</label><input type="checkbox" name="watchdog_exclude_dead" value="1" %s>
-      <label>Период исключения: часы</label><input type="number" min="0" name="watchdog_dead_cooldown_hours" value="%s">
-      <label>Период исключения: минуты</label><input type="number" min="0" max="59" name="watchdog_dead_cooldown_minutes" value="%s">
-      <label>TEST_PORT</label><input type="number" min="1" max="65535" name="watchdog_test_port" value="%s">
-      <label>Фоновая проверка ссылок</label><input type="checkbox" name="watchdog_background_check_enabled" value="1" %s>
-      <label>Таймер фоновой проверки, сек</label><input type="number" min="1" name="watchdog_background_check_interval" value="%s">
-      <label>Batch-проверка ссылок</label><input type="checkbox" name="watchdog_batch_check_enabled" value="1" %s>
-      <label>Batch template</label><input type="text" name="watchdog_batch_test_template_file" value="%s">
-      <label>Стартовый порт batch</label><input type="number" min="1" max="65535" name="watchdog_batch_check_port_start" value="%s">
-      <label>Размер пачки batch</label><input type="number" min="1" name="watchdog_batch_check_batch_size" value="%s">
-      <label>Параллельность batch</label><input type="number" min="1" name="watchdog_batch_check_concurrency" value="%s">
-      <label>Fallback на старую проверку</label><input type="checkbox" name="watchdog_batch_check_fallback" value="1" %s>
-      <label>SUBSCRIPTIONS_FILE</label><input type="text" name="watchdog_subscriptions_file" value="%s">
-      <label>HAPP_CAPTURE_TTL</label><input type="number" min="1" name="watchdog_happ_capture_ttl" value="%s">
-      <label>HAPP_CAPTURE_PORT</label><input type="number" min="1" max="65535" name="watchdog_happ_capture_port" value="%s">
-      <label>HAPP_CAPTURE_LOG</label><input type="text" name="watchdog_happ_capture_log" value="%s">
+      <label>%s</label><input type="checkbox" name="watchdog_exclude_dead" value="1" %s>
+      <label>%s</label><input type="number" min="0" name="watchdog_dead_cooldown_hours" value="%s">
+      <label>%s</label><input type="number" min="0" max="59" name="watchdog_dead_cooldown_minutes" value="%s">
+      <label>%s</label><input type="number" min="1" max="65535" name="watchdog_test_port" value="%s">
+      <label>%s</label><input type="checkbox" name="watchdog_background_check_enabled" value="1" %s>
+      <label>%s</label><input type="number" min="1" name="watchdog_background_check_interval" value="%s">
+      <label>%s</label><input type="checkbox" name="watchdog_batch_check_enabled" value="1" %s>
+      <label>%s</label><input type="text" name="watchdog_batch_test_template_file" value="%s">
+      <label>%s</label><input type="number" min="1" max="65535" name="watchdog_batch_check_port_start" value="%s">
+      <label>%s</label><input type="number" min="1" name="watchdog_batch_check_batch_size" value="%s">
+      <label>%s</label><input type="number" min="1" name="watchdog_batch_check_concurrency" value="%s">
+      <label>%s</label><input type="checkbox" name="watchdog_batch_check_fallback" value="1" %s>
+      <label>%s</label><input type="text" name="watchdog_subscriptions_file" value="%s">
+      <label>%s</label><input type="number" min="1" name="watchdog_happ_capture_ttl" value="%s">
+      <label>%s</label><input type="number" min="1" max="65535" name="watchdog_happ_capture_port" value="%s">
+      <label>%s</label><input type="text" name="watchdog_happ_capture_log" value="%s">
     </div>
     <div style="margin-top:.6rem">
-      <button class="cbi-button cbi-button-apply" name="_watchdog_save_settings" value="1">Сохранить настройки Watchdog</button>
+      <button class="cbi-button cbi-button-apply" name="_watchdog_save_settings" value="1">%s</button>
     </div>
   </div>
 </details>]],
+        pcdata(_("Watchdog settings")),
+        pcdata(_("Check URL")),
         pcdata(getu("watchdog_check_url", "https://ifconfig.me/ip")),
+        pcdata(_("Proxy URL")),
         pcdata(getu("watchdog_proxy_url", "socks5h://127.0.0.1:10808")),
+        pcdata(_("Check interval, sec")),
         pcdata(getu("watchdog_interval", "60")),
+        pcdata(_("Failure threshold")),
         pcdata(getu("watchdog_fail_threshold", "3")),
+        pcdata(_("Connect timeout, sec")),
         pcdata(getu("watchdog_connect_timeout", "15")),
+        pcdata(_("Max request time, sec")),
         pcdata(getu("watchdog_max_time", "20")),
+        pcdata(_("Outbound file")),
         pcdata(getu("watchdog_outbound_file", "/etc/xray/04_outbounds.json")),
+        pcdata(_("VLESS converter")),
         pcdata(getu("watchdog_vless2json", "/usr/bin/vless2json.sh")),
+        pcdata(_("Managed service")),
         pcdata(getu("watchdog_service_path", "/etc/init.d/xray")),
+        pcdata(_("Restart command")),
+        pcdata(_("Test command")),
         pcdata(getu("watchdog_test_command", "/usr/bin/xray -c {config}")),
+        pcdata(_("Selection mode")),
         getu("watchdog_selection_mode", "random") == "ordered" and " selected" or "",
+        pcdata(_("ordered")),
         getu("watchdog_selection_mode", "random") == "random" and " selected" or "",
+        pcdata(_("random")),
         getu("watchdog_selection_mode", "random") == "fastest" and " selected" or "",
+        pcdata(_("fastest")),
+        pcdata(_("Exclude dead links")),
         getu("watchdog_exclude_dead", "0") == "1" and "checked" or "",
+        pcdata(_("Exclusion period: hours")),
         pcdata(getu("watchdog_dead_cooldown_hours", "0")),
+        pcdata(_("Exclusion period: minutes")),
         pcdata(getu("watchdog_dead_cooldown_minutes", "0")),
+        pcdata(_("Test port")),
         pcdata(getu("watchdog_test_port", "10881")),
+        pcdata(_("Background link check")),
         getu("watchdog_background_check_enabled", "0") == "1" and "checked" or "",
+        pcdata(_("Background check timer, sec")),
         pcdata(getu("watchdog_background_check_interval", "1800")),
+        pcdata(_("Batch link check")),
         getu("watchdog_batch_check_enabled", "1") == "1" and "checked" or "",
+        pcdata(_("Batch test template")),
         pcdata(getu("watchdog_batch_test_template_file", "/etc/tproxy-manager/watchdog-batch-test-config.template.jsonc")),
+        pcdata(_("Batch start port")),
         pcdata(getu("watchdog_batch_check_port_start", "10882")),
+        pcdata(_("Batch size")),
         pcdata(getu("watchdog_batch_check_batch_size", "64")),
+        pcdata(_("Batch concurrency")),
         pcdata(getu("watchdog_batch_check_concurrency", "8")),
+        pcdata(_("Fallback to old check")),
         getu("watchdog_batch_check_fallback", "1") == "1" and "checked" or "",
+        pcdata(_("Subscriptions file")),
         pcdata(getu("watchdog_subscriptions_file", DEFAULT_SUBSCRIPTIONS_FILE)),
+        pcdata(_("Happ capture TTL, sec")),
         pcdata(getu("watchdog_happ_capture_ttl", "600")),
+        pcdata(_("Happ capture port")),
         pcdata(getu("watchdog_happ_capture_port", "18088")),
-        pcdata(getu("watchdog_happ_capture_log", DEFAULT_CAPTURE_LOG)))
+        pcdata(_("Happ capture log")),
+        pcdata(getu("watchdog_happ_capture_log", DEFAULT_CAPTURE_LOG)),
+        pcdata(_("Save Watchdog settings")))
     end
   end
 
@@ -1287,19 +1375,19 @@ local function render(ctx)
       local content = read_file(current_path)
       return [[
 <details class="wd-details">
-  <summary>Шаблон outbounds</summary>
+  <summary>]] .. pcdata(_("Outbounds template")) .. [[</summary>
   <div class="box editor-wrap editor-wide" style="margin-top:.5rem">
     <div class="wd-grid" style="margin-bottom:.5rem">
       <label>TEMPLATE_FILE</label><input type="text" name="watchdog_template_file" value="]] .. pcdata(current_path) .. [[">
     </div>
-    <div style="margin-bottom:.4rem;color:#6b7280">Шаблон хранится в отдельном файле и по умолчанию обрабатывается встроенным конвертером <code>/usr/bin/vless2json.sh</code>. Путь можно переопределить в настройках.</div>
+    <div style="margin-bottom:.4rem;color:#6b7280">]] .. pcdata(_("The template is stored in a separate file and is processed by the built-in /usr/bin/vless2json.sh converter by default. The path can be overridden in settings.")) .. [[</div>
     <textarea class="wd-textarea" name="watchdog_template_text" rows="18" spellcheck="false">]] .. pcdata(content) .. [[</textarea>
     <div style="height:5px"></div>
     <div class="box editor-wrap editor-680" id="watchdog-template-status-box">
       <div id="watchdog_template_status" style="margin:.08rem 0 .14rem 0; font-weight:600"></div>
     </div>
     <div style="margin-top:.5rem">
-      <button class="cbi-button cbi-button-apply" name="_watchdog_save_template" value="1">Сохранить шаблон</button>
+      <button class="cbi-button cbi-button-apply" name="_watchdog_save_template" value="1">]] .. pcdata(_("Save template")) .. [[</button>
     </div>
   </div>
 </details>
@@ -1324,10 +1412,10 @@ local function render(ctx)
   function validate(){
     try {
       JSON.parse(stripJsonComments(ta.value));
-      badge.textContent = 'Шаблон JSONC валиден';
+      badge.textContent = ']] .. pcdata(_("Template JSONC is valid")) .. [[';
       badge.style.color = '#16a34a';
     } catch(e) {
-      badge.textContent = 'Ошибка JSONC: ' + e.message;
+      badge.textContent = ']] .. pcdata(_("JSONC error: ")) .. [[' + e.message;
       badge.style.color = '#dc2626';
     }
   }
@@ -1347,15 +1435,15 @@ local function render(ctx)
       local content = read_file(current_path)
       return [[
 <details class="wd-details">
-  <summary>Тестовый шаблон</summary>
+  <summary>]] .. pcdata(_("Test template")) .. [[</summary>
   <div class="box editor-wrap editor-wide" style="margin-top:.5rem">
     <div class="wd-grid" style="margin-bottom:.5rem">
       <label>TEST_TEMPLATE_FILE</label><input type="text" name="watchdog_test_template_file" value="]] .. pcdata(current_path) .. [[">
     </div>
-    <div style="margin-bottom:.4rem;color:#6b7280">Этот шаблон используется для временного test-instance. В базовом варианте доступны плейсхолдеры <code>__TEST_PORT__</code>, <code>__OUTBOUNDS__</code> и <code>__OUTBOUND_TAG__</code>.</div>
+    <div style="margin-bottom:.4rem;color:#6b7280">]] .. pcdata(_("This template is used for the temporary test-instance. The default variant supports placeholders __TEST_PORT__, __OUTBOUNDS__ and __OUTBOUND_TAG__.")) .. [[</div>
     <textarea class="wd-textarea" name="watchdog_test_template_text" rows="18" spellcheck="false">]] .. pcdata(content) .. [[</textarea>
     <div style="margin-top:.5rem">
-      <button class="cbi-button cbi-button-apply" name="_watchdog_save_test_template" value="1">Сохранить тестовый шаблон</button>
+      <button class="cbi-button cbi-button-apply" name="_watchdog_save_test_template" value="1">]] .. pcdata(_("Save test template")) .. [[</button>
     </div>
   </div>
 </details>]]
@@ -1367,7 +1455,7 @@ local function render(ctx)
     local dv = sec:option(DummyValue, "_watchdog_log")
     dv.rawhtml = true
     function dv.cfgvalue()
-      return [[<details class="wd-details"><summary><strong>Лог Watchdog</strong></summary><div class="box editor-wrap" style="margin-top:.5rem"><div style="margin-bottom:.5rem"><button class="cbi-button cbi-button-remove" name="_watchdog_clear_log" value="1">Очистить лог</button></div><pre style="white-space:pre-wrap;max-height:30rem;overflow:auto">]] ..
+      return [[<details class="wd-details"><summary><strong>]] .. pcdata(_("Watchdog log")) .. [[</strong></summary><div class="box editor-wrap" style="margin-top:.5rem"><div style="margin-bottom:.5rem"><button class="cbi-button cbi-button-remove" name="_watchdog_clear_log" value="1">]] .. pcdata(_("Clear log")) .. [[</button></div><pre style="white-space:pre-wrap;max-height:30rem;overflow:auto">]] ..
              pcdata(helpers.watchdog_log()) .. [[</pre></div></details>]]
     end
   end

@@ -1,5 +1,7 @@
 # vless2json.sh
 
+[English version](en/vless2json.md)
+
 `vless2json.sh` — встроенный конвертер проекта для `WATCHDOG`.
 
 Скрипт входит в пакет и устанавливается в:

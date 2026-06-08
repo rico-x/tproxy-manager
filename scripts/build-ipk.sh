@@ -31,6 +31,7 @@ mkdir -p "$STAGE_DIR"
 
 copy_payload_tree "$PKG_DIR" "$STAGE_DIR"
 copy_control_tree "$PKG_DIR" "$STAGE_DIR"
+compile_luci_i18n "$PKG_DIR" "$STAGE_DIR"
 normalize_tree "$STAGE_DIR"
 inject_control_version "$STAGE_DIR/CONTROL/control" "$PKG_VERSION"
 

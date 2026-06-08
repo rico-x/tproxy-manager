@@ -63,6 +63,28 @@ normalize_tree() {
   fi
 }
 
+compile_luci_i18n() {
+  local _pkg_dir="$1"
+  local stage_dir="$2"
+  local po_dir="$ROOT/po/tproxy-manager"
+  local compiler="$ROOT/scripts/compile-luci-i18n.py"
+  local out_dir="$stage_dir/usr/lib/lua/luci/i18n"
+
+  [ -d "$po_dir" ] || return 0
+  [ -f "$compiler" ] || {
+    echo "LuCI i18n compiler not found: $compiler" >&2
+    exit 1
+  }
+
+  mkdir -p "$out_dir"
+
+  for po_file in "$po_dir"/*.po; do
+    [ -f "$po_file" ] || continue
+    lang="$(basename "$po_file" .po)"
+    python3 "$compiler" "$po_file" "$out_dir/tproxy-manager.$lang.lmo"
+  done
+}
+
 inject_control_version() {
   local control_file="$1"
   local version="$2"

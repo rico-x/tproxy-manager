@@ -1,13 +1,14 @@
 local cbi = require "luci.cbi"
 local SimpleSection, DummyValue, Button = cbi.SimpleSection, cbi.DummyValue, cbi.Button
 
--- ===== Xray-специфика локально =====
+-- Local Xray-specific helpers.
 local fs  = require "nixio.fs"
 local sys = require "luci.sys"
 local http= require "luci.http"
 local disp= require "luci.dispatcher"
 local xml = require "luci.xml"
 local utils = require "luci.model.cbi.tproxy_manager.utils"
+local _ = require "luci.model.cbi.tproxy_manager.i18n"
 local pcdata = xml.pcdata
 
 local XRAY_DIR  = "/etc/xray"
@@ -25,7 +26,7 @@ local write_file = utils.write_file
 local function write_json_file_xray(path, text)
   text = (text or ""):gsub("\r\n", "\n")
   if not utils.validate_jsonc_text(text) then
-    return nil, "Некорректный JSON (ошибка разбора)"
+    return nil, _("Invalid JSON (parse error)")
   end
   write_file(path, text)
   return true
@@ -36,7 +37,7 @@ do
   local st = fs.stat(XRAY_DIR)
   if not (st and st.type == "directory") then fs.mkdir(XRAY_DIR) end
 end
--- ===== конец Xray-специфики =====
+-- End of local Xray-specific helpers.
 
 local function render(ctx)
   local m = ctx.m
@@ -60,29 +61,29 @@ local function render(ctx)
     write_file(LOG_TEST, ""); set_err(nil); redirect_here("xray"); return m
   end
 
-  -- Статус Xray
+  -- Xray status
   do
-    local ss = m:section(SimpleSection, "Статус и управление сервисом Xray")
+    local ss = m:section(SimpleSection, _("Xray service status and controls"))
     service_block(ss, "xray", "Xray", "xray")
   end
 
-  -- Combined log (общий system logread)
+  -- Combined system logread
   do
     local sl  = m:section(SimpleSection)
     local log = sl:option(DummyValue, "_log"); log.rawhtml = true
     function log.cfgvalue()
-      return "<details><summary><strong>Общий лог (logread)</strong></summary>" ..
+      return "<details><summary><strong>" .. _("System log (logread)") .. "</strong></summary>" ..
              "<div class='box editor-wrap'><pre style='white-space:pre-wrap;max-height:30rem;overflow:auto'>" ..
              pcdata(combined_log()) .. "</pre>" ..
-             "<div style='margin-top:.5rem'><button class='cbi-button cbi-button-action small-btn' style='margin-right:4px; padding:0; border:0' name='_refreshlog' value='1'>Обновить</button> " ..
-             "<button class='cbi-button cbi-button-remove small-btn' style='padding:0; border:0' name='_clearlog' value='1'>Очистить</button></div>" ..
+             "<div style='margin-top:.5rem'><button class='cbi-button cbi-button-action small-btn' style='margin-right:4px; padding:0; border:0' name='_refreshlog' value='1'>" .. _("Refresh") .. "</button> " ..
+             "<button class='cbi-button cbi-button-remove small-btn' style='padding:0; border:0' name='_clearlog' value='1'>" .. _("Clear") .. "</button></div>" ..
              "</div></details>"
     end
   end
 
   -- XRAY JSON editor
   do
-    local sx = m:section(SimpleSection, "Xray (JSON-файлы в /etc/xray)")
+    local sx = m:section(SimpleSection, _("Xray (JSON files in /etc/xray)"))
 
     local function list_json(dir)
       local t, it = {}, fs.dir(dir)
@@ -109,7 +110,7 @@ local function render(ctx)
         set_err(nil)
         http.redirect(self_url({ tab="xray", json_file=name }))
       else
-        set_err("Некорректное имя файла. Требуется *.json без слэшей.")
+        set_err(_("Invalid file name. Expected *.json without slashes."))
         redirect_here("xray")
       end
       return m
@@ -126,15 +127,20 @@ local function render(ctx)
       local url = disp.build_url("admin","network","tproxy_manager")
       local buf = {}
       buf[#buf+1] = "<div class='box editor-wrap editor-680' id='json-editor'>"
-      buf[#buf+1] = [[
+      buf[#buf+1] = string.format([[
   <div class="inline-row" style="margin:.3rem 0;">
-    <span>Новый файл:</span>
+    <span>%s:</span>
     <input type="text" name="new_json_name" placeholder="01_example.json" style="width:200px">
-    <button class="cbi-button cbi-button-apply" name="_json_create" value="1">Создать</button>
+    <button class="cbi-button cbi-button-apply" name="_json_create" value="1">%s</button>
   </div>
-  <div style="color:#6b7280;margin-top:.2rem">Имя должно соответствовать шаблону <code>*.json</code>, без слэшей.</div>
-  <hr style="border:none;border-top:1px solid #e5e7eb;margin:.5rem 0"/>]]
-      buf[#buf+1] = "<label>Файл для редактирования</label>"
+  <div style="color:#6b7280;margin-top:.2rem">%s <code>*.json</code>, %s.</div>
+  <hr style="border:none;border-top:1px solid #e5e7eb;margin:.5rem 0"/>]],
+        pcdata(_("New file")),
+        pcdata(_("Create")),
+        pcdata(_("The name must match")),
+        pcdata(_("without slashes"))
+      )
+      buf[#buf+1] = "<label>" .. _("File to edit") .. "</label>"
       buf[#buf+1] = "<select name='json_file'>"
       for _, f in ipairs(json_files) do
         local sel = (f==chosen) and " selected" or ""
@@ -164,9 +170,12 @@ local function render(ctx)
   sel.setAttribute('data-prev', sel.value);
 })();
 </script>]]
-      buf[#buf+1] = [[
+      buf[#buf+1] = string.format([[
 <button class="cbi-button cbi-button-remove" name="_json_delete" value="1"
-  onclick="return confirm('Удалить выбранный файл?')">Удалить</button>]]
+  onclick="return confirm('%s')">%s</button>]],
+        pcdata(_("Delete selected file?")),
+        pcdata(_("Delete"))
+      )
       buf[#buf+1] = "</div><div style='height:5px'></div>"
       local dvsel = sx:option(DummyValue, "_selector"); dvsel.rawhtml=true
       function dvsel.cfgvalue() return table.concat(buf) end
@@ -243,7 +252,7 @@ local function render(ctx)
     });
   }
   function syncHighlight(){ if(!ta||!hi)return; hi.innerHTML=highlightJsonc(ta.value)+'\n'; hi.scrollTop=ta.scrollTop; hi.scrollLeft=ta.scrollLeft; }
-  function validate(){ if(!ta||!badge)return; try{ JSON.parse(stripJsonComments(ta.value)); badge.textContent='JSONC валиден (комментарии разрешены)'; badge.style.color='#16a34a'; }catch(e){ badge.textContent='Ошибка JSON: '+e.message; badge.style.color='#dc2626'; } }
+  function validate(){ if(!ta||!badge)return; try{ JSON.parse(stripJsonComments(ta.value)); badge.textContent=']] .. pcdata(_("JSONC is valid (comments allowed)")) .. [['; badge.style.color='#16a34a'; }catch(e){ badge.textContent=']] .. pcdata(_("JSON error: ")) .. [['+e.message; badge.style.color='#dc2626'; } }
   var validateDebounced = debounce(validate,250);
   if(ta){ ta.addEventListener('input', function(){ syncHighlight(); validateDebounced(); }); ta.addEventListener('scroll', syncHighlight); syncHighlight(); validate();
 
@@ -267,7 +276,7 @@ local function render(ctx)
 ]]
       end
 
-      local bsave = sx:option(Button, "_savejson"); bsave.title = ""; bsave.inputtitle = "Сохранить"
+      local bsave = sx:option(Button, "_savejson"); bsave.title = ""; bsave.inputtitle = _("Save")
       bsave.inputstyle = "apply"
       function bsave.write(self, section)
         if not self.map:formvalue(self:cbid(section)) then return end
@@ -277,7 +286,7 @@ local function render(ctx)
         if not is_known_json_file(jf) then jf = chosen end
         local ok, err = write_json_file_xray(XRAY_DIR .. "/" .. jf, new)
         if not ok then set_err(err or "save error")
-        else set_err(nil); set_info("JSON сохранён: "..jf) end
+        else set_err(nil); set_info(_("JSON saved: ")..jf) end
         http.redirect(self_url({ tab = "xray", json_file = jf }))
       end
     end
@@ -285,11 +294,11 @@ local function render(ctx)
     local dout = sx:option(DummyValue, "_testout"); dout.rawhtml = true; dout.title = ""
     function dout.cfgvalue()
       local out = read_file(LOG_TEST)
-      return "<details><summary>Результат последней проверки</summary>" ..
+      return "<details><summary>" .. _("Last validation result") .. "</summary>" ..
              "<div class='box editor-wrap editor-680'><pre style='white-space:pre-wrap'>" ..
-             (pcdata(out ~= "" and out or "(ещё не запускалось)")) .. "</pre>" ..
-             "<div style='margin-top:.5rem'><button class='cbi-button cbi-button-action small-btn' style='margin-right:4px; padding:0; border:0' name='_test' value='1'>Проверить конфигурацию</button> " ..
-             "<button class='cbi-button cbi-button-remove small-btn' style='padding:0; border:0' name='_clearlog_json' value='1'>Очистить</button></div>" ..
+             (pcdata(out ~= "" and out or _("(not run yet)"))) .. "</pre>" ..
+             "<div style='margin-top:.5rem'><button class='cbi-button cbi-button-action small-btn' style='margin-right:4px; padding:0; border:0' name='_test' value='1'>" .. _("Validate configuration") .. "</button> " ..
+             "<button class='cbi-button cbi-button-remove small-btn' style='padding:0; border:0' name='_clearlog_json' value='1'>" .. _("Clear") .. "</button></div>" ..
              "</div></details>"
     end
   end

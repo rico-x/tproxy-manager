@@ -1,13 +1,14 @@
 local cbi = require "luci.cbi"
 local SimpleSection, DummyValue, Button = cbi.SimpleSection, cbi.DummyValue, cbi.Button
 
--- ===== Mihomo-специфика локально =====
+-- Local Mihomo-specific helpers.
 local fs   = require "nixio.fs"
 local sys  = require "luci.sys"
 local http = require "luci.http"
 local disp = require "luci.dispatcher"
 local xml  = require "luci.xml"
 local utils = require "luci.model.cbi.tproxy_manager.utils"
+local _ = require "luci.model.cbi.tproxy_manager.i18n"
 local pcdata = xml.pcdata
 
 local MIHOMO_DIR      = "/etc/mihomo"
@@ -32,7 +33,7 @@ local function validate_mihomo_text(text)
   return ok
 end
 
--- Только *.yaml (никаких *.yml)
+-- Only *.yaml files are supported, not *.yml.
 local function list_yaml(dir)
   local t, it = {}, fs.dir(dir)
   if it then
@@ -48,7 +49,7 @@ end
 do
   utils.ensure_dir(MIHOMO_DIR)
 end
--- ===== конец Mihomo-специфики =====
+-- End of local Mihomo-specific helpers.
 
 local function render(ctx)
   local m = ctx.m
@@ -73,9 +74,9 @@ local function render(ctx)
     write_file(MIHOMO_TEST_LOG, ""); set_err(nil); redirect_here("mihomo"); return m
   end
 
-  -- Статус Mihomo
+  -- Mihomo status
   do
-    local ss = m:section(SimpleSection, "Статус и управление сервисом Mihomo")
+    local ss = m:section(SimpleSection, _("Mihomo service status and controls"))
     service_block(ss, "mihomo", "Mihomo", "mihomo")
   end
 
@@ -84,18 +85,18 @@ local function render(ctx)
     local sl = m:section(SimpleSection)
     local log = sl:option(DummyValue, "_log_mihomo"); log.rawhtml = true
     function log.cfgvalue()
-      return "<details><summary><strong>Общий лог (logread)</strong></summary>" ..
+      return "<details><summary><strong>" .. _("System log (logread)") .. "</strong></summary>" ..
              "<div class='box editor-wrap'><pre style='white-space:pre-wrap;max-height:30rem;overflow:auto'>" ..
              pcdata(combined_log()) .. "</pre>" ..
-             "<div style='margin-top:.5rem'><button class='cbi-button cbi-button-action small-btn' style='margin-right:4px; padding:0; border:0' name='_refreshlog_mihomo' value='1'>Обновить</button> " ..
-             "<button class='cbi-button cbi-button-remove small-btn' style='padding:0; border:0' name='_clearlog_mihomo' value='1'>Очистить</button></div>" ..
+             "<div style='margin-top:.5rem'><button class='cbi-button cbi-button-action small-btn' style='margin-right:4px; padding:0; border:0' name='_refreshlog_mihomo' value='1'>" .. _("Refresh") .. "</button> " ..
+             "<button class='cbi-button cbi-button-remove small-btn' style='padding:0; border:0' name='_clearlog_mihomo' value='1'>" .. _("Clear") .. "</button></div>" ..
              "</div></details>"
     end
   end
 
   -- Mihomo config editor
   do
-    local sx = m:section(SimpleSection, "Mihomo (конфигурационные файлы в /etc/mihomo)")
+    local sx = m:section(SimpleSection, _("Mihomo (configuration files in /etc/mihomo)"))
 
     local config_files = list_yaml(MIHOMO_DIR)
     local chosen = fval("mihomo_file")
@@ -111,7 +112,7 @@ local function render(ctx)
         set_err(nil)
         http.redirect(self_url({ tab="mihomo", mihomo_file=name }))
       else
-        set_err("Некорректное имя файла. Требуется *.yaml без слэшей.")
+        set_err(_("Invalid file name. Expected *.yaml without slashes."))
         redirect_here("mihomo")
       end
       return m
@@ -128,15 +129,20 @@ local function render(ctx)
       local url = disp.build_url("admin","network","tproxy_manager")
       local buf = {}
       buf[#buf+1] = "<div class='box editor-wrap editor-680' id='mihomo-editor'>"
-      buf[#buf+1] = [[
+      buf[#buf+1] = string.format([[
     <div class="inline-row" style="margin:.3rem 0;">
-        <span>Новый файл:</span>
+        <span>%s:</span>
         <input type="text" name="new_mihomo_name" placeholder="config.yaml" style="width:200px">
-        <button class="cbi-button cbi-button-apply" name="_mihomo_create" value="1">Создать</button>
+        <button class="cbi-button cbi-button-apply" name="_mihomo_create" value="1">%s</button>
     </div>
-    <div style="color:#6b7280;margin-top:.2rem">Имя должно соответствовать шаблону <code>*.yaml</code>, без слэшей.</div>
-    <hr style="border:none;border-top:1px solid #e5e7eb;margin:.5rem 0"/>]]
-      buf[#buf+1] = "<label>Файл для редактирования</label>"
+    <div style="color:#6b7280;margin-top:.2rem">%s <code>*.yaml</code>, %s.</div>
+    <hr style="border:none;border-top:1px solid #e5e7eb;margin:.5rem 0"/>]],
+        pcdata(_("New file")),
+        pcdata(_("Create")),
+        pcdata(_("The name must match")),
+        pcdata(_("without slashes"))
+      )
+      buf[#buf+1] = "<label>" .. _("File to edit") .. "</label>"
       buf[#buf+1] = "<select name='mihomo_file'>"
       for _, f in ipairs(config_files) do
         local sel = (f==chosen) and " selected" or ""
@@ -159,9 +165,12 @@ local function render(ctx)
     sel.setAttribute('data-prev', sel.value);
 })();
 </script>]]
-      buf[#buf+1] = [[
+      buf[#buf+1] = string.format([[
 <button class="cbi-button cbi-button-remove" name="_mihomo_delete" value="1"
-    onclick="return confirm('Удалить выбранный файл?')">Удалить</button>]]
+    onclick="return confirm('%s')">%s</button>]],
+        pcdata(_("Delete selected file?")),
+        pcdata(_("Delete"))
+      )
       buf[#buf+1] = "</div><div style='height:5px'></div>"
       local dvsel = sx:option(DummyValue, "_selector_mihomo"); dvsel.rawhtml=true
       function dvsel.cfgvalue() return table.concat(buf) end
@@ -176,20 +185,20 @@ local function render(ctx)
 <div style="height:5px"></div>]]
       end
 
-      local bsave = sx:option(Button, "_savemihomo"); bsave.title = ""; bsave.inputtitle = "Сохранить"
+      local bsave = sx:option(Button, "_savemihomo"); bsave.title = ""; bsave.inputtitle = _("Save")
       bsave.inputstyle = "apply"
       function bsave.write(self, section)
         if not self.map:formvalue(self:cbid(section)) then return end
         local new = http.formvalue("mihomo_text") or ""
         local cf = fval_last("mihomo_file") or chosen
         if not validate_mihomo_text(new) then
-          set_err("Некорректная конфигурация Mihomo. Файл не сохранён.")
+          set_err(_("Invalid Mihomo configuration. File was not saved."))
           set_info(nil)
           redirect_here("mihomo")
           return
         end
         write_file(MIHOMO_DIR .. "/" .. cf, new)
-        set_err(nil); set_info("Конфиг Mihomo сохранён: "..cf)
+        set_err(nil); set_info(_("Mihomo config saved: ")..cf)
         redirect_here("mihomo")
       end
     end
@@ -197,11 +206,11 @@ local function render(ctx)
     local dout = sx:option(DummyValue, "_testout_mihomo"); dout.rawhtml = true; dout.title = ""
     function dout.cfgvalue()
       local out = read_file(MIHOMO_TEST_LOG)
-      return "<details><summary>Результат последней проверки</summary>" ..
+      return "<details><summary>" .. _("Last validation result") .. "</summary>" ..
              "<div class='box editor-wrap editor-680'><pre style='white-space:pre-wrap'>" ..
-             pcdata(out ~= "" and out or "(ещё не запускалось)") .. "</pre>" ..
-             "<div style='margin-top:.5rem'><button class='cbi-button cbi-button-action small-btn' style='margin-right:4px; padding:0; border:0' name='_test_mihomo' value='1'>Проверить конфигурацию</button> " ..
-             "<button class='cbi-button cbi-button-remove small-btn' style='padding:0; border:0' name='_clearlog_mihomo_config' value='1'>Очистить</button></div>" ..
+             pcdata(out ~= "" and out or _("(not run yet)")) .. "</pre>" ..
+             "<div style='margin-top:.5rem'><button class='cbi-button cbi-button-action small-btn' style='margin-right:4px; padding:0; border:0' name='_test_mihomo' value='1'>" .. _("Validate configuration") .. "</button> " ..
+             "<button class='cbi-button cbi-button-remove small-btn' style='padding:0; border:0' name='_clearlog_mihomo_config' value='1'>" .. _("Clear") .. "</button></div>" ..
              "</div></details>"
     end
 

@@ -1,0 +1,1062 @@
+# Russian translations for TPROXY Manager LuCI UI.
+msgid ""
+msgstr ""
+"Project-Id-Version: tproxy-manager\n"
+"Report-Msgid-Bugs-To: https://github.com/rico-x/tproxy-manager/issues\n"
+"POT-Creation-Date: 2026-06-07 00:00+0000\n"
+"PO-Revision-Date: 2026-06-07 00:00+0000\n"
+"Last-Translator: rico-x\n"
+"Language: ru\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+msgid "TPROXY Manager"
+msgstr "TPROXY Manager"
+
+msgid "(no log lines)"
+msgstr "(нет строк лога)"
+
+msgid "running"
+msgstr "запущен"
+
+msgid "stopped"
+msgstr "остановлен"
+
+msgid "enabled"
+msgstr "включено"
+
+msgid "disabled"
+msgstr "выключено"
+
+msgid "Start"
+msgstr "Запустить"
+
+msgid "Stop"
+msgstr "Остановить"
+
+msgid "Enable autostart"
+msgstr "Включить автозапуск"
+
+msgid "Disable autostart"
+msgstr "Отключить автозапуск"
+
+msgid "There are unsaved changes. Leave without saving?"
+msgstr "Есть несохранённые изменения. Выйти без сохранения?"
+
+msgid "GEO updates"
+msgstr "GEO обновления"
+
+msgid "Module settings saved."
+msgstr "Настройки модулей сохранены."
+
+msgid "Additional settings"
+msgstr "Дополнительные настройки"
+
+msgid "XRAY tab"
+msgstr "Вкладка XRAY"
+
+msgid "MIHOMO tab"
+msgstr "Вкладка MIHOMO"
+
+msgid "GEO updates tab"
+msgstr "Вкладка GEO обновлений"
+
+msgid "Watchdog tab"
+msgstr "Вкладка Watchdog"
+
+msgid "Save"
+msgstr "Сохранить"
+
+msgid "Mihomo service status and controls"
+msgstr "Статус и управление сервисом Mihomo"
+
+msgid "System log (logread)"
+msgstr "Системный лог (logread)"
+
+msgid "Refresh"
+msgstr "Обновить"
+
+msgid "Clear"
+msgstr "Очистить"
+
+msgid "Mihomo (configuration files in /etc/mihomo)"
+msgstr "Mihomo (файлы конфигурации в /etc/mihomo)"
+
+msgid "Invalid file name. Expected *.yaml without slashes."
+msgstr "Некорректное имя файла. Ожидается *.yaml без слешей."
+
+msgid "New file"
+msgstr "Новый файл"
+
+msgid "Create"
+msgstr "Создать"
+
+msgid "The name must match"
+msgstr "Имя должно соответствовать"
+
+msgid "without slashes"
+msgstr "без слешей"
+
+msgid "File to edit"
+msgstr "Файл для редактирования"
+
+msgid "Delete selected file?"
+msgstr "Удалить выбранный файл?"
+
+msgid "Delete"
+msgstr "Удалить"
+
+msgid "Invalid Mihomo configuration. File was not saved."
+msgstr "Некорректная конфигурация Mihomo. Файл не сохранён."
+
+msgid "Mihomo config saved: "
+msgstr "Конфигурация Mihomo сохранена: "
+
+msgid "Last validation result"
+msgstr "Последний результат валидации"
+
+msgid "(not run yet)"
+msgstr "(ещё не запускалось)"
+
+msgid "Validate configuration"
+msgstr "Проверить конфигурацию"
+
+msgid "TPROXY service status and controls"
+msgstr "Статус и управление сервисом TPROXY"
+
+msgid "Save and restart TPROXY"
+msgstr "Сохранить и перезапустить TPROXY"
+
+msgid "Restart"
+msgstr "Перезапустить"
+
+msgid "TPROXY main settings"
+msgstr "Основные настройки TPROXY"
+
+msgid "Interfaces"
+msgstr "Интерфейсы"
+
+msgid "Split TCP/UDP"
+msgstr "Разделить TCP/UDP"
+
+msgid "Port"
+msgstr "Порт"
+
+msgid "TCP port"
+msgstr "TCP порт"
+
+msgid "UDP port"
+msgstr "UDP порт"
+
+msgid "Port mode"
+msgstr "Режим портов"
+
+msgid "Source mode"
+msgstr "Режим источников"
+
+msgid "Ports"
+msgstr "Порты"
+
+msgid "No list file paths are configured in UCI. Set paths in Additional settings."
+msgstr "В UCI не настроены пути к файлам списков. Укажите пути в дополнительных настройках."
+
+msgid "Traffic to listed ports goes directly; all other traffic goes through proxy."
+msgstr "Трафик на перечисленные порты идёт напрямую; весь остальной трафик идёт через proxy."
+
+msgid "Traffic to listed ports goes through proxy; all other traffic goes directly."
+msgstr "Трафик на перечисленные порты идёт через proxy; весь остальной трафик идёт напрямую."
+
+msgid "Ports file; current port mode is not set in UCI."
+msgstr "Файл портов; текущий режим портов не задан в UCI."
+
+msgid "IPv4 addresses/networks that will not be proxied."
+msgstr "IPv4 адреса/сети, которые не будут проксироваться."
+
+msgid "IPv6 addresses/networks that will not be proxied."
+msgstr "IPv6 адреса/сети, которые не будут проксироваться."
+
+msgid "IPv4 sources that will go through proxy."
+msgstr "IPv4 источники, которые пойдут через proxy."
+
+msgid "IPv6 sources that will go through proxy."
+msgstr "IPv6 источники, которые пойдут через proxy."
+
+msgid "IPv4 sources that will go directly."
+msgstr "IPv4 источники, которые пойдут напрямую."
+
+msgid "IPv6 sources that will go directly."
+msgstr "IPv6 источники, которые пойдут напрямую."
+
+msgid "Save file"
+msgstr "Сохранить файл"
+
+msgid "Suspicious lines in ports file"
+msgstr "Подозрительные строки в файле портов"
+
+msgid "Expected"
+msgstr "Ожидается"
+
+msgid "Suspicious lines"
+msgstr "Подозрительные строки"
+
+msgid "Ports format is valid: port/range, optionally prefixed with tcp:/udp:/both:."
+msgstr "Формат портов корректен: порт/диапазон, опционально с префиксом tcp:/udp:/both:."
+
+msgid "Looks valid: IPv4/IPv6, optionally CIDR. Lines starting with # or ; are ignored."
+msgstr "Похоже на корректный формат: IPv4/IPv6, опционально CIDR. Строки, начинающиеся с # или ;, игнорируются."
+
+msgid "DHCP leases (quick add to src only/bypass v4)"
+msgstr "DHCP leases (быстрое добавление в src only/bypass v4)"
+
+msgid "No active leases."
+msgstr "Нет активных leases."
+
+msgid "Name"
+msgstr "Имя"
+
+msgid "Actions"
+msgstr "Действия"
+
+msgid "Additional settings (collapsed panel)"
+msgstr "Дополнительные настройки (сворачиваемая панель)"
+
+msgid "Expand/collapse advanced parameters"
+msgstr "Развернуть/свернуть расширенные параметры"
+
+msgid "Logging"
+msgstr "Логирование"
+
+msgid "DHCP quick-add: invalid IPv4 address."
+msgstr "DHCP quick-add: некорректный IPv4 адрес."
+
+msgid "Added %s to src_only_v4_file: %s"
+msgstr "%s добавлен в src_only_v4_file: %s"
+
+msgid "Added %s to src_bypass_v4_file: %s"
+msgstr "%s добавлен в src_bypass_v4_file: %s"
+
+msgid "TCP/UDP split is enabled: both ports must be set in range 1..65535."
+msgstr "Включено разделение TCP/UDP: оба порта должны быть в диапазоне 1..65535."
+
+msgid "Common port is required (1..65535)."
+msgstr "Общий порт обязателен (1..65535)."
+
+msgid "Invalid nft_table name. Use a safe name, for example tp_mgr."
+msgstr "Некорректное имя nft_table. Используйте безопасное имя, например tp_mgr."
+
+msgid "fwmark_tcp/fwmark_udp must be decimal numbers or hex values like 0x1."
+msgstr "fwmark_tcp/fwmark_udp должны быть десятичными числами или hex-значениями вида 0x1."
+
+msgid "rttab_tcp/rttab_udp must be positive integers."
+msgstr "rttab_tcp/rttab_udp должны быть положительными целыми числами."
+
+msgid "Invalid path for "
+msgstr "Некорректный путь для "
+
+msgid ". Expected an absolute path without extra whitespace."
+msgstr ". Ожидается абсолютный путь без лишних пробелов."
+
+msgid "Invalid interface name: "
+msgstr "Некорректное имя интерфейса: "
+
+msgid "TPROXY settings saved"
+msgstr "Настройки TPROXY сохранены"
+
+msgid "List file saved: "
+msgstr "Файл списка сохранён: "
+
+msgid "TPROXY: service restarted"
+msgstr "TPROXY: сервис перезапущен"
+
+msgid "Save TPROXY settings"
+msgstr "Сохранить настройки TPROXY"
+
+msgid "Cancel changes"
+msgstr "Отменить изменения"
+
+msgid "Invalid JSON/JSONC"
+msgstr "Некорректный JSON/JSONC"
+
+msgid "JSON root must be an array or object"
+msgstr "Корень JSON должен быть массивом или объектом"
+
+msgid "(not found)"
+msgstr "(не найден)"
+
+msgid "Invalid cron expression: 5 fields are required (min hour dom month dow)."
+msgstr "Некорректное cron-выражение: требуется 5 полей (min hour dom month dow)."
+
+msgid "minutes"
+msgstr "минуты"
+
+msgid "hours"
+msgstr "часы"
+
+msgid "day of month"
+msgstr "день месяца"
+
+msgid "month"
+msgstr "месяц"
+
+msgid "day of week"
+msgstr "день недели"
+
+msgid "Invalid cron field: "
+msgstr "Некорректное поле cron: "
+
+msgid "schedule: "
+msgstr "расписание: "
+
+msgid "Sundays"
+msgstr "воскресенья"
+
+msgid "Mondays"
+msgstr "понедельники"
+
+msgid "Tuesdays"
+msgstr "вторники"
+
+msgid "Wednesdays"
+msgstr "среды"
+
+msgid "Thursdays"
+msgstr "четверги"
+
+msgid "Fridays"
+msgstr "пятницы"
+
+msgid "Saturdays"
+msgstr "субботы"
+
+msgid "on days "
+msgstr "по дням "
+
+msgid "on "
+msgstr "в "
+
+msgid "and"
+msgstr "и"
+
+msgid "at"
+msgstr "в"
+
+msgid "every day at "
+msgstr "каждый день в "
+
+msgid "th"
+msgstr "-го"
+
+msgid "monthly"
+msgstr "ежемесячно"
+
+msgid "monthly on day "
+msgstr "ежемесячно в день "
+
+msgid "monthly on days "
+msgstr "ежемесячно по дням "
+
+msgid "Update management"
+msgstr "Управление обновлениями"
+
+msgid "Path"
+msgstr "Путь"
+
+msgid "Updated at"
+msgstr "Обновлено"
+
+msgid "Update"
+msgstr "Обновить"
+
+msgid "Edit"
+msgstr "Ред."
+
+msgid "Delete source #"
+msgstr "Удалить источник #"
+
+msgid "List is empty"
+msgstr "Список пуст"
+
+msgid "Automatic updates are disabled"
+msgstr "Автоматические обновления отключены"
+
+msgid "Total"
+msgstr "Всего"
+
+msgid "Schedule"
+msgstr "Расписание"
+
+msgid "minutes hours day_of_month month day_of_week (example: 30 4 * * 0)"
+msgstr "минуты часы день_месяца месяц день_недели (пример: 30 4 * * 0)"
+
+msgid "preset"
+msgstr "шаблон"
+
+msgid "Every day 05:00"
+msgstr "Каждый день 05:00"
+
+msgid "Every 30 minutes"
+msgstr "Каждые 30 минут"
+
+msgid "Sundays 04:30"
+msgstr "Воскресенья 04:30"
+
+msgid "1st day 03:00"
+msgstr "1-й день 03:00"
+
+msgid "Create/update autostart"
+msgstr "Создать/обновить автозапуск"
+
+msgid "Remove autostart"
+msgstr "Удалить автозапуск"
+
+msgid "Format"
+msgstr "Формат"
+
+msgid "examples"
+msgstr "примеры"
+
+msgid "every day at 5:00"
+msgstr "каждый день в 5:00"
+
+msgid "Sundays at 4:30"
+msgstr "воскресенья в 4:30"
+
+msgid "Update all"
+msgstr "Обновить все"
+
+msgid "Edit source #"
+msgstr "Редактировать источник #"
+
+msgid "(invalid index)"
+msgstr "(некорректный индекс)"
+
+msgid "Cancel"
+msgstr "Отмена"
+
+msgid "Add source"
+msgstr "Добавить источник"
+
+msgid "Add"
+msgstr "Добавить"
+
+msgid "Full source list (JSON) - expand/collapse"
+msgstr "Полный список источников (JSON) - развернуть/свернуть"
+
+msgid "Save list"
+msgstr "Сохранить список"
+
+msgid "Recreate script"
+msgstr "Пересоздать скрипт"
+
+msgid "Source list"
+msgstr "Список источников"
+
+msgid "Script"
+msgstr "Скрипт"
+
+msgid "GEO list was not parsed: "
+msgstr "Список GEO не разобран: "
+
+msgid "Source added: "
+msgstr "Источник добавлен: "
+
+msgid "Destination path (dest) is required."
+msgstr "Путь назначения (dest) обязателен."
+
+msgid "Updated: "
+msgstr "Обновлено: "
+
+msgid "Update failed: "
+msgstr "Обновление завершилось ошибкой: "
+
+msgid "Updated %d of %d sources"
+msgstr "Обновлено %d из %d источников"
+
+msgid "Source updated: "
+msgstr "Источник обновлён: "
+
+msgid "Source deleted: "
+msgstr "Источник удалён: "
+
+msgid "GEO list was not saved: "
+msgstr "Список GEO не сохранён: "
+
+msgid "Source list saved"
+msgstr "Список источников сохранён"
+
+msgid "Update script recreated"
+msgstr "Скрипт обновления пересоздан"
+
+msgid "Cron installed: "
+msgstr "Cron установлен: "
+
+msgid "Cron removed"
+msgstr "Cron удалён"
+
+msgid "Invalid JSON/JSONC in "
+msgstr "Некорректный JSON/JSONC в "
+
+msgid "Excluded"
+msgstr "Исключена"
+
+msgid "Error: no data to decrypt"
+msgstr "Ошибка: нет данных для расшифровки"
+
+msgid "Happ capture enabled. Copy the link from the subscriptions block and open it from the phone."
+msgstr "Happ capture включён. Скопируйте ссылку из блока подписок и откройте её с телефона."
+
+msgid "Failed to start Happ capture."
+msgstr "Не удалось запустить Happ capture."
+
+msgid "Happ capture disabled."
+msgstr "Happ capture выключен."
+
+msgid "Failed to stop Happ capture."
+msgstr "Не удалось остановить Happ capture."
+
+msgid "Happ fields were filled from the last capture request. Check the subscription URL and save the subscription."
+msgstr "Поля Happ заполнены из последнего capture-запроса. Проверьте URL подписки и сохраните подписку."
+
+msgid "Capture log does not contain saved headers."
+msgstr "Лог capture не содержит сохранённых headers."
+
+msgid "Subscription URL is required."
+msgstr "URL подписки обязателен."
+
+msgid "Subscription timeout must be at least 1 second."
+msgstr "Таймаут подписки должен быть не меньше 1 секунды."
+
+msgid "Subscription refresh timer must be at least 1 second."
+msgstr "Таймер обновления подписки должен быть не меньше 1 секунды."
+
+msgid "Subscription saved."
+msgstr "Подписка сохранена."
+
+msgid "Subscription deleted."
+msgstr "Подписка удалена."
+
+msgid "Subscription not found."
+msgstr "Подписка не найдена."
+
+msgid "Subscription updated: "
+msgstr "Подписка обновлена: "
+
+msgid "Failed to update subscription: "
+msgstr "Не удалось обновить подписку: "
+
+msgid "Subscriptions updated."
+msgstr "Подписки обновлены."
+
+msgid "Failed to update subscriptions."
+msgstr "Не удалось обновить подписки."
+
+msgid "Template file path is required."
+msgstr "Путь к файлу шаблона обязателен."
+
+msgid "Invalid template JSON/JSONC."
+msgstr "Некорректный JSON/JSONC шаблона."
+
+msgid "Watchdog template saved: "
+msgstr "Шаблон Watchdog сохранён: "
+
+msgid "Test template file path is required."
+msgstr "Путь к тестовому шаблону обязателен."
+
+msgid "Test template saved: "
+msgstr "Тестовый шаблон сохранён: "
+
+msgid "LINKS_FILE path is required."
+msgstr "Путь LINKS_FILE обязателен."
+
+msgid "Invalid line in LINKS_FILE: "
+msgstr "Некорректная строка в LINKS_FILE: "
+
+msgid "LINKS_FILE saved: "
+msgstr "LINKS_FILE сохранён: "
+
+msgid "Watchdog log cleared."
+msgstr "Лог Watchdog очищен."
+
+msgid "Watchdog check completed."
+msgstr "Проверка Watchdog выполнена."
+
+msgid "Watchdog check failed."
+msgstr "Проверка Watchdog завершилась ошибкой."
+
+msgid "Failure counter reset."
+msgstr "Счётчик ошибок сброшен."
+
+msgid "Failed to reset failure counter."
+msgstr "Не удалось сбросить счётчик ошибок."
+
+msgid "Rotation completed."
+msgstr "Ротация выполнена."
+
+msgid "Rotation failed."
+msgstr "Ротация завершилась ошибкой."
+
+msgid "All links check completed."
+msgstr "Проверка всех ссылок выполнена."
+
+msgid "Links check failed."
+msgstr "Проверка ссылок завершилась ошибкой."
+
+msgid "Link applied: "
+msgstr "Ссылка применена: "
+
+msgid "Failed to apply link: "
+msgstr "Не удалось применить ссылку: "
+
+msgid "Link checked: "
+msgstr "Ссылка проверена: "
+
+msgid "Link check failed: "
+msgstr "Проверка ссылки завершилась ошибкой: "
+
+msgid "Link excluded from subscriptions."
+msgstr "Ссылка исключена из подписок."
+
+msgid "Failed to exclude link from subscriptions."
+msgstr "Не удалось исключить ссылку из подписок."
+
+msgid "Link returned to rotation."
+msgstr "Ссылка возвращена в ротацию."
+
+msgid "Failed to return link to rotation."
+msgstr "Не удалось вернуть ссылку в ротацию."
+
+msgid "Added line must start with vless://"
+msgstr "Добавляемая строка должна начинаться с vless://"
+
+msgid "Link added."
+msgstr "Ссылка добавлена."
+
+msgid "Editable link not found."
+msgstr "Редактируемая ссылка не найдена."
+
+msgid "Subscription links cannot be edited directly. Exclude the link or edit the subscription."
+msgstr "Ссылки из подписок нельзя редактировать напрямую. Исключите ссылку или измените подписку."
+
+msgid "Link must start with vless://"
+msgstr "Ссылка должна начинаться с vless://"
+
+msgid "Link updated."
+msgstr "Ссылка обновлена."
+
+msgid "Link deleted."
+msgstr "Ссылка удалена."
+
+msgid "Link to delete was not found."
+msgstr "Ссылка для удаления не найдена."
+
+msgid "Link order updated."
+msgstr "Порядок ссылок обновлён."
+
+msgid "Link to reorder was not found."
+msgstr "Ссылка для перемещения не найдена."
+
+msgid "Watchdog service status and controls"
+msgstr "Статус и управление сервисом Watchdog"
+
+msgid "Check now"
+msgstr "Проверить сейчас"
+
+msgid "Check all links"
+msgstr "Проверить все ссылки"
+
+msgid "Force rotation"
+msgstr "Принудительная ротация"
+
+msgid "Reset counter"
+msgstr "Сбросить счётчик"
+
+msgid "Subscriptions"
+msgstr "Подписки"
+
+msgid "Edit subscription #"
+msgstr "Редактирование подписки #"
+
+msgid "New subscription"
+msgstr "Новая подписка"
+
+msgid "Click Start capture, copy the link and open it from the phone in the app/browser that performs the subscription request. The router will save headers and body of the last request, then they can be used to fill the Happ subscription form."
+msgstr "Нажмите Запустить capture, скопируйте ссылку и откройте её с телефона в приложении/браузере, который выполняет запрос подписки. Роутер сохранит headers и тело последнего запроса, затем их можно использовать для заполнения формы Happ-подписки."
+
+msgid "Status"
+msgstr "Статус"
+
+msgid "valid until"
+msgstr "действует до"
+
+msgid "TTL, sec"
+msgstr "TTL, сек"
+
+msgid "Capture service port"
+msgstr "Порт сервиса capture"
+
+msgid "Capture log"
+msgstr "Лог capture"
+
+msgid "Phone link"
+msgstr "Ссылка для телефона"
+
+msgid "Copy"
+msgstr "💾"
+
+msgid "Start capture"
+msgstr "Запустить capture"
+
+msgid "Stop capture"
+msgstr "Остановить capture"
+
+msgid "Show last request"
+msgstr "Показать последний запрос"
+
+msgid "Fill Happ form from the last request"
+msgstr "Заполнить Happ форму из последнего запроса"
+
+msgid "Last capture request"
+msgstr "Последний capture-запрос"
+
+msgid "No capture request has been saved yet."
+msgstr "Capture-запрос ещё не сохранён."
+
+msgid "Decrypts happ://crypt/, crypt2, crypt3, crypt4 and crypt5 through the shared server-side mechanism."
+msgstr "Расшифровывает happ://crypt/, crypt2, crypt3, crypt4 и crypt5 через общий серверный механизм."
+
+msgid "The result is only displayed and is not added to the link list or subscriptions."
+msgstr "Результат только отображается и не добавляется в список ссылок или подписки."
+
+msgid "Decrypt"
+msgstr "Расшифровать"
+
+msgid "Result"
+msgstr "Результат"
+
+msgid "Subscription list"
+msgstr "Список подписок"
+
+msgid "Type"
+msgstr "Тип"
+
+msgid "Enabled"
+msgstr "Включена"
+
+msgid "Timer"
+msgstr "Таймер"
+
+msgid "Action"
+msgstr "Действие"
+
+msgid "No subscriptions configured"
+msgstr "Подписки не настроены"
+
+msgid "yes"
+msgstr "да"
+
+msgid "no"
+msgstr "нет"
+
+msgid "sec"
+msgstr "сек"
+
+msgid "Delete subscription and its links?"
+msgstr "Удалить подписку и её ссылки?"
+
+msgid "Update all subscriptions"
+msgstr "Обновить все подписки"
+
+msgid "URL or Happ link"
+msgstr "URL или Happ link"
+
+msgid "Refresh timer, sec"
+msgstr "Таймер обновления, сек"
+
+msgid "Request timeout, sec"
+msgstr "Таймаут запроса, сек"
+
+msgid "Additional headers: one Name: value pair per line."
+msgstr "Дополнительные headers: по одной паре Name: value на строку."
+
+msgid "Save subscription"
+msgstr "Сохранить подписку"
+
+msgid "For Happ, you can specify a regular https:// URL or an encrypted happ://crypt* link. Raw, base64 and JSON responses of Happ subscriptions are parsed automatically."
+msgstr "Для Happ можно указать обычный https:// URL или зашифрованную happ://crypt* ссылку. Raw, base64 и JSON-ответы Happ-подписок разбираются автоматически."
+
+msgid "VLESS link list"
+msgstr "Список VLESS-ссылок"
+
+msgid "Source"
+msgstr "Источник"
+
+msgid "Comment"
+msgstr "Комментарий"
+
+msgid "VLESS link"
+msgstr "VLESS ссылка"
+
+msgid "Last check"
+msgstr "Последняя проверка"
+
+msgid "Link list is empty"
+msgstr "Список ссылок пуст"
+
+msgid "EXCLUDED"
+msgstr "ИСКЛЮЧЕНА"
+
+msgid "Apply"
+msgstr "Применить"
+
+msgid "Check"
+msgstr "Проверить"
+
+msgid "Return link to rotation?"
+msgstr "Вернуть ссылку в ротацию?"
+
+msgid "Enable"
+msgstr "Вкл"
+
+msgid "Exclude link from rotation?"
+msgstr "Исключить ссылку из ротации?"
+
+msgid "Exclude"
+msgstr "Искл"
+
+msgid "Delete selected link?"
+msgstr "Удалить выбранную ссылку?"
+
+msgid "New link file line"
+msgstr "Новая строка файла ссылок"
+
+msgid "Comment will be taken from the part after # inside the link"
+msgstr "Комментарий берётся из части после # внутри ссылки"
+
+msgid "LINKS_FILE editor"
+msgstr "Редактор LINKS_FILE"
+
+msgid "For bulk paste: one VLESS link per line. Empty lines and lines starting with # are allowed."
+msgstr "Для массовой вставки: одна VLESS-ссылка на строку. Пустые строки и строки, начинающиеся с #, разрешены."
+
+msgid "Save LINKS_FILE"
+msgstr "Сохранить LINKS_FILE"
+
+msgid "Watchdog settings"
+msgstr "Настройки Watchdog"
+
+msgid "ordered"
+msgstr "по порядку"
+
+msgid "random"
+msgstr "случайно"
+
+msgid "fastest"
+msgstr "самый быстрый"
+
+msgid "Exclude dead links"
+msgstr "Исключать нерабочие ссылки"
+
+msgid "Exclusion period: hours"
+msgstr "Период исключения: часы"
+
+msgid "Exclusion period: minutes"
+msgstr "Период исключения: минуты"
+
+msgid "Background link check"
+msgstr "Фоновая проверка ссылок"
+
+msgid "Background check timer, sec"
+msgstr "Таймер фоновой проверки, сек"
+
+msgid "Batch link check"
+msgstr "Batch-проверка ссылок"
+
+msgid "Batch start port"
+msgstr "Начальный batch-порт"
+
+msgid "Batch size"
+msgstr "Размер batch"
+
+msgid "Batch concurrency"
+msgstr "Параллельность batch"
+
+msgid "Fallback to old check"
+msgstr "Fallback на старую проверку"
+
+msgid "Save Watchdog settings"
+msgstr "Сохранить настройки Watchdog"
+
+msgid "Outbounds template"
+msgstr "Шаблон outbounds"
+
+msgid "The template is stored in a separate file and is processed by the built-in /usr/bin/vless2json.sh converter by default. The path can be overridden in settings."
+msgstr "Шаблон хранится в отдельном файле и по умолчанию обрабатывается встроенным конвертером /usr/bin/vless2json.sh. Путь можно изменить в настройках."
+
+msgid "Save template"
+msgstr "Сохранить шаблон"
+
+msgid "Template JSONC is valid"
+msgstr "JSONC шаблона корректен"
+
+msgid "JSONC error: "
+msgstr "Ошибка JSONC: "
+
+msgid "Test template"
+msgstr "Тестовый шаблон"
+
+msgid "This template is used for the temporary test-instance. The default variant supports placeholders __TEST_PORT__, __OUTBOUNDS__ and __OUTBOUND_TAG__."
+msgstr "Этот шаблон используется для временного test-instance. Базовый вариант поддерживает плейсхолдеры __TEST_PORT__, __OUTBOUNDS__ и __OUTBOUND_TAG__."
+
+msgid "Save test template"
+msgstr "Сохранить тестовый шаблон"
+
+msgid "Watchdog log"
+msgstr "Лог Watchdog"
+
+msgid "Clear log"
+msgstr "Очистить лог"
+
+msgid "excluded until"
+msgstr "исключена до"
+
+msgid "Not checked"
+msgstr "Не проверялась"
+
+msgid "(log is empty)"
+msgstr "(лог пуст)"
+
+msgid "Interval must be at least 1 second."
+msgstr "Интервал должен быть не меньше 1 секунды."
+
+msgid "Failure threshold must be at least 1."
+msgstr "Порог ошибок должен быть не меньше 1."
+
+msgid "Connect timeout must be at least 1."
+msgstr "Таймаут подключения должен быть не меньше 1."
+
+msgid "Max time must be greater than or equal to connect timeout."
+msgstr "Max time должен быть больше или равен таймауту подключения."
+
+msgid "Exclusion period is invalid."
+msgstr "Некорректный период исключения."
+
+msgid "Test-instance port must be in range 1..65535."
+msgstr "Порт тестового instance должен быть в диапазоне 1..65535."
+
+msgid "Background check timer must be at least 1 second."
+msgstr "Таймер фоновой проверки должен быть не меньше 1 секунды."
+
+msgid "Happ capture TTL must be at least 1 second."
+msgstr "TTL Happ capture должен быть не меньше 1 секунды."
+
+msgid "Happ capture port must be in range 1..65535."
+msgstr "Порт Happ capture должен быть в диапазоне 1..65535."
+
+msgid "Unknown link selection mode."
+msgstr "Неизвестный режим выбора ссылок."
+
+msgid "A valid absolute service path is required."
+msgstr "Требуется корректный абсолютный путь к сервису."
+
+msgid "Batch check start port must be in range 1..65535."
+msgstr "Начальный порт batch-проверки должен быть в диапазоне 1..65535."
+
+msgid "Batch check size must be at least 1."
+msgstr "Размер batch-проверки должен быть не меньше 1."
+
+msgid "Batch check concurrency must be at least 1."
+msgstr "Параллельность batch-проверки должна быть не меньше 1."
+
+msgid "Batch check port range exceeds 65535."
+msgstr "Диапазон портов batch-проверки выходит за 65535."
+
+msgid "Batch check port range must not include Watchdog TEST_PORT."
+msgstr "Диапазон портов batch-проверки не должен включать Watchdog TEST_PORT."
+
+msgid "Required field is empty: "
+msgstr "Обязательное поле пустое: "
+
+msgid "Invalid absolute path for "
+msgstr "Некорректный абсолютный путь для "
+
+msgid "Watchdog settings saved."
+msgstr "Настройки Watchdog сохранены."
+
+msgid "Test start command is required."
+msgstr "Команда запуска теста обязательна."
+
+msgid "Invalid JSON (parse error)"
+msgstr "Некорректный JSON (ошибка разбора)"
+
+msgid "Xray service status and controls"
+msgstr "Статус и управление сервисом Xray"
+
+msgid "Xray (JSON files in /etc/xray)"
+msgstr "Xray (JSON-файлы в /etc/xray)"
+
+msgid "Invalid file name. Expected *.json without slashes."
+msgstr "Некорректное имя файла. Ожидается *.json без слешей."
+
+msgid "JSONC is valid (comments allowed)"
+msgstr "JSONC корректен (комментарии разрешены)"
+
+msgid "JSON error: "
+msgstr "Ошибка JSON: "
+
+msgid "JSON saved: "
+msgstr "JSON сохранён: "
+
+msgid "Check URL"
+msgstr "URL проверки"
+
+msgid "Proxy URL"
+msgstr "Proxy URL"
+
+msgid "Check interval, sec"
+msgstr "Интервал проверки, сек"
+
+msgid "Failure threshold"
+msgstr "Порог ошибок"
+
+msgid "Connect timeout, sec"
+msgstr "Таймаут подключения, сек"
+
+msgid "Max request time, sec"
+msgstr "Максимальное время запроса, сек"
+
+msgid "Outbound file"
+msgstr "Файл outbound"
+
+msgid "VLESS converter"
+msgstr "Конвертер VLESS"
+
+msgid "Managed service"
+msgstr "Управляемый сервис"
+
+msgid "Restart command"
+msgstr "Команда рестарта"
+
+msgid "Test command"
+msgstr "Команда тестового запуска"
+
+msgid "Selection mode"
+msgstr "Режим выбора"
+
+msgid "Test port"
+msgstr "Тестовый порт"
+
+msgid "Batch test template"
+msgstr "Batch-шаблон проверки"
+
+msgid "Subscriptions file"
+msgstr "Файл подписок"
+
+msgid "Happ capture TTL, sec"
+msgstr "TTL Happ capture, сек"
+
+msgid "Happ capture port"
+msgstr "Порт Happ capture"
+
+msgid "Happ capture log"
+msgstr "Лог Happ capture"

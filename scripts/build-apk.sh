@@ -44,6 +44,7 @@ OUT_FILE="$OUT_DIR_ABS/${PACKAGE_NAME}-${PKG_VERSION}.apk"
 mkdir -p "$BUILDROOT" "$SCRIPTDIR"
 
 copy_payload_tree "$PKG_DIR" "$BUILDROOT"
+compile_luci_i18n "$PKG_DIR" "$BUILDROOT"
 normalize_tree "$BUILDROOT"
 
 cp "$PKG_DIR/CONTROL/postinst" "$SCRIPTDIR/post-install.sh"

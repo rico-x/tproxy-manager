@@ -3,6 +3,7 @@ local sys = require "luci.sys"
 local http = require "luci.http"
 local disp = require "luci.dispatcher"
 local utils = require "luci.model.cbi.tproxy_manager.utils"
+local _ = require "luci.model.cbi.tproxy_manager.i18n"
 
 local M = {}
 
@@ -173,11 +174,11 @@ function M.status_label(entry, pcdata)
   elseif status == "dead" then
     local suffix = ""
     if cooldown ~= "" and cooldown ~= "-" then
-      suffix = " <span style='color:#9ca3af'>(искл. до " .. pcdata(cooldown) .. ")</span>"
+      suffix = " <span style='color:#9ca3af'>(" .. _("excluded until") .. " " .. pcdata(cooldown) .. ")</span>"
     end
     return "<span class='svc-badge err'>Error</span>" .. speed .. suffix, checked
   end
-  return "<span style='color:#6b7280'>Не проверялась</span>", "-"
+  return "<span style='color:#6b7280'>" .. _("Not checked") .. "</span>", "-"
 end
 
 function M.watchdog_log()
@@ -187,7 +188,7 @@ function M.watchdog_log()
       return out
     end
   end
-  return "(лог пуст)"
+  return _("(log is empty)")
 end
 
 function M.clear_watchdog_log()
@@ -224,26 +225,26 @@ function M.save_watchdog_settings(ctx)
   local service_path = trim(http.formvalue("watchdog_service_path"))
   local test_command, test_command_err = M.validate_test_command(http.formvalue("watchdog_test_command"))
 
-  if interval < 1 then set_err("Интервал должен быть не меньше 1 секунды."); return false end
-  if fail_threshold < 1 then set_err("Порог ошибок должен быть не меньше 1."); return false end
-  if connect_timeout < 1 then set_err("Connect timeout должен быть не меньше 1."); return false end
-  if max_time < connect_timeout then set_err("Max time должен быть не меньше connect timeout."); return false end
+  if interval < 1 then set_err(_("Interval must be at least 1 second.")); return false end
+  if fail_threshold < 1 then set_err(_("Failure threshold must be at least 1.")); return false end
+  if connect_timeout < 1 then set_err(_("Connect timeout must be at least 1.")); return false end
+  if max_time < connect_timeout then set_err(_("Max time must be greater than or equal to connect timeout.")); return false end
   if cooldown_hours < 0 or cooldown_minutes < 0 or cooldown_minutes > 59 then
-    set_err("Период исключения задан некорректно."); return false
+    set_err(_("Exclusion period is invalid.")); return false
   end
-  if test_port < 1 or test_port > 65535 then set_err("Порт test-instance должен быть в диапазоне 1..65535."); return false end
-  if background_check_interval < 1 then set_err("Таймер фоновой проверки должен быть не меньше 1 секунды."); return false end
-  if happ_capture_ttl < 1 then set_err("Время действия Happ capture должно быть не меньше 1 секунды."); return false end
-  if happ_capture_port < 1 or happ_capture_port > 65535 then set_err("Порт Happ capture должен быть в диапазоне 1..65535."); return false end
-  if mode ~= "random" and mode ~= "ordered" and mode ~= "fastest" then set_err("Неизвестный режим выбора ссылок."); return false end
-  if service_path == "" or not utils.is_abs_path(service_path) then set_err("Нужно указать корректный абсолютный путь к сервису."); return false end
+  if test_port < 1 or test_port > 65535 then set_err(_("Test-instance port must be in range 1..65535.")); return false end
+  if background_check_interval < 1 then set_err(_("Background check timer must be at least 1 second.")); return false end
+  if happ_capture_ttl < 1 then set_err(_("Happ capture TTL must be at least 1 second.")); return false end
+  if happ_capture_port < 1 or happ_capture_port > 65535 then set_err(_("Happ capture port must be in range 1..65535.")); return false end
+  if mode ~= "random" and mode ~= "ordered" and mode ~= "fastest" then set_err(_("Unknown link selection mode.")); return false end
+  if service_path == "" or not utils.is_abs_path(service_path) then set_err(_("A valid absolute service path is required.")); return false end
   if not test_command then set_err(test_command_err); return false end
-  if batch_check_port_start < 1 or batch_check_port_start > 65535 then set_err("Стартовый порт batch-проверки должен быть в диапазоне 1..65535."); return false end
-  if batch_check_batch_size < 1 then set_err("Размер пачки batch-проверки должен быть не меньше 1."); return false end
-  if batch_check_concurrency < 1 then set_err("Параллельность batch-проверки должна быть не меньше 1."); return false end
-  if batch_check_port_start + batch_check_batch_size - 1 > 65535 then set_err("Диапазон портов batch-проверки выходит за предел 65535."); return false end
+  if batch_check_port_start < 1 or batch_check_port_start > 65535 then set_err(_("Batch check start port must be in range 1..65535.")); return false end
+  if batch_check_batch_size < 1 then set_err(_("Batch check size must be at least 1.")); return false end
+  if batch_check_concurrency < 1 then set_err(_("Batch check concurrency must be at least 1.")); return false end
+  if batch_check_port_start + batch_check_batch_size - 1 > 65535 then set_err(_("Batch check port range exceeds 65535.")); return false end
   if batch_check_port_start <= test_port and (batch_check_port_start + batch_check_batch_size - 1) >= test_port then
-    set_err("Диапазон портов batch-проверки не должен включать TEST_PORT watchdog."); return false
+    set_err(_("Batch check port range must not include Watchdog TEST_PORT.")); return false
   end
   if batch_check_concurrency > batch_check_batch_size then batch_check_concurrency = batch_check_batch_size end
 
@@ -261,12 +262,12 @@ function M.save_watchdog_settings(ctx)
   }
   for key, value in pairs(text_fields) do
     if value == "" then
-      set_err("Нужно заполнить поле " .. key .. ".")
+      set_err(_("Required field is empty: ") .. key .. ".")
       return false
     end
     if key:match("_file$") or key == "watchdog_vless2json" or key == "watchdog_happ_capture_log" then
       if not utils.is_abs_path(value) then
-        set_err("Некорректный абсолютный путь для " .. key .. ".")
+        set_err(_("Invalid absolute path for ") .. key .. ".")
         return false
       end
     end
@@ -301,13 +302,13 @@ function M.save_watchdog_settings(ctx)
   uci:commit(PKG)
 
   set_err(nil)
-  set_info("Настройки watchdog сохранены.")
+  set_info(_("Watchdog settings saved."))
   return true
 end
 
 function M.validate_test_command(value)
   value = trim(value)
-  if value == "" then return nil, "Нужно указать команду тестового запуска." end
+  if value == "" then return nil, _("Test start command is required.") end
   return value
 end
 

@@ -1,6 +1,7 @@
 local fs = require "nixio.fs"
 local sys = require "luci.sys"
 local jsonc = require "luci.jsonc"
+local _ = require "luci.model.cbi.tproxy_manager.i18n"
 
 local M = {}
 
@@ -18,6 +19,7 @@ end
 
 function M.atomic_write(path, data)
   path = tostring(path or "")
+  if path == "" then return false end
   data = tostring(data or ""):gsub("\r\n", "\n")
   local dir, base = path:match("^(.*)/([^/]+)$")
   local tmpdir = (dir and dir ~= "") and dir or "/tmp"
@@ -27,14 +29,16 @@ function M.atomic_write(path, data)
   local tmp = string.format("%s/.%s.%d.tmp", tmpdir, base or "tmp", math.random(1, 10^9))
   fs.writefile(tmp, data)
   fs.rename(tmp, path)
+  return true
 end
 
 function M.read_file(path)
+  if type(path) ~= "string" or path == "" then return "" end
   return fs.readfile(path) or ""
 end
 
 function M.write_file(path, data)
-  M.atomic_write(path, data or "")
+  return M.atomic_write(path, data or "")
 end
 
 function M.strip_json_comments(s)
@@ -81,7 +85,7 @@ function M.parse_jsonc(text)
   local cleaned = M.strip_json_comments(text or "")
   local ok, parsed = pcall(jsonc.parse, cleaned)
   if not ok or parsed == nil then
-    return nil, "Некорректный JSON/JSONC"
+    return nil, _("Invalid JSON/JSONC")
   end
   return parsed
 end

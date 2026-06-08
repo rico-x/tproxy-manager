@@ -1,4 +1,6 @@
 .DS_Store
+__pycache__/
+*.pyc
 
 # Local build artifacts. GitHub Actions produces release packages.
 dist/

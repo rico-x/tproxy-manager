@@ -6,24 +6,25 @@ local http  = require "luci.http"
 local disp  = require "luci.dispatcher"
 local xml   = require "luci.xml"
 local utils = require "luci.model.cbi.tproxy_manager.utils"
+local _     = require "luci.model.cbi.tproxy_manager.i18n"
 local ucim  = require "luci.model.uci"
 local uci   = ucim.cursor()
 local cbi   = require "luci.cbi"
 local SimpleSection, DummyValue, Button =
   cbi.SimpleSection, cbi.DummyValue, cbi.Button
 
--- Алиасы
+-- Aliases
 local pcdata     = xml.pcdata
 local formvalue  = http.formvalue
 
--- Пакет/пути
+-- Package paths
 local PKG      = "tproxy-manager"
 local BASE_DIR = "/etc/tproxy-manager"
 
 local read_file  = utils.read_file
 local write_file = utils.write_file
 
--- Сообщения с TTL
+-- TTL messages
 local ERR_F   = "/tmp/tproxy_manager_last_error"
 local INF_F   = "/tmp/tproxy_manager_last_info"
 local ERR_TTL = 60
@@ -31,13 +32,13 @@ local messages = utils.make_temp_message_store(ERR_F, INF_F, ERR_TTL)
 local set_err, get_err = messages.set_err, messages.get_err
 local set_info, get_info = messages.set_info, messages.get_info
 
--- Общий system log (модулям может понадобиться)
+-- Common system log for modules.
 local function combined_log()
   local out = sys.exec("logread 2>/dev/null | tail -n 200")
-  return (out and out ~= "") and out or "(нет строк лога)"
+  return (out and out ~= "") and out or _("(no log lines)")
 end
 
--- service helpers (общие для всех модулей)
+-- Shared service helpers.
 local function svc_status_txt(name)
   local txt = sys.exec(string.format("[ -x /etc/init.d/%s ] && /etc/init.d/%s status 2>&1 || echo 'N/A'", name, name)) or ""
   return txt:gsub("%s+$","")
@@ -58,7 +59,7 @@ local function svc_do(name, op)
   sys.call(string.format("[ -x /etc/init.d/%s ] && /etc/init.d/%s %s >/dev/null 2>&1", name, name, op))
 end
 
--- Универсальный блок статуса сервиса
+-- Shared service status block.
 local function service_block(sec, svc, label, tabname)
   local d = sec:option(DummyValue, "_"..svc.."_stat")
   d.rawhtml = true
@@ -70,43 +71,73 @@ local function service_block(sec, svc, label, tabname)
       "<div class='svc-row'><div class='svc-title'><strong>%s</strong>: " ..
       "<span class='svc-badge %s'>%s</span> · <span class='svc-badge %s'>%s</span></div></div>",
       pcdata(label),
-      run and "ok" or "err", run and "работает" or "остановлен",
-      en and "ok" or "err",  en  and "в автозапуске" or "не в автозапуске"
+      run and "ok" or "err", run and _("running") or _("stopped"),
+      en and "ok" or "err",  en  and _("enabled") or _("disabled")
     )
   end
 
-  local bstart = sec:option(Button, "_"..svc.."_start"); bstart.title = ""; bstart.inputtitle = "Запустить"
+  local bstart = sec:option(Button, "_"..svc.."_start"); bstart.title = ""; bstart.inputtitle = _("Start")
   bstart.inputstyle = "apply"
   function bstart.render(self, section) if svc_running(svc_status_txt(svc)) then return end; Button.render(self, section) end
   function bstart.write(self, section) if not self.map:formvalue(self:cbid(section)) then return end; svc_do(svc,"start"); set_err(nil); http.redirect(disp.build_url("admin","network","tproxy_manager").."?tab="..(tabname or "")) end
 
-  local bstop  = sec:option(Button, "_"..svc.."_stop"); bstop.title = ""; bstop.inputtitle = "Остановить"
+  local bstop  = sec:option(Button, "_"..svc.."_stop"); bstop.title = ""; bstop.inputtitle = _("Stop")
   bstop.inputstyle = "remove"
   function bstop.render(self, section) if not svc_running(svc_status_txt(svc)) then return end; Button.render(self, section) end
   function bstop.write(self, section) if not self.map:formvalue(self:cbid(section)) then return end; svc_do(svc,"stop"); set_err(nil); http.redirect(disp.build_url("admin","network","tproxy_manager").."?tab="..(tabname or "")) end
 
-  local ben   = sec:option(Button, "_"..svc.."_enable"); ben.title = ""; ben.inputtitle = "Добавить в автозапуск"
+  local ben   = sec:option(Button, "_"..svc.."_enable"); ben.title = ""; ben.inputtitle = _("Enable autostart")
   ben.inputstyle = "apply"
   function ben.render(self, section) if is_enabled(svc) then return end; Button.render(self, section) end
   function ben.write(self, section) if not self.map:formvalue(self:cbid(section)) then return end; svc_do(svc,"enable"); set_err(nil); http.redirect(disp.build_url("admin","network","tproxy_manager").."?tab="..(tabname or "")) end
 
-  local bdis  = sec:option(Button, "_"..svc.."_disable"); bdis.title = ""; bdis.inputtitle = "Убрать из автозапуска"
+  local bdis  = sec:option(Button, "_"..svc.."_disable"); bdis.title = ""; bdis.inputtitle = _("Disable autostart")
   bdis.inputstyle = "remove"
   function bdis.render(self, section) if not is_enabled(svc) then return end; Button.render(self, section) end
   function bdis.write(self, section) if not self.map:formvalue(self:cbid(section)) then return end; svc_do(svc,"disable"); set_err(nil); http.redirect(disp.build_url("admin","network","tproxy_manager").."?tab="..(tabname or "")) end
 end
 
--- Форма-значения
+-- Form values
+local function request_arg(name)
+  local args = disp.context and disp.context.requestargs
+  local v = type(args) == "table" and args[name] or nil
+  if type(v) == "table" then return v[1] or "" end
+  if v ~= nil and v ~= "" then return v end
+
+  local function query_value(qs)
+    qs = tostring(qs or "")
+    for part in qs:gmatch("[^&]+") do
+      local k, val = part:match("^([^=]*)=?(.*)$")
+      if http.urldecode(k or "") == name then
+        return http.urldecode((val or ""):gsub("+", " "))
+      end
+    end
+    return nil
+  end
+
+  local ok, qs = pcall(function() return http.getenv("QUERY_STRING") end)
+  v = ok and query_value(qs) or nil
+  if v ~= nil and v ~= "" then return v end
+
+  local ok_uri, uri = pcall(function() return http.getenv("REQUEST_URI") end)
+  local uri_qs = ok_uri and tostring(uri or ""):match("%?(.*)$") or nil
+  v = query_value(uri_qs)
+  if v ~= nil and v ~= "" then return v end
+
+  return nil
+end
 local function fval(name)
   local v = formvalue(name)
+  if v == nil or v == "" then v = request_arg(name) end
   if type(v) == 'table' then return v[1] or '' else return v or '' end
 end
 local function fval_last(name)
   local v = formvalue(name)
+  if v == nil or v == "" then v = request_arg(name) end
   if type(v) == 'table' then return v[#v] or '' else return v or '' end
 end
 
--- Утилиты (нужны модулям)
+-- Utilities used by modules.
 local function urlencode(s) return (http and http.urlencode) and http.urlencode(s) or tostring(s or "") end
 local function pick_form_or_uci(form_val, uci_val)
   return (form_val ~= nil and form_val ~= "") and form_val or (uci_val or "")
@@ -120,7 +151,7 @@ local function append_line_unique(path, line)
   write_file(path, (body ~= "" and (body:match("\n$") and body or body.."\n") or "") .. line .. "\n")
 end
 
--- Ссылка на самих себя
+-- Current page URL helper.
 local function self_url(opts)
   opts = opts or {}
   local url = disp.build_url("admin","network","tproxy_manager")
@@ -148,32 +179,48 @@ end
 
 -- ensure main section exists, but do not rewrite installer defaults from LuCI
 do
-  if not uci:get(PKG, "main") then
+  local has_main = uci:get(PKG, "main") or sys.call("uci -q get " .. utils.shellescape(PKG .. ".main") .. " >/dev/null 2>&1") == 0
+  if not has_main then
     uci:section(PKG,"main","main",{})
     uci:commit(PKG)
   end
 end
 
--- Текущие признаки активных модулей из UCI
-local ENABLE_XRAY    = (uci:get(PKG,"main","enable_xray")    == "1")
-local ENABLE_MIHOMO  = (uci:get(PKG,"main","enable_mihomo")  == "1")
-local ENABLE_UPDATES = (uci:get(PKG,"main","enable_updates") == "1")
-local ENABLE_WATCHDOG = (uci:get(PKG,"main","enable_watchdog") == "1")
+local function uci_get_main(option, fallback)
+  local value = uci:get(PKG, "main", option)
+  if value ~= nil and value ~= false and value ~= "" then return value end
 
--- Попробуем сетевую модель (ядру TPROXY может пригодиться)
+  local out = sys.exec("uci -q get " .. utils.shellescape(PKG .. ".main." .. option) .. " 2>/dev/null") or ""
+  out = utils.trim(out)
+  if out ~= "" then return out end
+
+  return fallback
+end
+
+local function enabled_option(option)
+  return uci_get_main(option, "0") == "1"
+end
+
+-- Active module flags from UCI.
+local ENABLE_XRAY     = enabled_option("enable_xray")
+local ENABLE_MIHOMO   = enabled_option("enable_mihomo")
+local ENABLE_UPDATES  = enabled_option("enable_updates")
+local ENABLE_WATCHDOG = enabled_option("enable_watchdog")
+
+-- Network model is useful for the TPROXY core.
 local netm_init = nil
 do
   local ok, res = pcall(function() return require("luci.model.network").init() end)
   if ok then netm_init = res end
 end
 
--- ---------- Построение формы ----------
--- Убрали описание (только заголовок)
+-- ---------- Form rendering ----------
+-- Keep the page compact: title only, no description.
 local m = cbi.SimpleForm("tproxy_manager", "TPROXY Manager")
 m.submit = true
 m.reset  = false
 
--- Базовые стили (общие)
+-- Shared base styles.
 do
   local s = m:section(SimpleSection)
   local dv = s:option(DummyValue, "_css_base"); dv.rawhtml = true
@@ -188,7 +235,7 @@ do
 .svc-badge{font-weight:600}
 .svc-badge.ok{color:#16a34a}
 .svc-badge.err{color:#dc2626}
-/* сервисные кнопки в одну линию */
+/* service buttons in one line */
 #cbi-tproxy_manager .cbi-value[id*="_start"],
 #cbi-tproxy_manager .cbi-value[id*="_stop"],
 #cbi-tproxy_manager .cbi-value[id*="_enable"],
@@ -209,13 +256,13 @@ do
 .leases-table{ width:100%; border-collapse:collapse }
 .leases-table th, .leases-table td{border:1px solid #e5e7eb; padding:.35rem; vertical-align:top}
 .leases-table th{background:#f9fafb}
-/* прибираем зазор непосредственно после блока доп.настроек: */
+/* keep the gap after the extra settings block compact */
 #extra-mods{ margin: .25rem 0 0 0; }
 #extra-mods + .cbi-section{ margin-top: 0 !important; }
 </style>]] end
 end
 
--- Hidden + JS guard (вверх — не даёт визуальных отступов)
+-- Hidden state and dirty guard.
 do
   local s = m:section(SimpleSection)
   local dv = s:option(DummyValue, "_hidden"); dv.rawhtml = true
@@ -230,7 +277,7 @@ do
     var n = e && e.target && e.target.name;
     if (n === 'uniedit_text' || n === 'json_text' || n === 'clash_text' || n === 'mihomo_text' || n === 'geo_sources' || n === 'watchdog_template_text' || n === 'watchdog_test_template_text' || n === 'watchdog_links_text' || n === 'watchdog_batch_test_template_file' || n === 'watchdog_batch_check_port_start' || n === 'watchdog_batch_check_batch_size' || n === 'watchdog_batch_check_concurrency' || n === 'wd_add_link' || n === 'wd_edit_link' || n === 'watchdog_happ_capture_ttl' || n === 'watchdog_happ_capture_port' || n === 'watchdog_happ_capture_log' || n === 'happ_capture_start_ttl' || n === 'happ_capture_start_port' || n === 'happ_capture_start_log' || (n && n.indexOf('sub_') === 0)) window.__xray_dirty = true;
   }, true);
-  window.__xray_guard = function(){ return (!window.__xray_dirty) || confirm('Есть несохранённые изменения. Перейти без сохранения?'); };
+  window.__xray_guard = function(){ return (!window.__xray_dirty) || confirm(']] .. pcdata(_("There are unsaved changes. Leave without saving?")) .. [['); };
   setTimeout(function(){
     var infos = document.querySelectorAll('.msg.info');
     infos.forEach(function(el){ el.style.transition='opacity .4s'; el.style.opacity='0';
@@ -244,7 +291,7 @@ do
   end
 end
 
--- navbar (идёт перед доп.настройками)
+-- Navigation before extra settings.
 do
   local s = m:section(SimpleSection)
   local nav = s:option(DummyValue, "_nav"); nav.rawhtml = true
@@ -258,15 +305,15 @@ do
     end
     local out = {}
     out[#out+1] = link("tproxy", "TPROXY", true)
-    out[#out+1] = link("xray",   "XRAY",   (uci:get(PKG,"main","enable_xray") == "1"))
-    out[#out+1] = link("mihomo", "MIHOMO", (uci:get(PKG,"main","enable_mihomo") == "1"))
-    out[#out+1] = link("updates","Обновление геобаз", (uci:get(PKG,"main","enable_updates") == "1"))
-    out[#out+1] = link("watchdog","WATCHDOG", (uci:get(PKG,"main","enable_watchdog") == "1"))
+    out[#out+1] = link("xray",   "XRAY",   ENABLE_XRAY)
+    out[#out+1] = link("mihomo", "MIHOMO", ENABLE_MIHOMO)
+    out[#out+1] = link("updates", _("GEO updates"), ENABLE_UPDATES)
+    out[#out+1] = link("watchdog","WATCHDOG", ENABLE_WATCHDOG)
     return "<div style='margin:.2rem 0 .2rem 0'>" .. table.concat(out, "") .. "</div>"
   end
 end
 
--- Обработчик сохранения флагов модулей (без отдельной формы)
+-- Module flag save handler.
 if http.formvalue("_save_modules") == "1" then
   local ex = http.formvalue("enable_xray") == "1" and "1" or "0"
   local em = http.formvalue("enable_mihomo") == "1" and "1" or "0"
@@ -277,51 +324,57 @@ if http.formvalue("_save_modules") == "1" then
   uci:set(PKG,"main","enable_updates", eu)
   uci:set(PKG,"main","enable_watchdog", ew)
   uci:commit(PKG)
-  set_info("Настройки модулей сохранены.")
+  set_info(_("Module settings saved."))
   redirect_here(fval("tab") or "tproxy")
   return m
 end
 
--- Дополнительные настройки — СРАЗУ перед модулями, без лишнего отступа снизу
+-- Extra settings directly before modules, without a large gap.
 do
   local s = m:section(SimpleSection)
   local dv = s:option(DummyValue, "_extra"); dv.rawhtml = true
   function dv.cfgvalue()
     local cur = fval("tab") or "tproxy"
-    local ex = (uci:get(PKG,"main","enable_xray")    == "1") and "checked" or ""
-    local em = (uci:get(PKG,"main","enable_mihomo")  == "1") and "checked" or ""
-    local eu = (uci:get(PKG,"main","enable_updates") == "1") and "checked" or ""
-    local ew = (uci:get(PKG,"main","enable_watchdog") == "1") and "checked" or ""
+    local ex = ENABLE_XRAY and "checked" or ""
+    local em = ENABLE_MIHOMO and "checked" or ""
+    local eu = ENABLE_UPDATES and "checked" or ""
+    local ew = ENABLE_WATCHDOG and "checked" or ""
     return string.format([[
 <details id="extra-mods">
-  <summary style="cursor:pointer">Дополнительные настройки</summary>
+  <summary style="cursor:pointer">%s</summary>
   <div class="box" style="max-width:860px; margin-top:.4rem">
     <div class="inline-row" style="flex-wrap:wrap; gap:.8rem">
-      <label><input type="checkbox" name="enable_xray" value="1" %s> Вкладка XRAY</label>
-      <label><input type="checkbox" name="enable_mihomo" value="1" %s> Вкладка MIHOMO</label>
-      <label><input type="checkbox" name="enable_updates" value="1" %s> Вкладка Обновления геобаз</label>
-      <label><input type="checkbox" name="enable_watchdog" value="1" %s> Вкладка Watchdog</label>
+      <label><input type="checkbox" name="enable_xray" value="1" %s> %s</label>
+      <label><input type="checkbox" name="enable_mihomo" value="1" %s> %s</label>
+      <label><input type="checkbox" name="enable_updates" value="1" %s> %s</label>
+      <label><input type="checkbox" name="enable_watchdog" value="1" %s> %s</label>
     </div>
     <div style="margin-top:.5rem">
-      <button class="cbi-button cbi-button-apply" name="_save_modules" value="1">Сохранить</button>
+      <button class="cbi-button cbi-button-apply" name="_save_modules" value="1">%s</button>
       <input type="hidden" name="tab" value="%s"/>
     </div>
   </div>
 </details>]],
-      ex, em, eu, ew, pcdata(cur)
+      pcdata(_("Additional settings")),
+      ex, pcdata(_("XRAY tab")),
+      em, pcdata(_("MIHOMO tab")),
+      eu, pcdata(_("GEO updates tab")),
+      ew, pcdata(_("Watchdog tab")),
+      pcdata(_("Save")),
+      pcdata(cur)
     )
   end
 end
 
--- redirect на TPROXY по умолчанию
-if not http.formvalue("tab") or http.formvalue("tab") == "" then
+-- Redirect to TPROXY by default.
+if fval("tab") == "" then
   http.redirect(disp.build_url("admin","network","tproxy_manager") .. "?tab=tproxy")
   return m
 end
 
 local cur_tab = fval("tab") or "tproxy"
 
--- Общий контекст для модулей
+-- Shared module context.
 local ctx = {
   PKG = PKG, BASE_DIR = BASE_DIR,
   m = m, uci = uci, http = http, sys = sys, fs = fs, disp = disp, jsonc = jsonc, xml = xml,
@@ -330,8 +383,9 @@ local ctx = {
   combined_log = combined_log, service_block = service_block,
   set_err = set_err, get_err = get_err, set_info = set_info, get_info = get_info,
 
-  -- утилиты
+  -- Utilities
   utils = utils,
+  _ = _,
   write_file = write_file, read_file = read_file,
   pick_form_or_uci = pick_form_or_uci,
   append_line_unique = append_line_unique,
@@ -348,23 +402,23 @@ local ctx = {
   netm_init = netm_init,
 }
 
--- Загрузка модулей согласно вкладке и UCI-флагам
+-- Load modules according to the selected tab and UCI flags.
 if cur_tab == "tproxy" then
   require("luci.model.cbi.tproxy_manager.modules.tproxy").render(ctx)
-elseif cur_tab == "xray" and (uci:get(PKG,"main","enable_xray") == "1") then
+elseif cur_tab == "xray" and ENABLE_XRAY then
   require("luci.model.cbi.tproxy_manager.modules.xray").render(ctx)
-elseif cur_tab == "mihomo" and (uci:get(PKG,"main","enable_mihomo") == "1") then
+elseif cur_tab == "mihomo" and ENABLE_MIHOMO then
   require("luci.model.cbi.tproxy_manager.modules.mihomo").render(ctx)
-elseif cur_tab == "updates" and (uci:get(PKG,"main","enable_updates") == "1") then
+elseif cur_tab == "updates" and ENABLE_UPDATES then
   require("luci.model.cbi.tproxy_manager.modules.updates").render(ctx)
-elseif cur_tab == "watchdog" and (uci:get(PKG,"main","enable_watchdog") == "1") then
+elseif cur_tab == "watchdog" and ENABLE_WATCHDOG then
   require("luci.model.cbi.tproxy_manager.modules.watchdog").render(ctx)
 else
   http.redirect(self_url({ tab = "tproxy" }))
   return m
 end
 
--- Сообщения (ошибка/инфо) — в самом низу, чтобы не вставали между «доп.настройками» и модулем
+-- Messages are rendered at the bottom to keep module layout stable.
 do
   local s = m:section(SimpleSection)
   local msg = s:option(DummyValue, "_msgs"); msg.rawhtml = true; msg.title = ""

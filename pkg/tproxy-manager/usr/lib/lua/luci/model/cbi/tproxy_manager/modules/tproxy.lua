@@ -11,6 +11,7 @@ local function render(ctx)
   local is_iface_name, is_nft_table_name, is_fwmark = ctx.is_iface_name, ctx.is_nft_table_name, ctx.is_fwmark
   local combined_log = ctx.combined_log
   local netm_init = ctx.netm_init
+  local _ = ctx._ or function(s) return s end
   local PKG = ctx.PKG
   local defaults = {
     ifaces = "br-lan",
@@ -47,18 +48,18 @@ local function render(ctx)
     set_err(nil); redirect_here("tproxy"); return m
   end
 
-  -- Сервис TPROXY
+  -- TPROXY service
   do
-    local ss = m:section(SimpleSection, "Статус и управление сервисом TPROXY")
+    local ss = m:section(SimpleSection, _("TPROXY service status and controls"))
     service_block(ss, "tproxy-manager", "TPROXY", "tproxy")
   end
 
-  -- Кнопка «Перезагрузка» (сохраняет UCI + файл и рестартует сервис)
+  -- Restart button saves UCI/list file and restarts the service.
   do
     local top = m:section(SimpleSection, ""); top.anonymous = true
     local dv = top:option(DummyValue, "_pretitle_restart"); dv.rawhtml = true
     function dv.cfgvalue()
-      return [[
+      return string.format([[
 <style>
   .tpx-btn-slim{
     display:inline-block !important;
@@ -77,8 +78,8 @@ local function render(ctx)
 <div class="inline-row" style="margin:.25rem 0 .25rem 0">
   <button class="cbi-button cbi-button-reload tpx-btn-slim"
           name="_tproxy_restart" value="1"
-          title="Сохранить и перезапустить TPROXY">
-    <span>Перезагрузка</span>
+          title="%s">
+    <span>%s</span>
   </button>
 </div>
 <script>
@@ -95,23 +96,27 @@ local function render(ctx)
   }, {passive:true});
 })();
 </script>]]
+        ,
+        pcdata(_("Save and restart TPROXY")),
+        pcdata(_("Restart"))
+      )
     end
   end
 
-  -- Общий лог (logread) — теперь ПОД кнопкой «Перезагрузка»
+  -- System log below the restart button.
   do
     local sl  = m:section(SimpleSection)
     local log = sl:option(DummyValue, "_log_tproxy"); log.rawhtml = true
     function log.cfgvalue()
-      return "<details><summary><strong>Общий лог (logread)</strong></summary>" ..
+      return "<details><summary><strong>" .. _("System log (logread)") .. "</strong></summary>" ..
              "<div class='box editor-wrap'><pre style='white-space:pre-wrap;max-height:30rem;overflow:auto'>" ..
              pcdata(combined_log()) .. "</pre>" ..
              "<div style='margin-top:.5rem'>" ..
-             "<button class='cbi-button cbi-button-action small-btn' style='margin-right:4px; padding:0; border:0' name='_refreshlog_tproxy' value='1'>Обновить</button> " ..
-             "<button class='cbi-button cbi-button-remove small-btn' style='padding:0; border:0' name='_clearlog_tproxy' value='1'>Очистить</button>" ..
+             "<button class='cbi-button cbi-button-action small-btn' style='margin-right:4px; padding:0; border:0' name='_refreshlog_tproxy' value='1'>" .. _("Refresh") .. "</button> " ..
+             "<button class='cbi-button cbi-button-remove small-btn' style='padding:0; border:0' name='_clearlog_tproxy' value='1'>" .. _("Clear") .. "</button>" ..
              "</div></div></details>"
     end
-    -- невидимые кнопки для POST
+    -- Hidden POST buttons.
     local rfr = sl:option(Button, "_refreshlog_tproxy"); rfr.title = ""; rfr.inputtitle = "Refresh"
     rfr.inputstyle = "action"; function rfr.render() end
     function rfr.write(self, section) if not self.map:formvalue(self:cbid(section)) then return end; redirect_here("tproxy") end
@@ -120,7 +125,7 @@ local function render(ctx)
     function clr.write(self, section) if not self.map:formvalue(self:cbid(section)) then return end; sys.call("/etc/init.d/log restart >/dev/null 2>&1"); redirect_here("tproxy") end
   end
 
-  local main_s = m:section(SimpleSection, "TPROXY — основные настройки")
+  local main_s = m:section(SimpleSection, _("TPROXY main settings"))
 
   -- Interfaces (left col)
   do
@@ -168,8 +173,9 @@ local function render(ctx)
       buf[#buf+1] = string.format(
         "<div class='box'><div style='display:flex;align-items:center;gap:.6rem;margin-bottom:.4rem'>"
           .. "<label style='margin-right:.8rem'><input type='checkbox' name='tpx_ipv6_enabled' value='1' %s/> IPv6</label>"
-          .. "<strong>Интерфейсы</strong></div>",
-        (ipv6=="1") and "checked" or ""
+          .. "<strong>%s</strong></div>",
+        (ipv6=="1") and "checked" or "",
+        pcdata(_("Interfaces"))
       )
 
       for _,d in ipairs((sys.net and sys.net.devices and sys.net.devices()) or {}) do
@@ -213,14 +219,14 @@ local function render(ctx)
       local eff_udp = (p_udp ~= "" and p_udp or p_all)
 
       local right = ([[<div class="box">
-        <div class="inline-row"><label><input type="checkbox" id="tpx_split" name="tpx_split" value="1" %s/> Разделить TCP/UDP</label></div>
-        <div id="p_all_row" style="margin-top:.25rem"><label>Порт:</label>
+        <div class="inline-row"><label><input type="checkbox" id="tpx_split" name="tpx_split" value="1" %s/> %s</label></div>
+        <div id="p_all_row" style="margin-top:.25rem"><label>%s:</label>
           <input type="number" id="tpx_port" name="tpx_port" value="%s" min="1" max="65535" step="1" style="width:120px">
         </div>
-        <div id="p_tcp_row" style="display:none;margin-top:.25rem"><label>Порт TCP:</label>
+        <div id="p_tcp_row" style="display:none;margin-top:.25rem"><label>%s:</label>
           <input type="number" id="tpx_port_tcp" name="tpx_port_tcp" value="%s" min="1" max="65535" step="1" style="width:120px">
         </div>
-        <div id="p_udp_row" style="display:none;margin-top:.25rem"><label>Порт UDP:</label>
+        <div id="p_udp_row" style="display:none;margin-top:.25rem"><label>%s:</label>
           <input type="number" id="tpx_port_udp" name="tpx_port_udp" value="%s" min="1" max="65535" step="1" style="width:120px">
         </div>
         <script>
@@ -246,7 +252,7 @@ local function render(ctx)
               }
             }
             if(split){ split.addEventListener('change',function(){
-              if (window.__xray_dirty && !confirm('Есть несохранённые изменения. Перейти без сохранения?')) { split.checked = !split.checked; return; }
+              if (window.__xray_dirty && !confirm('%s')) { split.checked = !split.checked; return; }
               upd();
             }); }
             upd();
@@ -254,7 +260,14 @@ local function render(ctx)
         </script>
       </div>]]):format(
         split_on and "checked" or "",
-        pcdata(p_all), pcdata(eff_tcp), pcdata(eff_udp)
+        pcdata(_("Split TCP/UDP")),
+        pcdata(_("Port")),
+        pcdata(p_all),
+        pcdata(_("TCP port")),
+        pcdata(eff_tcp),
+        pcdata(_("UDP port")),
+        pcdata(eff_udp),
+        pcdata(_("There are unsaved changes. Leave without saving?"))
       )
       return "<div class='col'>" .. right .. "</div></div>"
     end
@@ -270,10 +283,10 @@ local function render(ctx)
         return string.format('<option value="%s"%s>%s</option>', val, (val==cur) and " selected" or "", title)
       end
       return ([[<div class="box">
-        <div class="inline-row"><label>Режим по портам:</label>
+        <div class="inline-row"><label>%s:</label>
           <select name="tpx_port_mode">%s%s</select>
         </div>
-        <div class="inline-row" style="margin-top:.25rem"><label>Режим по источникам:</label>
+        <div class="inline-row" style="margin-top:.25rem"><label>%s:</label>
           <select id="tpx_src_mode" name="tpx_src_mode">%s%s%s</select>
         </div>
         <script>
@@ -300,8 +313,10 @@ local function render(ctx)
         })();
         </script>
       </div>]]):format(
+        pcdata(_("Port mode")),
         opt("bypass",pm,"bypass"),
         opt("only",pm,"only"),
+        pcdata(_("Source mode")),
         opt("off",sm,"off"),
         opt("only",sm,"only"),
         opt("bypass",sm,"bypass")
@@ -309,7 +324,7 @@ local function render(ctx)
     end
   end
 
-  -- Unified editor + DHCP picker (ширина 520px)
+  -- Unified editor and DHCP picker.
   do
     local se = m:section(SimpleSection, "")
     local dv = se:option(DummyValue, "_uniedit"); dv.rawhtml = true
@@ -327,7 +342,7 @@ local function render(ctx)
       local sb6   = getu("src_bypass_v6_file")
 
       local options = {}
-      if ports ~= "" then options[#options+1] = {ports, "Порты ("..((pmode and pmode~="") and pmode or "?")..")", "none"} end
+      if ports ~= "" then options[#options+1] = {ports, _("Ports").." ("..((pmode and pmode~="") and pmode or "?")..")", "none"} end
       if bv4   ~= "" then options[#options+1] = {bv4,   "bypass IPv4", "none"} end
       if bv6   ~= "" then options[#options+1] = {bv6,   "bypass IPv6", "none"} end
       if so4   ~= "" then options[#options+1] = {so4,   "src only IPv4", "only"} end
@@ -336,7 +351,7 @@ local function render(ctx)
       if sb6   ~= "" then options[#options+1] = {sb6,   "src bypass IPv6", "bypass"} end
 
       if #options == 0 then
-        return "<div class='box editor-wrap' style='color:#6b7280'>В UCI ("..PKG..") не заданы пути файлов списков. Укажите пути в «Дополнительных настройках».</div>"
+        return "<div class='box editor-wrap' style='color:#6b7280'>" .. _("No list file paths are configured in UCI. Set paths in Additional settings.") .. "</div>"
       end
 
       local chosen = fval("list_file")
@@ -359,19 +374,19 @@ local function render(ctx)
 
       local desc = ""
       if chosen == ports then
-        if     pmode == "bypass" then desc = "Трафик на перечисленные порты идёт напрямую (остальные через прокси)."
-        elseif pmode == "only"   then desc = "Трафик на перечисленные порты идёт через прокси (остальные напрямую)."
-        else desc = "Файл с портами; текущий режим по портам в UCI не задан." end
-      elseif chosen == bv4 then desc = "IPv4 адреса/сети, которые не будут проксироваться."
-      elseif chosen == bv6 then desc = "IPv6 адреса/сети, которые не будут проксироваться."
-      elseif chosen == so4 then desc = "IPv4 источники, которые будут идти через прокси."
-      elseif chosen == so6 then desc = "IPv6 источники, которые будут идти через прокси."
-      elseif chosen == sb4 then desc = "IPv4 источники, которые будут идти напрямую."
-      elseif chosen == sb6 then desc = "IPv6 источники, которые будут идти напрямую." end
+        if     pmode == "bypass" then desc = _("Traffic to listed ports goes directly; all other traffic goes through proxy.")
+        elseif pmode == "only"   then desc = _("Traffic to listed ports goes through proxy; all other traffic goes directly.")
+        else desc = _("Ports file; current port mode is not set in UCI.") end
+      elseif chosen == bv4 then desc = _("IPv4 addresses/networks that will not be proxied.")
+      elseif chosen == bv6 then desc = _("IPv6 addresses/networks that will not be proxied.")
+      elseif chosen == so4 then desc = _("IPv4 sources that will go through proxy.")
+      elseif chosen == so6 then desc = _("IPv6 sources that will go through proxy.")
+      elseif chosen == sb4 then desc = _("IPv4 sources that will go directly.")
+      elseif chosen == sb6 then desc = _("IPv6 sources that will go directly.") end
 
       local sel = {}
       sel[#sel+1] = "<div id='unified-editor' class='editor-wrap' style='width:520px; max-width:100%'>"
-      sel[#sel+1] = "<div class='inline-row'><label>Файл для редактирования:</label><select name='list_file' style='max-width:260px'>"
+      sel[#sel+1] = "<div class='inline-row'><label>" .. _("File to edit") .. ":</label><select name='list_file' style='max-width:260px'>"
       for _,o in ipairs(options) do
         local path, label, kind = o[1], o[2], o[3]
         local selattr = (path == chosen) and " selected" or ""
@@ -380,7 +395,7 @@ local function render(ctx)
         sel[#sel+1] = string.format("<option value=\"%s\" data-src-kind=\"%s\"%s%s>%s — %s</option>",
           pcdata(path), pcdata(kind), selattr, style, pcdata(path), pcdata(label))
       end
-      sel[#sel+1] = "</select><button class=\"cbi-button cbi-button-apply small-btn\" name=\"_uniedit_save\" value=\"1\">Сохранить файл</button></div>"
+      sel[#sel+1] = "</select><button class=\"cbi-button cbi-button-apply small-btn\" name=\"_uniedit_save\" value=\"1\">" .. _("Save file") .. "</button></div>"
       sel[#sel+1] = "<div style='margin:.2rem 0 .5rem 0; color:#6b7280'>" .. pcdata(desc) .. "</div>"
 
       sel[#sel+1] = string.format("<textarea name='uniedit_text' rows='16' spellcheck='false' style='width:520px'>%s</textarea>", pcdata(content))
@@ -430,14 +445,14 @@ local function render(ctx)
     if(bad.length){
       hint.style.color = '#b45309';
       hint.innerHTML = (portsMode
-        ? 'Подозрительные строки для файла портов ('+bad.length+'):<br><code style="white-space:pre-wrap">'+bad.slice(0,10).join('\\n')+(bad.length>10?'\\n…':'')+'</code><br>Ожидается: <code>80</code>, <code>tcp:443</code>, <code>udp:53</code>, <code>both:123</code>, <code>1000-2000</code>, <code>udp:6000-7000</code>.'
-        : 'Подозрительные строки ('+bad.length+'):<br><code style="white-space:pre-wrap">'+bad.slice(0,10).join('\\n')+(bad.length>10?'\\n…':'')+'</code>');
+        ? ']] .. pcdata(_("Suspicious lines in ports file")) .. [[ ('+bad.length+'):<br><code style="white-space:pre-wrap">'+bad.slice(0,10).join('\\n')+(bad.length>10?'\\n…':'')+'</code><br>]] .. pcdata(_("Expected")) .. [[: <code>80</code>, <code>tcp:443</code>, <code>udp:53</code>, <code>both:123</code>, <code>1000-2000</code>, <code>udp:6000-7000</code>.'
+        : ']] .. pcdata(_("Suspicious lines")) .. [[ ('+bad.length+'):<br><code style="white-space:pre-wrap">'+bad.slice(0,10).join('\\n')+(bad.length>10?'\\n…':'')+'</code>');
       ta.style.outline = '2px solid #f59e0b';
     }else{
       hint.style.color = '#9ca3af';
       hint.textContent = portsMode
-        ? 'Формат портов корректен: порт/диапазон, опционально с префиксом tcp:/udp:/both:.'
-        : 'Похоже корректно: IPv4/IPv6 (возможен CIDR). Строки с #/; игнорируются.';
+        ? ']] .. pcdata(_("Ports format is valid: port/range, optionally prefixed with tcp:/udp:/both:.")) .. [['
+        : ']] .. pcdata(_("Looks valid: IPv4/IPv6, optionally CIDR. Lines starting with # or ; are ignored.")) .. [[';
       ta.style.outline = '';
     }
   }
@@ -508,12 +523,12 @@ local function render(ctx)
           leases[#leases+1] = { ip = ip, mac = mac, host = (host and host ~= "*" and host) or "" }
         end
       end
-      sel[#sel+1] = "<details style='margin-top:.6rem'><summary style='cursor:pointer;font-weight:600'>DHCP аренды (быстро добавить в src only/bypass v4)</summary>"
+      sel[#sel+1] = "<details style='margin-top:.6rem'><summary style='cursor:pointer;font-weight:600'>" .. _("DHCP leases (quick add to src only/bypass v4)") .. "</summary>"
       sel[#sel+1] = "<div class='box' style='margin-top:.4rem'>"
       if #leases == 0 then
-        sel[#sel+1] = "<div style='color:#6b7280'>Нет активных аренд.</div>"
+        sel[#sel+1] = "<div style='color:#6b7280'>" .. _("No active leases.") .. "</div>"
       else
-        sel[#sel+1] = "<table class='leases-table'><colgroup><col class='col-ip'><col class='col-host'><col class='col-mac'><col class='col-act'></colgroup><thead><tr><th>IP</th><th>Имя</th><th>MAC</th><th>Действия</th></tr></thead><tbody>"
+        sel[#sel+1] = "<table class='leases-table'><colgroup><col class='col-ip'><col class='col-host'><col class='col-mac'><col class='col-act'></colgroup><thead><tr><th>IP</th><th>" .. _("Name") .. "</th><th>MAC</th><th>" .. _("Actions") .. "</th></tr></thead><tbody>"
         for _, r in ipairs(leases) do
           sel[#sel+1] = string.format(
             "<tr><td><code>%s</code></td><td>%s</td><td><code>%s</code></td>" ..
@@ -535,7 +550,7 @@ local function render(ctx)
 
   -- Advanced
   do
-    local dv = m:section(SimpleSection, "Дополнительные настройки (свернутая панель)"):option(DummyValue, "_advanced")
+    local dv = m:section(SimpleSection, _("Additional settings (collapsed panel)")):option(DummyValue, "_advanced")
     dv.rawhtml = true
     function dv.cfgvalue()
       local nft = getu("nft_table")
@@ -554,9 +569,9 @@ local function render(ctx)
       local loge         = getu("log_enabled")
 
       return ([[<div id="adv-wrap"><details>
-        <summary><strong>Развернуть/свернуть дополнительные параметры</strong></summary>
+        <summary><strong>%s</strong></summary>
         <div style="display:grid;grid-template-columns:minmax(220px, 360px) 1fr;gap:.35rem .6rem;align-items:center">
-          <label>Логирование</label><input type="checkbox" name="tpx_log_enabled" value="1" %s>
+          <label>%s</label><input type="checkbox" name="tpx_log_enabled" value="1" %s>
 
           <label>nft_table</label><input type="text" name="tpx_nft_table" value="%s">
           <label>fwmark_tcp</label><input type="text" name="tpx_fwmark_tcp" value="%s">
@@ -574,6 +589,8 @@ local function render(ctx)
           <label>src_bypass_v6_file</label><input type="text" name="tpx_src_bypass_v6_file" value="%s">
         </div>
       </details></div]]):format(
+        pcdata(_("Expand/collapse advanced parameters")),
+        pcdata(_("Logging")),
         (loge=="1") and "checked" or "",
         pcdata(nft), pcdata(fwt), pcdata(fwu), pcdata(rtt), pcdata(rtu),
         pcdata(ports_file), pcdata(bypass_v4), pcdata(bypass_v6),
@@ -589,26 +606,26 @@ local function render(ctx)
     local ip_bypass= http.formvalue("_dhcp_add_bypass")
     if ip_only and ip_only ~= "" then
       if not is_ipv4(ip_only) then
-        set_err("DHCP quick-add: указан некорректный IPv4-адрес.")
+        set_err(_("DHCP quick-add: invalid IPv4 address."))
         redirect_here("tproxy"); return
       end
       local path = getu("src_only_v4_file")
       if path ~= "" then
         append_line_unique(path, ip_only)
-        set_info(string.format("Добавлено %s → src_only_v4_file: %s", ip_only, path))
+        set_info(string.format(_("Added %s to src_only_v4_file: %s"), ip_only, path))
         set_err(nil)
       end
       redirect_here("tproxy"); return
     end
     if ip_bypass and ip_bypass ~= "" then
       if not is_ipv4(ip_bypass) then
-        set_err("DHCP quick-add: указан некорректный IPv4-адрес.")
+        set_err(_("DHCP quick-add: invalid IPv4 address."))
         redirect_here("tproxy"); return
       end
       local path = getu("src_bypass_v4_file")
       if path ~= "" then
         append_line_unique(path, ip_bypass)
-        set_info(string.format("Добавлено %s → src_bypass_v4_file: %s", ip_bypass, path))
+        set_info(string.format(_("Added %s to src_bypass_v4_file: %s"), ip_bypass, path))
         set_err(nil)
       end
       redirect_here("tproxy"); return
@@ -638,32 +655,32 @@ local function render(ctx)
         local pt = http.formvalue("tpx_port_tcp") or ""
         local pu = http.formvalue("tpx_port_udp") or ""
         if not (is_port(pt) and is_port(pu)) then
-          set_err("Включен режим разделения TCP/UDP: требуется указать оба порта в диапазоне 1..65535.")
+          set_err(_("TCP/UDP split is enabled: both ports must be set in range 1..65535."))
           return
         end
       else
         local p = http.formvalue("tpx_port") or ""
         if not is_port(p) then
-          set_err("Нужно указать общий порт (1..65535).")
+          set_err(_("Common port is required (1..65535)."))
           return
         end
       end
 
       if not is_nft_table_name(nft_table) then
-        set_err("Некорректное имя nft_table. Используйте безопасное имя, например tp_mgr.")
+        set_err(_("Invalid nft_table name. Use a safe name, for example tp_mgr."))
         return
       end
       if not is_fwmark(fwmark_tcp) or not is_fwmark(fwmark_udp) then
-        set_err("fwmark_tcp/fwmark_udp должны быть десятичными числами или hex вида 0x1.")
+        set_err(_("fwmark_tcp/fwmark_udp must be decimal numbers or hex values like 0x1."))
         return
       end
       if not is_uint(rttab_tcp, 1) or not is_uint(rttab_udp, 1) then
-        set_err("rttab_tcp/rttab_udp должны быть положительными целыми числами.")
+        set_err(_("rttab_tcp/rttab_udp must be positive integers."))
         return
       end
       for key, path in pairs(path_fields) do
         if not is_abs_path(path) then
-          set_err("Некорректный путь для " .. key .. ". Ожидается абсолютный путь без пробельного мусора.")
+          set_err(_("Invalid path for ") .. key .. _(". Expected an absolute path without extra whitespace."))
           return
         end
       end
@@ -679,7 +696,7 @@ local function render(ctx)
       end
       for _, iface in ipairs(selected) do
         if not is_iface_name(iface) then
-          set_err("Некорректное имя интерфейса: " .. tostring(iface))
+          set_err(_("Invalid interface name: ") .. tostring(iface))
           return
         end
       end
@@ -721,7 +738,7 @@ local function render(ctx)
       S("src_bypass_v6_file", path_fields.src_bypass_v6_file)
 
       uci:commit(PKG)
-      set_info("Настройки TPROXY сохранены")
+      set_info(_("TPROXY settings saved"))
     end
 
     if want_file then
@@ -729,7 +746,7 @@ local function render(ctx)
       if path and path ~= "" then
         local text = http.formvalue("uniedit_text") or ""
         write_file(path, text)
-        set_info("Файл списка сохранён: " .. path)
+        set_info(_("List file saved: ") .. path)
         set_err(nil)
       end
     end
@@ -737,7 +754,7 @@ local function render(ctx)
     if want_restart then
       sys.call("/etc/init.d/tproxy-manager stop >/dev/null 2>&1")
       sys.call("/etc/init.d/tproxy-manager start >/dev/null 2>&1")
-      set_info("TPROXY: сервис перезапущен")
+      set_info(_("TPROXY: service restarted"))
       redirect_here("tproxy"); return
     end
   end
@@ -750,8 +767,8 @@ local function render(ctx)
     function dv.cfgvalue()
       return [[
 <div class="inline-row">
-  <button class="cbi-button cbi-button-apply" name="_save_tproxy_main" value="1">Сохранить настройки TPROXY</button>
-  <button class="cbi-button cbi-button-reset" name="_cancel_tproxy_main" value="1">Отменить изменения</button>
+  <button class="cbi-button cbi-button-apply" name="_save_tproxy_main" value="1">]] .. pcdata(_("Save TPROXY settings")) .. [[</button>
+  <button class="cbi-button cbi-button-reset" name="_cancel_tproxy_main" value="1">]] .. pcdata(_("Cancel changes")) .. [[</button>
 </div>]]
     end
     local b  = ss:option(Button, "_save_tproxy_main"); b.title=""; b.inputtitle="Save"; b.inputstyle="apply"
@@ -768,7 +785,7 @@ local function render(ctx)
     end
   end
 
-  -- Сообщения
+  -- Messages
   do
     local msg = m:section(SimpleSection); local dv = msg:option(DummyValue, "_tpx_msgs"); dv.rawhtml = true
     function dv.cfgvalue()

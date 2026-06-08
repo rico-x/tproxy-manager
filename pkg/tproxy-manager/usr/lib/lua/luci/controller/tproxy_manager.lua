@@ -3,6 +3,7 @@ module("luci.controller.tproxy_manager", package.seeall)
 local fs = require "nixio.fs"
 local http = require "luci.http"
 local uci = require("luci.model.uci").cursor()
+local _ = require "luci.model.cbi.tproxy_manager.i18n"
 
 local PKG = "tproxy-manager"
 

@@ -3,6 +3,8 @@
 
 # TPROXY Manager for OpenWrt
 
+[English version](README_EN.md)
+
 ![Главная панель](docs/screenshots/placeholder-dashboard.png)
 
 TPROXY Manager — это LuCI-панель и набор системных скриптов для OpenWrt. Проект помогает управлять прозрачным перехватом трафика через `nftables`, списками обхода, конфигами Xray/Mihomo, GEO-базами и автоматическим переключением VLESS outbound через Watchdog.

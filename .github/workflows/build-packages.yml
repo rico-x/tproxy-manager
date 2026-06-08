@@ -287,6 +287,17 @@ jobs:
             esac
           done < <(find pkg/tproxy-manager/usr/bin -type f -print0)
 
+      - name: LuCI i18n checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -RIn '[А-Яа-яЁё]' pkg/tproxy-manager/usr/lib/lua/luci; then
+            echo "LuCI Lua files must use English gettext msgids, not hardcoded Russian UI strings" >&2
+            exit 1
+          fi
+          python3 scripts/compile-luci-i18n.py po/tproxy-manager/ru.po /tmp/tproxy-manager.ru.lmo
+          test -s /tmp/tproxy-manager.ru.lmo
+
       - name: Shellcheck
         shell: bash
         run: |
@@ -336,9 +347,11 @@ jobs:
             local ctrl=""
 
             if tar tzf "$ipk" >/dev/null 2>&1; then
-              if tar tzf "$ipk" | grep -q '^./control.tar.gz$'; then
+              local members
+              members="$(tar tzf "$ipk")"
+              if grep -q '^./control.tar.gz$' <<< "$members"; then
                 ctrl="$(tar -xOzf "$ipk" ./control.tar.gz | tar -xOzf - ./control 2>/dev/null || tar -xOzf - control 2>/dev/null || true)"
-              elif tar tzf "$ipk" | grep -q '^./control.tar.xz$'; then
+              elif grep -q '^./control.tar.xz$' <<< "$members"; then
                 ctrl="$(tar -xOzf "$ipk" ./control.tar.xz | tar -xOJf - ./control 2>/dev/null || tar -xOJf - control 2>/dev/null || true)"
               fi
             fi
@@ -361,6 +374,31 @@ jobs:
           printf '%s\n' "$CTRL" | grep -q "^Depends: $EXPECTED_DEPENDS$"
           grep -q '^Package: tproxy-manager$' "$PACKAGES_FILE"
           grep -Eq '^Filename: tproxy-manager[_-].*\.ipk$' "$PACKAGES_FILE"
+          get_ipk_data_list() {
+            local ipk="$1"
+
+            if tar tzf "$ipk" >/dev/null 2>&1; then
+              local members
+              members="$(tar tzf "$ipk")"
+              if grep -q '^./data.tar.gz$' <<< "$members"; then
+                tar -xOzf "$ipk" ./data.tar.gz | tar -tzf -
+                return
+              elif grep -q '^./data.tar.xz$' <<< "$members"; then
+                tar -xOzf "$ipk" ./data.tar.xz | tar -tJf -
+                return
+              fi
+            fi
+
+            if ar t "$ipk" 2>/dev/null | grep -q '^data.tar.gz$'; then
+              ar p "$ipk" data.tar.gz | tar -tzf -
+            elif ar t "$ipk" 2>/dev/null | grep -q '^data.tar.xz$'; then
+              ar p "$ipk" data.tar.xz | tar -tJf -
+            else
+              return 1
+            fi
+          }
+          IPK_DATA_LIST="$(get_ipk_data_list "$IPK")"
+          grep -Eq '(^|/)usr/lib/lua/luci/i18n/tproxy-manager\.ru\.lmo$' <<< "$IPK_DATA_LIST"
 
       - name: Validate apk metadata and apk feed
         shell: bash
@@ -378,6 +416,7 @@ jobs:
           printf '%s\n' "$DUMP" | grep -q 'ca-bundle'
           printf '%s\n' "$DUMP" | grep -q 'busybox'
           printf '%s\n' "$DUMP" | grep -Eq 'post-install|post-upgrade|pre-deinstall|pre-upgrade'
+          printf '%s\n' "$DUMP" | grep -q 'tproxy-manager\.ru\.lmo'
           mkdir -p /tmp/apk-keys
           cp "$KEY" /tmp/apk-keys/
           ./.apk-tools/apk.static --keys-dir /tmp/apk-keys verify "$ADB"

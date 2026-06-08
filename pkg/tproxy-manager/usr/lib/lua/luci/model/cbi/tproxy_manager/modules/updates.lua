@@ -1,7 +1,7 @@
 local cbi = require "luci.cbi"
 local SimpleSection, DummyValue, Button = cbi.SimpleSection, cbi.DummyValue, cbi.Button
 
--- ===== Локальная, полностью независимая реализация модуля "updates" (со стилями и разметкой) =====
+-- Local self-contained implementation of the updates module.
 local fs    = require "nixio.fs"
 local sys   = require "luci.sys"
 local http  = require "luci.http"
@@ -9,10 +9,11 @@ local disp  = require "luci.dispatcher"
 local xml   = require "luci.xml"
 local jsonc = require "luci.jsonc"
 local utils = require "luci.model.cbi.tproxy_manager.utils"
+local _ = require "luci.model.cbi.tproxy_manager.i18n"
 
 local pcdata = xml.pcdata
 
--- Внутренние пути/константы этого модуля (не зависят от ctx)
+-- Internal paths/constants for this module.
 local BASE_DIR     = "/etc/tproxy-manager"
 local GEO_CFG      = BASE_DIR .. "/geo-sources.conf"
 local GEO_SCRIPT   = "/usr/bin/tproxy-manager-geo-update.sh"
@@ -20,17 +21,17 @@ local CRON_FILE    = "/etc/crontabs/root"
 local CRON_TAG     = "# tproxy-manager-geo-update"
 local SYSLOG_TAG   = "tproxy-manager-geoip-update"
 
--- ---------- Файловые хелперы ----------
+-- ---------- File helpers ----------
 local read_file = utils.read_file
 local write_file = utils.write_file
 
 local function parse_jsonc_or_error(raw)
   local data, err = utils.parse_jsonc_or_error(raw, {})
   if data == nil then
-    return nil, err or "Некорректный JSON/JSONC"
+    return nil, err or _("Invalid JSON/JSONC")
   end
   if type(data) ~= "table" then
-    return nil, "Корневой элемент JSON должен быть массивом или объектом"
+    return nil, _("JSON root must be an array or object")
   end
   return data
 end
@@ -41,10 +42,10 @@ local function write_json_file(path, tbl)
   return true
 end
 
--- ---------- Утилиты ----------
+-- ---------- Utilities ----------
 local function mtime_str(path)
   local st = fs.stat(path)
-  if not st or not st.mtime then return "(не найдено)" end
+  if not st or not st.mtime then return _("(not found)") end
   local size = st.size or 0
   return os.date("%Y-%m-%d %H:%M:%S", st.mtime) .. string.format(" · %d bytes", size)
 end
@@ -161,18 +162,18 @@ local function validate_cron_spec(spec)
   local fields = {}
   for part in spec:gmatch("%S+") do fields[#fields + 1] = part end
   if #fields ~= 5 then
-    return nil, "Некорректное выражение cron: требуется 5 полей (мин чч дд мм дн)."
+    return nil, _("Invalid cron expression: 5 fields are required (min hour dom month dow).")
   end
   local validators = {
-    { min = 0, max = 59,  field = "min",   label = "минуты" },
-    { min = 0, max = 23,  field = "hour",  label = "часы" },
-    { min = 1, max = 31,  field = "dom",   label = "день месяца" },
-    { min = 1, max = 12,  field = "month", label = "месяц" },
-    { min = 0, max = 7,   field = "dow",   label = "день недели" },
+    { min = 0, max = 59,  field = "min",   label = _("minutes") },
+    { min = 0, max = 23,  field = "hour",  label = _("hours") },
+    { min = 1, max = 31,  field = "dom",   label = _("day of month") },
+    { min = 1, max = 12,  field = "month", label = _("month") },
+    { min = 0, max = 7,   field = "dow",   label = _("day of week") },
   }
   for i, meta in ipairs(validators) do
     if not cron_validate_field(fields[i], meta.min, meta.max, meta.field) then
-      return nil, "Некорректное поле cron: " .. meta.label .. " (" .. tostring(fields[i]) .. ")"
+      return nil, _("Invalid cron field: ") .. meta.label .. " (" .. tostring(fields[i]) .. ")"
     end
   end
   return table.concat(fields, " ")
@@ -183,11 +184,11 @@ local function cron_spec_human(spec)
   if spec == "" then return "" end
   local parts = {}
   for w in (spec.." "):gmatch("([^%s]+)") do parts[#parts+1] = w end
-  if #parts < 5 then return "по расписанию: "..spec end
+  if #parts < 5 then return _("schedule: ")..spec end
   local min, hr, dom, mon, dow = parts[1], parts[2], parts[3], parts[4], parts[5]
   local min_num, hr_num = tonumber(min), tonumber(hr)
   local time_str = (min_num and hr_num) and string.format("%d:%02d", hr_num, min_num) or (hr..":"..min)
-  local names = { ["0"]="воскресеньям",["7"]="воскресеньям",["1"]="понедельникам",["2"]="вторникам",["3"]="средам",["4"]="четвергам",["5"]="пятницам",["6"]="субботам" }
+  local names = { ["0"]=_("Sundays"),["7"]=_("Sundays"),["1"]=_("Mondays"),["2"]=_("Tuesdays"),["3"]=_("Wednesdays"),["4"]=_("Thursdays"),["5"]=_("Fridays"),["6"]=_("Saturdays") }
 
   if dow ~= "*" and mon == "*" and dom == "*" then
     local days = {}
@@ -204,27 +205,27 @@ local function cron_spec_human(spec)
     local labels, seen = {}, {}
     for _, d in ipairs(days) do local k=tostring(d); if not seen[k] and names[k] then seen[k]=true; labels[#labels+1]=names[k] end end
     table.sort(labels)
-    local text = (#labels==0) and ("по дням "..dow) or (#labels==1 and ("по "..labels[1]) or ("по "..table.concat(labels, ", ", 1, #labels-1).." и "..labels[#labels]))
-    return time_str ~= "" and (text.." в "..time_str) or text
+    local text = (#labels==0) and (_("on days ")..dow) or (#labels==1 and (_("on ")..labels[1]) or (_("on ")..table.concat(labels, ", ", 1, #labels-1).." ".._("and").." "..labels[#labels]))
+    return time_str ~= "" and (text.." ".._("at").." "..time_str) or text
   end
 
   if dow == "*" and mon == "*" and dom == "*" then
-    return "каждый день в "..time_str
+    return _("every day at ")..time_str
   end
 
   if dow == "*" and mon == "*" and dom ~= "*" then
     local ords = {}
     for token in (dom..","):gmatch("([^,]+),") do
-      local dnum = tonumber(token); ords[#ords+1] = dnum and (tostring(dnum) .. "-го") or (token.."-го")
+      local dnum = tonumber(token); ords[#ords+1] = dnum and (tostring(dnum) .. _("th")) or (token.._("th"))
     end
-    local text = (#ords==0 and "ежемесячно") or (#ords==1 and ("ежемесячно "..ords[1].." числа") or ("ежемесячно "..table.concat(ords, " и ").." числа"))
-    return text.." в "..time_str
+    local text = (#ords==0 and _("monthly")) or (#ords==1 and (_("monthly on day ")..ords[1]) or (_("monthly on days ")..table.concat(ords, " ".._("and").." ")))
+    return text.." ".._("at").." "..time_str
   end
 
-  return "по расписанию: "..spec
+  return _("schedule: ")..spec
 end
 
--- ---------- Работа с конфигом GEO ----------
+-- ---------- GEO config ----------
 local function normalize_rows(data)
   local out = {}
   for _, it in ipairs(data) do
@@ -308,34 +309,34 @@ fi
   return true
 end
 
--- ===== UI / обработчики =====
+-- ===== UI / handlers =====
 local function render(ctx)
-  -- Берём из ctx только универсальные сообщения/редирект
+  -- Use only common message/redirect helpers from ctx.
   local m = ctx.m
   local set_err, get_err, set_info, get_info = ctx.set_err, ctx.get_err, ctx.set_info, ctx.get_info
   local redirect_here = ctx.redirect_here
 
-  -- Вставляем локальные стили (как было в базовом модуле)
+  -- Local styles.
   do
     local sec = m:section(SimpleSection)
     local css = sec:option(DummyValue, "_css_updates"); css.rawhtml = true
     function css.cfgvalue()
       return [[
 <style>
-/* Общие коробки/контейнеры */
+/* boxes and containers */
 .box{padding:.5rem;border:1px solid #e5e7eb;border-radius:.5rem}
 .editor-wrap{max-width:860px}
 .editor-wrap textarea{width:100%!important;font-family:monospace}
 .editor-wide{max-width:1200px}
 
-/* Маленькие кнопки и инлайн-формы */
+/* small buttons and inline forms */
 .small-btn{padding:.25rem .55rem}
 .inline-edit{display:flex;gap:.6rem;align-items:center;flex-wrap:wrap;margin:.6rem 0}
 .inline-edit input[type="text"]{width:28%;min-width:180px}
 .inline-row{display:flex;align-items:center;gap:.25rem;flex-wrap:nowrap}
 .btn-green{background:#16a34a!important;border-color:#16a34a!important;color:#fff!important;font-weight:700!important}
 
-/* Таблица источников GEO */
+/* GEO source table */
 table.geo-table{width:100%;border-collapse:collapse; table-layout:fixed; word-break:break-all}
 table.geo-table th, table.geo-table td{border:1px solid #e5e7eb;padding:.35rem;text-align:left;vertical-align:top}
 table.geo-table th{background:#f9fafb}
@@ -343,7 +344,7 @@ table.geo-table.geo-upd{ table-layout:auto }
 table.geo-table.geo-upd col.col-idx{ width:auto }
 table.geo-table.geo-upd th:first-child, table.geo-table.geo-upd td:first-child{ white-space:nowrap }
 
-/* Сообщения */
+/* messages */
 .msg{padding:.5rem .7rem;border-radius:.5rem;margin:.4rem 0;white-space:pre-wrap}
 .msg.err{border:1px solid #fecaca;background:#fef2f2;color:#b91c1c}
 .msg.info{border:1px solid #bbf7d0;background:#f0fdf4;color:#166534}
@@ -351,24 +352,24 @@ table.geo-table.geo-upd th:first-child, table.geo-table.geo-upd td:first-child{ 
     end
   end
 
-  -- список для таблицы
+  -- Source table data.
   local cfg, cfg_err = load_geo_cfg()
   local edit_idx = tonumber(http.formvalue("_geo_edit_idx") or http.formvalue("_geo_edit") or "")
 
-  -- Таблица источников + cron controls
+  -- Source table and cron controls.
   do
-    local sec = m:section(SimpleSection, "Управление обновлениями")
+    local sec = m:section(SimpleSection, _("Update management"))
     local list = sec:option(DummyValue, "_geo_list"); list.rawhtml = true
     function list.cfgvalue()
       local rows = {}
-      rows[#rows+1] = "<table class='geo-table geo-upd'><colgroup><col class='col-idx'><col><col><col><col><col></colgroup><thead><tr><th>#</th><th>Название</th><th>URL</th><th>Путь</th><th>Дата обновления</th><th>Действия</th></tr></thead><tbody>"
+      rows[#rows+1] = "<table class='geo-table geo-upd'><colgroup><col class='col-idx'><col><col><col><col><col></colgroup><thead><tr><th>#</th><th>" .. _("Name") .. "</th><th>URL</th><th>" .. _("Path") .. "</th><th>" .. _("Updated at") .. "</th><th>" .. _("Actions") .. "</th></tr></thead><tbody>"
       for i, r in ipairs(cfg) do
         rows[#rows+1] = string.format(
           "<tr><td>%s</td><td>%s</td><td><code>%s</code></td><td><code>%s</code></td><td>%s</td>" ..
           "<td>" ..
-          "<button class='cbi-button cbi-button-apply btn-green small-btn' name='_geo_update_one' value='%s'>Обновить</button> " ..
-          "<button class='cbi-button cbi-button-action small-btn' name='_geo_edit' value='%s'>Редактировать</button> " ..
-          "<button class='cbi-button cbi-button-remove small-btn' name='_geo_delete' value='%s' onclick=\"return confirm('Удалить источник #%s?')\">Удалить</button>" ..
+          "<button class='cbi-button cbi-button-apply btn-green small-btn' name='_geo_update_one' value='%s'>" .. _("Update") .. "</button> " ..
+          "<button class='cbi-button cbi-button-action small-btn' name='_geo_edit' value='%s'>" .. _("Edit") .. "</button> " ..
+          "<button class='cbi-button cbi-button-remove small-btn' name='_geo_delete' value='%s' onclick=\"return confirm('" .. _("Delete source #") .. "%s?')\">" .. _("Delete") .. "</button>" ..
           "</td></tr>",
           tostring(i),
           pcdata(r.name or ""),
@@ -379,31 +380,31 @@ table.geo-table.geo-upd th:first-child, table.geo-table.geo-upd td:first-child{ 
         )
       end
       if #cfg == 0 then
-        rows[#rows+1] = "<tr><td colspan='6' style='color:#6b7280'>Список пуст</td></tr>"
+        rows[#rows+1] = "<tr><td colspan='6' style='color:#6b7280'>" .. _("List is empty") .. "</td></tr>"
       end
 
       local spec = current_cron_spec() or ""
       local placeholder = "*/30 * * * *"
-      local human = (spec ~= "" and cron_spec_human(spec)) or "Автозапуск обновлений отключён"
+      local human = (spec ~= "" and cron_spec_human(spec)) or _("Automatic updates are disabled")
 
       rows[#rows+1] = string.format([[
 <tr>
-  <td><em>Всего: %s</em></td>
+  <td><em>%s: %s</em></td>
   <td colspan="4">
-    <div class="inline-row"><span><em>Расписание:</em></span>
-      <input type="text" id="geo_cron" name="geo_cron" style="width:24%%" value="%s" placeholder="%s" title="минуты часы день_месяца месяц день_недели (например: 30 4 * * 0)">
+    <div class="inline-row"><span><em>%s:</em></span>
+      <input type="text" id="geo_cron" name="geo_cron" style="width:24%%" value="%s" placeholder="%s" title="%s">
       <select id="geo_cron_presets" style="max-width:220px">
-        <option value="">— пресет —</option>
-        <option value="0 5 * * *">Каждый день 05:00</option>
-        <option value="*/30 * * * *">Каждые 30 минут</option>
-        <option value="30 4 * * 0">По воскресеньям 04:30</option>
-        <option value="0 3 1 * *">1-го числа 03:00</option>
+        <option value="">%s</option>
+        <option value="0 5 * * *">%s</option>
+        <option value="*/30 * * * *">%s</option>
+        <option value="30 4 * * 0">%s</option>
+        <option value="0 3 1 * *">%s</option>
       </select>
-      <button class="cbi-button cbi-button-apply small-btn" name="_geo_install_cron" value="1">Создать/обновить автозапуск</button>
-      <button class="cbi-button cbi-button-remove small-btn" name="_geo_remove_cron" value="1">Удалить автозапуск</button>
+      <button class="cbi-button cbi-button-apply small-btn" name="_geo_install_cron" value="1">%s</button>
+      <button class="cbi-button cbi-button-remove small-btn" name="_geo_remove_cron" value="1">%s</button>
     </div>
     <div style='margin-top:.2rem; color:#6b7280'>%s</div>
-    <div style='margin-top:.1rem; color:#9ca3af'>Формат: <code>мин чч дд мм дн</code>, примеры: <code>0 5 * * *</code> (каждый день в 5:00), <code>30 4 * * 0</code> (по воскресеньям в 4:30)</div>
+    <div style='margin-top:.1rem; color:#9ca3af'>%s: <code>min hour dom month dow</code>, %s: <code>0 5 * * *</code> (%s), <code>30 4 * * 0</code> (%s)</div>
     <script>
       (function(){
         var sel = document.getElementById('geo_cron_presets');
@@ -415,53 +416,74 @@ table.geo-table.geo-upd th:first-child, table.geo-table.geo-upd td:first-child{ 
     </script>
   </td>
   <td>
-    <button class="cbi-button cbi-button-apply btn-green" name="_geo_update_all" value="1">Обновить все</button>
+    <button class="cbi-button cbi-button-apply btn-green" name="_geo_update_all" value="1">%s</button>
   </td>
-</tr>]], tostring(#cfg), pcdata(spec), pcdata(placeholder), pcdata(human))
+</tr>]],
+        pcdata(_("Total")), tostring(#cfg),
+        pcdata(_("Schedule")),
+        pcdata(spec), pcdata(placeholder), pcdata(_("minutes hours day_of_month month day_of_week (example: 30 4 * * 0)")),
+        pcdata(_("preset")),
+        pcdata(_("Every day 05:00")),
+        pcdata(_("Every 30 minutes")),
+        pcdata(_("Sundays 04:30")),
+        pcdata(_("1st day 03:00")),
+        pcdata(_("Create/update autostart")),
+        pcdata(_("Remove autostart")),
+        pcdata(human),
+        pcdata(_("Format")),
+        pcdata(_("examples")),
+        pcdata(_("every day at 5:00")),
+        pcdata(_("Sundays at 4:30")),
+        pcdata(_("Update all"))
+      )
 
       rows[#rows+1] = "</tbody></table>"
       return table.concat(rows, "\n")
     end
   end
 
-  -- Форма редактирования конкретной записи
+  -- Edit selected source.
   if edit_idx then
-    local sec = m:section(SimpleSection, "Редактировать источник #" .. edit_idx)
+    local sec = m:section(SimpleSection, _("Edit source #") .. edit_idx)
     local dv = sec:option(DummyValue, "_geo_edit_form"); dv.rawhtml = true
     function dv.cfgvalue()
       local r = cfg[edit_idx]
-      if not r then return "(Неверный индекс)" end
+      if not r then return _("(invalid index)") end
       return string.format([[
 <div class="box editor-wrap inline-edit">
-  <div>Название: <input type="text" name="edit_name" style="width:20%%" value="%s"></div>
+  <div>%s: <input type="text" name="edit_name" style="width:20%%" value="%s"></div>
   <div>URL: <input type="text" name="edit_url" style="width:35%%" value="%s"></div>
-  <div>Путь: <input type="text" name="edit_dest" style="width:35%%" value="%s"></div>
+  <div>%s: <input type="text" name="edit_dest" style="width:35%%" value="%s"></div>
   <div>
-    <button class="cbi-button cbi-button-apply" name="_geo_apply_edit" value="1">Сохранить</button>
-    <button class="cbi-button cbi-button-reset" name="_geo_cancel_edit" value="1">Отменить</button>
+    <button class="cbi-button cbi-button-apply" name="_geo_apply_edit" value="1">%s</button>
+    <button class="cbi-button cbi-button-reset" name="_geo_cancel_edit" value="1">%s</button>
   </div>
 </div>
 <input type="hidden" name="_geo_edit_idx" value="%s">]],
-        pcdata(r.name or ""), pcdata(r.url or ""), pcdata(r.dest or ""), tostring(edit_idx))
+        pcdata(_("Name")), pcdata(r.name or ""),
+        pcdata(r.url or ""),
+        pcdata(_("Path")), pcdata(r.dest or ""),
+        pcdata(_("Save")), pcdata(_("Cancel")),
+        tostring(edit_idx))
     end
   end
 
-  -- Блок добавления новой записи
+  -- Add new source.
   if not edit_idx then
-    local sec = m:section(SimpleSection, "Добавить источник")
+    local sec = m:section(SimpleSection, _("Add source"))
     local dv = sec:option(DummyValue, "_geo_add"); dv.rawhtml = true
     function dv.cfgvalue()
       return [[
 <div class="box editor-wrap inline-edit">
-  <div>Название: <input type="text" name="add_name" style="width:20%%" placeholder="например, geoip"></div>
-  <div>URL: <input type="text" name="add_url" style="width:35%%" placeholder="https://.../файл.dat"></div>
-  <div>Путь: <input type="text" name="add_dest" style="width:35%%" placeholder="/usr/share/xray/geoip.dat"></div>
-  <div><button class="cbi-button cbi-button-apply" name="_geo_add" value="1">Добавить</button></div>
+  <div>]] .. pcdata(_("Name")) .. [[: <input type="text" name="add_name" style="width:20%%" placeholder="geoip"></div>
+  <div>URL: <input type="text" name="add_url" style="width:35%%" placeholder="https://.../file.dat"></div>
+  <div>]] .. pcdata(_("Path")) .. [[: <input type="text" name="add_dest" style="width:35%%" placeholder="/usr/share/xray/geoip.dat"></div>
+  <div><button class="cbi-button cbi-button-apply" name="_geo_add" value="1">]] .. pcdata(_("Add")) .. [[</button></div>
 </div>]]
     end
   end
 
-  -- Текстовый JSON-редактор полного списка
+  -- Full JSON source editor.
   do
     local sec = m:section(SimpleSection)
     local dv = sec:option(DummyValue, "_geo_edit_json"); dv.rawhtml = true
@@ -470,13 +492,13 @@ table.geo-table.geo-upd th:first-child, table.geo-table.geo-upd td:first-child{ 
       local content = read_file(GEO_CFG); if content == "" then content = "[]" end
       return [[
 <details>
-  <summary style="cursor:pointer;font-weight:600">Общий список источников (JSON) — развернуть/свернуть</summary>
+  <summary style="cursor:pointer;font-weight:600">]] .. pcdata(_("Full source list (JSON) - expand/collapse")) .. [[</summary>
   <div class="box editor-wrap editor-wide" style="margin-top:.5rem">
     <textarea name="geo_sources" rows="12" spellcheck="false">]] .. pcdata(content) .. [[</textarea>
     <div class="inline-row" style="margin-top:.4rem">
-      <button class="cbi-button cbi-button-apply"  name="_geo_save" value="1">Сохранить список</button>
-      <button class="cbi-button cbi-button-action" name="_geo_write_script" value="1">Пересоздать скрипт</button>
-      <span style="color:#6b7280">Список источников: <code>]] .. pcdata(GEO_CFG) .. [[</code> · Скрипт: <code>]] .. pcdata(GEO_SCRIPT) .. [[</code></span>
+      <button class="cbi-button cbi-button-apply"  name="_geo_save" value="1">]] .. pcdata(_("Save list")) .. [[</button>
+      <button class="cbi-button cbi-button-action" name="_geo_write_script" value="1">]] .. pcdata(_("Recreate script")) .. [[</button>
+      <span style="color:#6b7280">]] .. pcdata(_("Source list")) .. [[: <code>]] .. pcdata(GEO_CFG) .. [[</code> · ]] .. pcdata(_("Script")) .. [[: <code>]] .. pcdata(GEO_SCRIPT) .. [[</code></span>
     </div>
   </div>
 </details>
@@ -484,7 +506,7 @@ table.geo-table.geo-upd th:first-child, table.geo-table.geo-upd td:first-child{ 
     end
   end
 
-  -- ---------- Обработчики действий ----------
+  -- ---------- Action handlers ----------
   do
     local function load_rows_again()
       local rows, err = load_geo_cfg()
@@ -494,7 +516,7 @@ table.geo-table.geo-upd th:first-child, table.geo-table.geo-upd td:first-child{ 
     if http.formvalue("_geo_add") == "1" then
       local rows, err = load_rows_again()
       if err then
-        set_err("Список GEO не разобран: " .. err); set_info(nil)
+        set_err(_("GEO list was not parsed: ") .. err); set_info(nil)
         redirect_here("updates"); return m
       end
       local name = (http.formvalue("add_name") or ""):gsub("^%s+",""):gsub("%s+$","")
@@ -504,9 +526,9 @@ table.geo-table.geo-upd th:first-child, table.geo-table.geo-upd td:first-child{ 
         rows[#rows+1] = { name = name, url = url, dest = dest }
         save_geo_cfg(rows)
         write_geo_script(rows)
-        set_err(nil); set_info("Источник добавлен: "..(name ~= "" and name or dest))
+        set_err(nil); set_info(_("Source added: ")..(name ~= "" and name or dest))
       else
-        set_err("Нужно указать путь назначения (dest)."); set_info(nil)
+        set_err(_("Destination path (dest) is required.")); set_info(nil)
       end
       redirect_here("updates"); return m
     end
@@ -517,7 +539,7 @@ table.geo-table.geo-upd th:first-child, table.geo-table.geo-upd td:first-child{ 
       local r = (idx and rows[idx]) and rows[idx] or nil
       if r and r.url ~= "" and r.dest ~= "" then
         local ok = fetch_to(r.url, r.dest)
-        set_info(ok and ("Обновлено: "..(r.name or r.dest)) or ("Ошибка обновления: "..(r.name or r.dest)))
+        set_info(ok and (_("Updated: ")..(r.name or r.dest)) or (_("Update failed: ")..(r.name or r.dest)))
         set_err(nil)
       end
       redirect_here("updates"); return m
@@ -532,7 +554,7 @@ table.geo-table.geo-upd th:first-child, table.geo-table.geo-upd td:first-child{ 
           if fetch_to(r.url, r.dest) then ok_count = ok_count + 1 end
         end
       end
-      set_info(string.format("Обновлено %d из %d источников", ok_count, total)); set_err(nil)
+      set_info(string.format(_("Updated %d of %d sources"), ok_count, total)); set_err(nil)
       redirect_here("updates"); return m
     end
 
@@ -548,13 +570,13 @@ table.geo-table.geo-upd th:first-child, table.geo-table.geo-upd td:first-child{ 
       local idx = tonumber(http.formvalue("_geo_edit_idx") or "")
       local rows, err = load_rows_again()
       if err then
-        set_err("Список GEO не разобран: " .. err); set_info(nil)
+        set_err(_("GEO list was not parsed: ") .. err); set_info(nil)
         redirect_here("updates"); return m
       end
       if idx and rows[idx] then
         local dest = (http.formvalue("edit_dest") or ""):gsub("^%s+",""):gsub("%s+$","")
         if dest == "" then
-          set_err("Нужно указать путь назначения (dest)."); set_info(nil)
+          set_err(_("Destination path (dest) is required.")); set_info(nil)
           http.redirect(disp.build_url("admin","network","tproxy_manager") .. "?tab=updates&_geo_edit_idx=" .. tostring(idx))
           return m
         end
@@ -563,7 +585,7 @@ table.geo-table.geo-upd th:first-child, table.geo-table.geo-upd td:first-child{ 
         rows[idx].dest = dest
         save_geo_cfg(rows)
         write_geo_script(rows)
-        set_err(nil); set_info("Источник обновлён: "..(rows[idx].name or rows[idx].dest))
+        set_err(nil); set_info(_("Source updated: ")..(rows[idx].name or rows[idx].dest))
       end
       redirect_here("updates"); return m
     end
@@ -576,7 +598,7 @@ table.geo-table.geo-upd th:first-child, table.geo-table.geo-upd td:first-child{ 
       local idx = tonumber(http.formvalue("_geo_delete"))
       local rows, err = load_rows_again()
       if err then
-        set_err("Список GEO не разобран: " .. err); set_info(nil)
+        set_err(_("GEO list was not parsed: ") .. err); set_info(nil)
         redirect_here("updates"); return m
       end
       if idx and rows[idx] then
@@ -584,7 +606,7 @@ table.geo-table.geo-upd th:first-child, table.geo-table.geo-upd td:first-child{ 
         table.remove(rows, idx)
         save_geo_cfg(rows)
         write_geo_script(rows)
-        set_info("Удалён источник: "..(name or ("#"..tostring(idx)))); set_err(nil)
+        set_info(_("Source deleted: ")..(name or ("#"..tostring(idx)))); set_err(nil)
       end
       redirect_here("updates"); return m
     end
@@ -593,32 +615,32 @@ table.geo-table.geo-upd th:first-child, table.geo-table.geo-upd td:first-child{ 
       local raw = http.formvalue("geo_sources") or "[]"
       local data, err = parse_jsonc_or_error(raw)
       if not data then
-        set_err("Список GEO не сохранён: " .. err)
+        set_err(_("GEO list was not saved: ") .. err)
         set_info(nil)
         redirect_here("updates"); return m
       end
       local rows = normalize_rows(data)
       save_geo_cfg(rows)
       write_geo_script(rows)
-      set_err(nil); set_info("Список источников сохранён")
+      set_err(nil); set_info(_("Source list saved"))
       redirect_here("updates"); return m
     end
 
     if http.formvalue("_geo_write_script") == "1" then
       local rows, err = load_rows_again()
       if err then
-        set_err("Список GEO не разобран: " .. err); set_info(nil)
+        set_err(_("GEO list was not parsed: ") .. err); set_info(nil)
         redirect_here("updates"); return m
       end
       write_geo_script(rows)
-      set_info("Скрипт обновления пересоздан"); set_err(nil)
+      set_info(_("Update script recreated")); set_err(nil)
       redirect_here("updates"); return m
     end
 
     if http.formvalue("_geo_install_cron") == "1" then
       local rows, err = load_rows_again()
       if err then
-        set_err("Список GEO не разобран: " .. err); set_info(nil)
+        set_err(_("GEO list was not parsed: ") .. err); set_info(nil)
         redirect_here("updates"); return m
       end
       write_geo_script(rows)
@@ -629,14 +651,14 @@ table.geo-table.geo-upd th:first-child, table.geo-table.geo-upd td:first-child{ 
         set_err(cron_err); set_info(nil)
       else
         cron_install(normalized)
-        set_info("Cron установлен: "..normalized); set_err(nil)
+        set_info(_("Cron installed: ")..normalized); set_err(nil)
       end
       redirect_here("updates"); return m
     end
 
     if http.formvalue("_geo_remove_cron") == "1" then
       cron_remove()
-      set_info("Cron удалён"); set_err(nil)
+      set_info(_("Cron removed")); set_err(nil)
       redirect_here("updates"); return m
     end
 
@@ -646,7 +668,7 @@ table.geo-table.geo-upd th:first-child, table.geo-table.geo-upd td:first-child{ 
       local e = get_err(); local i = get_info()
       local out = {}
       if cfg_err and cfg_err ~= "" then
-        out[#out+1] = "<div class='msg err'>Некорректный JSON/JSONC в " .. pcdata(GEO_CFG) .. ": " .. pcdata(cfg_err) .. "</div>"
+        out[#out+1] = "<div class='msg err'>" .. _("Invalid JSON/JSONC in ") .. pcdata(GEO_CFG) .. ": " .. pcdata(cfg_err) .. "</div>"
       end
       if e ~= "" then out[#out+1] = "<div class='msg err'>"..pcdata(e).."</div>" end
       if i ~= "" then out[#out+1] = "<div class='msg info'>"..pcdata(i).."</div>" end

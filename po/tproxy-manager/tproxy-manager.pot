@@ -1,0 +1,1059 @@
+# TPROXY Manager LuCI translation template.
+msgid ""
+msgstr ""
+"Project-Id-Version: tproxy-manager\n"
+"Report-Msgid-Bugs-To: https://github.com/rico-x/tproxy-manager/issues\n"
+"POT-Creation-Date: 2026-06-07 00:00+0000\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+msgid "TPROXY Manager"
+msgstr ""
+
+msgid "(no log lines)"
+msgstr ""
+
+msgid "running"
+msgstr ""
+
+msgid "stopped"
+msgstr ""
+
+msgid "enabled"
+msgstr ""
+
+msgid "disabled"
+msgstr ""
+
+msgid "Start"
+msgstr ""
+
+msgid "Stop"
+msgstr ""
+
+msgid "Enable autostart"
+msgstr ""
+
+msgid "Disable autostart"
+msgstr ""
+
+msgid "There are unsaved changes. Leave without saving?"
+msgstr ""
+
+msgid "GEO updates"
+msgstr ""
+
+msgid "Module settings saved."
+msgstr ""
+
+msgid "Additional settings"
+msgstr ""
+
+msgid "XRAY tab"
+msgstr ""
+
+msgid "MIHOMO tab"
+msgstr ""
+
+msgid "GEO updates tab"
+msgstr ""
+
+msgid "Watchdog tab"
+msgstr ""
+
+msgid "Save"
+msgstr ""
+
+msgid "Mihomo service status and controls"
+msgstr ""
+
+msgid "System log (logread)"
+msgstr ""
+
+msgid "Refresh"
+msgstr ""
+
+msgid "Clear"
+msgstr ""
+
+msgid "Mihomo (configuration files in /etc/mihomo)"
+msgstr ""
+
+msgid "Invalid file name. Expected *.yaml without slashes."
+msgstr ""
+
+msgid "New file"
+msgstr ""
+
+msgid "Create"
+msgstr ""
+
+msgid "The name must match"
+msgstr ""
+
+msgid "without slashes"
+msgstr ""
+
+msgid "File to edit"
+msgstr ""
+
+msgid "Delete selected file?"
+msgstr ""
+
+msgid "Delete"
+msgstr ""
+
+msgid "Invalid Mihomo configuration. File was not saved."
+msgstr ""
+
+msgid "Mihomo config saved: "
+msgstr ""
+
+msgid "Last validation result"
+msgstr ""
+
+msgid "(not run yet)"
+msgstr ""
+
+msgid "Validate configuration"
+msgstr ""
+
+msgid "TPROXY service status and controls"
+msgstr ""
+
+msgid "Save and restart TPROXY"
+msgstr ""
+
+msgid "Restart"
+msgstr ""
+
+msgid "TPROXY main settings"
+msgstr ""
+
+msgid "Interfaces"
+msgstr ""
+
+msgid "Split TCP/UDP"
+msgstr ""
+
+msgid "Port"
+msgstr ""
+
+msgid "TCP port"
+msgstr ""
+
+msgid "UDP port"
+msgstr ""
+
+msgid "Port mode"
+msgstr ""
+
+msgid "Source mode"
+msgstr ""
+
+msgid "Ports"
+msgstr ""
+
+msgid "No list file paths are configured in UCI. Set paths in Additional settings."
+msgstr ""
+
+msgid "Traffic to listed ports goes directly; all other traffic goes through proxy."
+msgstr ""
+
+msgid "Traffic to listed ports goes through proxy; all other traffic goes directly."
+msgstr ""
+
+msgid "Ports file; current port mode is not set in UCI."
+msgstr ""
+
+msgid "IPv4 addresses/networks that will not be proxied."
+msgstr ""
+
+msgid "IPv6 addresses/networks that will not be proxied."
+msgstr ""
+
+msgid "IPv4 sources that will go through proxy."
+msgstr ""
+
+msgid "IPv6 sources that will go through proxy."
+msgstr ""
+
+msgid "IPv4 sources that will go directly."
+msgstr ""
+
+msgid "IPv6 sources that will go directly."
+msgstr ""
+
+msgid "Save file"
+msgstr ""
+
+msgid "Suspicious lines in ports file"
+msgstr ""
+
+msgid "Expected"
+msgstr ""
+
+msgid "Suspicious lines"
+msgstr ""
+
+msgid "Ports format is valid: port/range, optionally prefixed with tcp:/udp:/both:."
+msgstr ""
+
+msgid "Looks valid: IPv4/IPv6, optionally CIDR. Lines starting with # or ; are ignored."
+msgstr ""
+
+msgid "DHCP leases (quick add to src only/bypass v4)"
+msgstr ""
+
+msgid "No active leases."
+msgstr ""
+
+msgid "Name"
+msgstr ""
+
+msgid "Actions"
+msgstr ""
+
+msgid "Additional settings (collapsed panel)"
+msgstr ""
+
+msgid "Expand/collapse advanced parameters"
+msgstr ""
+
+msgid "Logging"
+msgstr ""
+
+msgid "DHCP quick-add: invalid IPv4 address."
+msgstr ""
+
+msgid "Added %s to src_only_v4_file: %s"
+msgstr ""
+
+msgid "Added %s to src_bypass_v4_file: %s"
+msgstr ""
+
+msgid "TCP/UDP split is enabled: both ports must be set in range 1..65535."
+msgstr ""
+
+msgid "Common port is required (1..65535)."
+msgstr ""
+
+msgid "Invalid nft_table name. Use a safe name, for example tp_mgr."
+msgstr ""
+
+msgid "fwmark_tcp/fwmark_udp must be decimal numbers or hex values like 0x1."
+msgstr ""
+
+msgid "rttab_tcp/rttab_udp must be positive integers."
+msgstr ""
+
+msgid "Invalid path for "
+msgstr ""
+
+msgid ". Expected an absolute path without extra whitespace."
+msgstr ""
+
+msgid "Invalid interface name: "
+msgstr ""
+
+msgid "TPROXY settings saved"
+msgstr ""
+
+msgid "List file saved: "
+msgstr ""
+
+msgid "TPROXY: service restarted"
+msgstr ""
+
+msgid "Save TPROXY settings"
+msgstr ""
+
+msgid "Cancel changes"
+msgstr ""
+
+msgid "Invalid JSON/JSONC"
+msgstr ""
+
+msgid "JSON root must be an array or object"
+msgstr ""
+
+msgid "(not found)"
+msgstr ""
+
+msgid "Invalid cron expression: 5 fields are required (min hour dom month dow)."
+msgstr ""
+
+msgid "minutes"
+msgstr ""
+
+msgid "hours"
+msgstr ""
+
+msgid "day of month"
+msgstr ""
+
+msgid "month"
+msgstr ""
+
+msgid "day of week"
+msgstr ""
+
+msgid "Invalid cron field: "
+msgstr ""
+
+msgid "schedule: "
+msgstr ""
+
+msgid "Sundays"
+msgstr ""
+
+msgid "Mondays"
+msgstr ""
+
+msgid "Tuesdays"
+msgstr ""
+
+msgid "Wednesdays"
+msgstr ""
+
+msgid "Thursdays"
+msgstr ""
+
+msgid "Fridays"
+msgstr ""
+
+msgid "Saturdays"
+msgstr ""
+
+msgid "on days "
+msgstr ""
+
+msgid "on "
+msgstr ""
+
+msgid "and"
+msgstr ""
+
+msgid "at"
+msgstr ""
+
+msgid "every day at "
+msgstr ""
+
+msgid "th"
+msgstr ""
+
+msgid "monthly"
+msgstr ""
+
+msgid "monthly on day "
+msgstr ""
+
+msgid "monthly on days "
+msgstr ""
+
+msgid "Update management"
+msgstr ""
+
+msgid "Path"
+msgstr ""
+
+msgid "Updated at"
+msgstr ""
+
+msgid "Update"
+msgstr ""
+
+msgid "Edit"
+msgstr ""
+
+msgid "Delete source #"
+msgstr ""
+
+msgid "List is empty"
+msgstr ""
+
+msgid "Automatic updates are disabled"
+msgstr ""
+
+msgid "Total"
+msgstr ""
+
+msgid "Schedule"
+msgstr ""
+
+msgid "minutes hours day_of_month month day_of_week (example: 30 4 * * 0)"
+msgstr ""
+
+msgid "preset"
+msgstr ""
+
+msgid "Every day 05:00"
+msgstr ""
+
+msgid "Every 30 minutes"
+msgstr ""
+
+msgid "Sundays 04:30"
+msgstr ""
+
+msgid "1st day 03:00"
+msgstr ""
+
+msgid "Create/update autostart"
+msgstr ""
+
+msgid "Remove autostart"
+msgstr ""
+
+msgid "Format"
+msgstr ""
+
+msgid "examples"
+msgstr ""
+
+msgid "every day at 5:00"
+msgstr ""
+
+msgid "Sundays at 4:30"
+msgstr ""
+
+msgid "Update all"
+msgstr ""
+
+msgid "Edit source #"
+msgstr ""
+
+msgid "(invalid index)"
+msgstr ""
+
+msgid "Cancel"
+msgstr ""
+
+msgid "Add source"
+msgstr ""
+
+msgid "Add"
+msgstr ""
+
+msgid "Full source list (JSON) - expand/collapse"
+msgstr ""
+
+msgid "Save list"
+msgstr ""
+
+msgid "Recreate script"
+msgstr ""
+
+msgid "Source list"
+msgstr ""
+
+msgid "Script"
+msgstr ""
+
+msgid "GEO list was not parsed: "
+msgstr ""
+
+msgid "Source added: "
+msgstr ""
+
+msgid "Destination path (dest) is required."
+msgstr ""
+
+msgid "Updated: "
+msgstr ""
+
+msgid "Update failed: "
+msgstr ""
+
+msgid "Updated %d of %d sources"
+msgstr ""
+
+msgid "Source updated: "
+msgstr ""
+
+msgid "Source deleted: "
+msgstr ""
+
+msgid "GEO list was not saved: "
+msgstr ""
+
+msgid "Source list saved"
+msgstr ""
+
+msgid "Update script recreated"
+msgstr ""
+
+msgid "Cron installed: "
+msgstr ""
+
+msgid "Cron removed"
+msgstr ""
+
+msgid "Invalid JSON/JSONC in "
+msgstr ""
+
+msgid "Excluded"
+msgstr ""
+
+msgid "Error: no data to decrypt"
+msgstr ""
+
+msgid "Happ capture enabled. Copy the link from the subscriptions block and open it from the phone."
+msgstr ""
+
+msgid "Failed to start Happ capture."
+msgstr ""
+
+msgid "Happ capture disabled."
+msgstr ""
+
+msgid "Failed to stop Happ capture."
+msgstr ""
+
+msgid "Happ fields were filled from the last capture request. Check the subscription URL and save the subscription."
+msgstr ""
+
+msgid "Capture log does not contain saved headers."
+msgstr ""
+
+msgid "Subscription URL is required."
+msgstr ""
+
+msgid "Subscription timeout must be at least 1 second."
+msgstr ""
+
+msgid "Subscription refresh timer must be at least 1 second."
+msgstr ""
+
+msgid "Subscription saved."
+msgstr ""
+
+msgid "Subscription deleted."
+msgstr ""
+
+msgid "Subscription not found."
+msgstr ""
+
+msgid "Subscription updated: "
+msgstr ""
+
+msgid "Failed to update subscription: "
+msgstr ""
+
+msgid "Subscriptions updated."
+msgstr ""
+
+msgid "Failed to update subscriptions."
+msgstr ""
+
+msgid "Template file path is required."
+msgstr ""
+
+msgid "Invalid template JSON/JSONC."
+msgstr ""
+
+msgid "Watchdog template saved: "
+msgstr ""
+
+msgid "Test template file path is required."
+msgstr ""
+
+msgid "Test template saved: "
+msgstr ""
+
+msgid "LINKS_FILE path is required."
+msgstr ""
+
+msgid "Invalid line in LINKS_FILE: "
+msgstr ""
+
+msgid "LINKS_FILE saved: "
+msgstr ""
+
+msgid "Watchdog log cleared."
+msgstr ""
+
+msgid "Watchdog check completed."
+msgstr ""
+
+msgid "Watchdog check failed."
+msgstr ""
+
+msgid "Failure counter reset."
+msgstr ""
+
+msgid "Failed to reset failure counter."
+msgstr ""
+
+msgid "Rotation completed."
+msgstr ""
+
+msgid "Rotation failed."
+msgstr ""
+
+msgid "All links check completed."
+msgstr ""
+
+msgid "Links check failed."
+msgstr ""
+
+msgid "Link applied: "
+msgstr ""
+
+msgid "Failed to apply link: "
+msgstr ""
+
+msgid "Link checked: "
+msgstr ""
+
+msgid "Link check failed: "
+msgstr ""
+
+msgid "Link excluded from subscriptions."
+msgstr ""
+
+msgid "Failed to exclude link from subscriptions."
+msgstr ""
+
+msgid "Link returned to rotation."
+msgstr ""
+
+msgid "Failed to return link to rotation."
+msgstr ""
+
+msgid "Added line must start with vless://"
+msgstr ""
+
+msgid "Link added."
+msgstr ""
+
+msgid "Editable link not found."
+msgstr ""
+
+msgid "Subscription links cannot be edited directly. Exclude the link or edit the subscription."
+msgstr ""
+
+msgid "Link must start with vless://"
+msgstr ""
+
+msgid "Link updated."
+msgstr ""
+
+msgid "Link deleted."
+msgstr ""
+
+msgid "Link to delete was not found."
+msgstr ""
+
+msgid "Link order updated."
+msgstr ""
+
+msgid "Link to reorder was not found."
+msgstr ""
+
+msgid "Watchdog service status and controls"
+msgstr ""
+
+msgid "Check now"
+msgstr ""
+
+msgid "Check all links"
+msgstr ""
+
+msgid "Force rotation"
+msgstr ""
+
+msgid "Reset counter"
+msgstr ""
+
+msgid "Subscriptions"
+msgstr ""
+
+msgid "Edit subscription #"
+msgstr ""
+
+msgid "New subscription"
+msgstr ""
+
+msgid "Click Start capture, copy the link and open it from the phone in the app/browser that performs the subscription request. The router will save headers and body of the last request, then they can be used to fill the Happ subscription form."
+msgstr ""
+
+msgid "Status"
+msgstr ""
+
+msgid "valid until"
+msgstr ""
+
+msgid "TTL, sec"
+msgstr ""
+
+msgid "Capture service port"
+msgstr ""
+
+msgid "Capture log"
+msgstr ""
+
+msgid "Phone link"
+msgstr ""
+
+msgid "Copy"
+msgstr ""
+
+msgid "Start capture"
+msgstr ""
+
+msgid "Stop capture"
+msgstr ""
+
+msgid "Show last request"
+msgstr ""
+
+msgid "Fill Happ form from the last request"
+msgstr ""
+
+msgid "Last capture request"
+msgstr ""
+
+msgid "No capture request has been saved yet."
+msgstr ""
+
+msgid "Decrypts happ://crypt/, crypt2, crypt3, crypt4 and crypt5 through the shared server-side mechanism."
+msgstr ""
+
+msgid "The result is only displayed and is not added to the link list or subscriptions."
+msgstr ""
+
+msgid "Decrypt"
+msgstr ""
+
+msgid "Result"
+msgstr ""
+
+msgid "Subscription list"
+msgstr ""
+
+msgid "Type"
+msgstr ""
+
+msgid "Enabled"
+msgstr ""
+
+msgid "Timer"
+msgstr ""
+
+msgid "Action"
+msgstr ""
+
+msgid "No subscriptions configured"
+msgstr ""
+
+msgid "yes"
+msgstr ""
+
+msgid "no"
+msgstr ""
+
+msgid "sec"
+msgstr ""
+
+msgid "Delete subscription and its links?"
+msgstr ""
+
+msgid "Update all subscriptions"
+msgstr ""
+
+msgid "URL or Happ link"
+msgstr ""
+
+msgid "Refresh timer, sec"
+msgstr ""
+
+msgid "Request timeout, sec"
+msgstr ""
+
+msgid "Additional headers: one Name: value pair per line."
+msgstr ""
+
+msgid "Save subscription"
+msgstr ""
+
+msgid "For Happ, you can specify a regular https:// URL or an encrypted happ://crypt* link. Raw, base64 and JSON responses of Happ subscriptions are parsed automatically."
+msgstr ""
+
+msgid "VLESS link list"
+msgstr ""
+
+msgid "Source"
+msgstr ""
+
+msgid "Comment"
+msgstr ""
+
+msgid "VLESS link"
+msgstr ""
+
+msgid "Last check"
+msgstr ""
+
+msgid "Link list is empty"
+msgstr ""
+
+msgid "EXCLUDED"
+msgstr ""
+
+msgid "Apply"
+msgstr ""
+
+msgid "Check"
+msgstr ""
+
+msgid "Return link to rotation?"
+msgstr ""
+
+msgid "Enable"
+msgstr ""
+
+msgid "Exclude link from rotation?"
+msgstr ""
+
+msgid "Exclude"
+msgstr ""
+
+msgid "Delete selected link?"
+msgstr ""
+
+msgid "New link file line"
+msgstr ""
+
+msgid "Comment will be taken from the part after # inside the link"
+msgstr ""
+
+msgid "LINKS_FILE editor"
+msgstr ""
+
+msgid "For bulk paste: one VLESS link per line. Empty lines and lines starting with # are allowed."
+msgstr ""
+
+msgid "Save LINKS_FILE"
+msgstr ""
+
+msgid "Watchdog settings"
+msgstr ""
+
+msgid "ordered"
+msgstr ""
+
+msgid "random"
+msgstr ""
+
+msgid "fastest"
+msgstr ""
+
+msgid "Exclude dead links"
+msgstr ""
+
+msgid "Exclusion period: hours"
+msgstr ""
+
+msgid "Exclusion period: minutes"
+msgstr ""
+
+msgid "Background link check"
+msgstr ""
+
+msgid "Background check timer, sec"
+msgstr ""
+
+msgid "Batch link check"
+msgstr ""
+
+msgid "Batch start port"
+msgstr ""
+
+msgid "Batch size"
+msgstr ""
+
+msgid "Batch concurrency"
+msgstr ""
+
+msgid "Fallback to old check"
+msgstr ""
+
+msgid "Save Watchdog settings"
+msgstr ""
+
+msgid "Outbounds template"
+msgstr ""
+
+msgid "The template is stored in a separate file and is processed by the built-in /usr/bin/vless2json.sh converter by default. The path can be overridden in settings."
+msgstr ""
+
+msgid "Save template"
+msgstr ""
+
+msgid "Template JSONC is valid"
+msgstr ""
+
+msgid "JSONC error: "
+msgstr ""
+
+msgid "Test template"
+msgstr ""
+
+msgid "This template is used for the temporary test-instance. The default variant supports placeholders __TEST_PORT__, __OUTBOUNDS__ and __OUTBOUND_TAG__."
+msgstr ""
+
+msgid "Save test template"
+msgstr ""
+
+msgid "Watchdog log"
+msgstr ""
+
+msgid "Clear log"
+msgstr ""
+
+msgid "excluded until"
+msgstr ""
+
+msgid "Not checked"
+msgstr ""
+
+msgid "(log is empty)"
+msgstr ""
+
+msgid "Interval must be at least 1 second."
+msgstr ""
+
+msgid "Failure threshold must be at least 1."
+msgstr ""
+
+msgid "Connect timeout must be at least 1."
+msgstr ""
+
+msgid "Max time must be greater than or equal to connect timeout."
+msgstr ""
+
+msgid "Exclusion period is invalid."
+msgstr ""
+
+msgid "Test-instance port must be in range 1..65535."
+msgstr ""
+
+msgid "Background check timer must be at least 1 second."
+msgstr ""
+
+msgid "Happ capture TTL must be at least 1 second."
+msgstr ""
+
+msgid "Happ capture port must be in range 1..65535."
+msgstr ""
+
+msgid "Unknown link selection mode."
+msgstr ""
+
+msgid "A valid absolute service path is required."
+msgstr ""
+
+msgid "Batch check start port must be in range 1..65535."
+msgstr ""
+
+msgid "Batch check size must be at least 1."
+msgstr ""
+
+msgid "Batch check concurrency must be at least 1."
+msgstr ""
+
+msgid "Batch check port range exceeds 65535."
+msgstr ""
+
+msgid "Batch check port range must not include Watchdog TEST_PORT."
+msgstr ""
+
+msgid "Required field is empty: "
+msgstr ""
+
+msgid "Invalid absolute path for "
+msgstr ""
+
+msgid "Watchdog settings saved."
+msgstr ""
+
+msgid "Test start command is required."
+msgstr ""
+
+msgid "Invalid JSON (parse error)"
+msgstr ""
+
+msgid "Xray service status and controls"
+msgstr ""
+
+msgid "Xray (JSON files in /etc/xray)"
+msgstr ""
+
+msgid "Invalid file name. Expected *.json without slashes."
+msgstr ""
+
+msgid "JSONC is valid (comments allowed)"
+msgstr ""
+
+msgid "JSON error: "
+msgstr ""
+
+msgid "JSON saved: "
+msgstr ""
+
+msgid "Check URL"
+msgstr ""
+
+msgid "Proxy URL"
+msgstr ""
+
+msgid "Check interval, sec"
+msgstr ""
+
+msgid "Failure threshold"
+msgstr ""
+
+msgid "Connect timeout, sec"
+msgstr ""
+
+msgid "Max request time, sec"
+msgstr ""
+
+msgid "Outbound file"
+msgstr ""
+
+msgid "VLESS converter"
+msgstr ""
+
+msgid "Managed service"
+msgstr ""
+
+msgid "Restart command"
+msgstr ""
+
+msgid "Test command"
+msgstr ""
+
+msgid "Selection mode"
+msgstr ""
+
+msgid "Test port"
+msgstr ""
+
+msgid "Batch test template"
+msgstr ""
+
+msgid "Subscriptions file"
+msgstr ""
+
+msgid "Happ capture TTL, sec"
+msgstr ""
+
+msgid "Happ capture port"
+msgstr ""
+
+msgid "Happ capture log"
+msgstr ""
