@@ -1060,3 +1060,57 @@ msgstr "Порт Happ capture"
 
 msgid "Happ capture log"
 msgstr "Лог Happ capture"
+
+msgid "Shared subscription file path is required."
+msgstr "Требуется путь к файлу расшаренной подписки."
+
+msgid "Shared subscription file path must be absolute."
+msgstr "Путь к файлу расшаренной подписки должен быть абсолютным."
+
+msgid "Shared subscription settings saved."
+msgstr "Настройки расшаривания подписки сохранены."
+
+msgid "Failed to save shared subscription settings."
+msgstr "Не удалось сохранить настройки расшаривания подписки."
+
+msgid "Shared router subscription"
+msgstr "Расшаривание подписки"
+
+msgid "These subscription URLs are public. Anyone who knows the URL can download the exported proxy list."
+msgstr "Эти URL подписки публичные. Любой, кто знает ссылку, сможет скачать экспортируемый список proxy."
+
+msgid "Enable sharing"
+msgstr "Включить расшаривание"
+
+msgid "Link selection"
+msgstr "Выбор ссылок"
+
+msgid "All links"
+msgstr "Все ссылки"
+
+msgid "Selected links"
+msgstr "Выбранные ссылки"
+
+msgid "Shared subscription file"
+msgstr "Файл расшаренной подписки"
+
+msgid "Available links"
+msgstr "Доступно ссылок"
+
+msgid "Exported links"
+msgstr "Экспортируется ссылок"
+
+msgid "Client"
+msgstr "Клиент"
+
+msgid "Format"
+msgstr "Формат"
+
+msgid "Recommended format: base64 for v2RayTun, Shadowrocket, v2Box and V2rayNG; plain for Happ and clients that accept raw VLESS lists."
+msgstr "Рекомендуемый формат: base64 для v2RayTun, Shadowrocket, v2Box и V2rayNG; plain для Happ и клиентов, принимающих raw-списки VLESS."
+
+msgid "Save sharing settings"
+msgstr "Сохранить настройки расшаривания"
+
+msgid "Shared"
+msgstr "В подписке"

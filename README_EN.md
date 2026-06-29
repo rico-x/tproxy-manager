@@ -21,6 +21,7 @@ Main features:
 - Cron-based GEO database updates.
 - Built-in `/usr/bin/vless2json.sh` converter for VLESS links.
 - Watchdog for subscriptions, batch link checks, dead-link exclusion, and automatic rotation.
+- Router-side subscription sharing for v2RayTun, Happ, Shadowrocket, v2Box, and V2rayNG clients.
 - Happ subscriptions with regular `https://` URLs, encrypted `happ://crypt*` URLs, and Xray-like JSON responses.
 - Batch VLESS checks through one test instance with separate outbound tags and SOCKS ports.
 - Active-link selection modes: ordered, random, and fastest.
@@ -104,6 +105,7 @@ The package post-install script:
 - Creates `/usr/share/tproxy-manager`.
 - Creates default list files.
 - Creates the Watchdog subscription database.
+- Creates the Watchdog shared subscription profile.
 - Creates `/etc/tproxy-manager/geo-sources.conf` if it is missing or empty.
 - Copies Watchdog templates to `/etc/tproxy-manager` if they do not exist.
 - Marks init scripts and `/usr/bin/vless2json.sh` executable.
@@ -275,6 +277,43 @@ Source labels in the link table:
 
 Subscription links are not edited directly. They can be checked, applied, excluded from rotation, moved, or restored.
 
+### Shared Router Subscription
+
+The `Shared router subscription` block publishes the final `watchdog.links` list as a subscription URL for other devices.
+
+Supported clients:
+
+- v2RayTun
+- Happ
+- Shadowrocket
+- v2Box
+- V2rayNG
+
+The block generates two universal URLs:
+
+- `plain`: newline-separated `vless://` links.
+- `base64`: base64 of the same newline-separated list.
+
+Recommended format:
+
+- `base64`: v2RayTun, Shadowrocket, v2Box, and V2rayNG.
+- `plain`: Happ and clients that accept raw VLESS lists.
+
+Sharing is disabled by default. Once enabled, URLs are public: any device that knows the URL can download the exported proxy list.
+
+Selection modes:
+
+- `All links`: export every valid VLESS link from the current `watchdog.links`.
+- `Selected links`: enable the `Shared` checkbox column in the VLESS table and export only checked rows.
+
+Links excluded from rotation are not exported because they are not part of the active `watchdog.links` file. Link health does not filter the export by itself; use selected mode when you need manual filtering.
+
+Sharing profile file:
+
+```txt
+/etc/tproxy-manager/watchdog-share.json
+```
+
 ### Happ Capture
 
 ![Watchdog Happ capture](docs/screenshots/placeholder-watchdog-happ-capture.png)
@@ -363,6 +402,7 @@ Template placeholders are documented in [docs/en/vless2json.md](docs/en/vless2js
 | Main config | `/etc/config/tproxy-manager` |
 | Watchdog links | `/etc/tproxy-manager/watchdog.links` |
 | Watchdog subscriptions DB | `/etc/tproxy-manager/watchdog-subscriptions.json` |
+| Watchdog shared subscription profile | `/etc/tproxy-manager/watchdog-share.json` |
 | GEO data directory | `/usr/share/tproxy-manager` |
 
 ## Build

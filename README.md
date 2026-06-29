@@ -21,6 +21,7 @@ TPROXY Manager — это LuCI-панель и набор системных с�
 - cron-обновление GEO-баз;
 - встроенный `vless2json.sh` для генерации outbound из VLESS-ссылок;
 - Watchdog для подписок, массовой проверки ссылок, исключения нерабочих узлов и автоматической ротации;
+- расшаривание итогового списка VLESS-ссылок роутера для клиентов v2RayTun, Happ, Shadowrocket, v2Box и V2rayNG;
 - Happ-подписки с обычными `https://` URL, encrypted `happ://crypt*` URL и JSON-ответами Xray-like;
 - batch-проверка VLESS-ссылок одним test-instance с отдельными outbound-тегами и SOCKS-портами;
 - режим выбора активной ссылки `по порядку`, `случайно` или `самый быстрый`;
@@ -104,6 +105,7 @@ apk upgrade tproxy-manager
 - создаёт `/usr/share/tproxy-manager`;
 - создаёт базовые файлы списков;
 - создаёт базовую базу подписок Watchdog;
+- создаёт профиль расшаривания подписки Watchdog;
 - создаёт `/etc/tproxy-manager/geo-sources.conf`, если файл отсутствует или пустой;
 - копирует watchdog-шаблоны в `/etc/tproxy-manager`, если их ещё нет;
 - делает исполняемыми init.d-скрипты и `/usr/bin/vless2json.sh`;
@@ -379,6 +381,43 @@ JSON-ответы Happ-подписок разбираются автомати�
 
 Если активный outbound собран из ссылки подписки, в строке статуса выводится `ACTIVE`, а строка этой подписки подсвечивается в таблице.
 
+### Расшаривание подписки
+
+Блок `Расшаривание подписки` публикует итоговый список `watchdog.links` как подписку для других устройств.
+
+Поддерживаемые клиенты:
+
+- v2RayTun;
+- Happ;
+- Shadowrocket;
+- v2Box;
+- V2rayNG.
+
+Формируются две универсальные ссылки:
+
+- `plain` — обычный текст, одна `vless://` ссылка на строку;
+- `base64` — base64 от такого же списка.
+
+Рекомендуемый формат:
+
+- `base64` — для v2RayTun, Shadowrocket, v2Box и V2rayNG;
+- `plain` — для Happ и клиентов, которые принимают raw-список VLESS-ссылок.
+
+Расшаривание выключено по умолчанию. После включения URL являются публичными: любое устройство, которому известна ссылка, сможет скачать экспортируемый список proxy.
+
+Режимы выбора ссылок:
+
+- `Все ссылки` — экспортируются все валидные VLESS-ссылки из текущего `watchdog.links`;
+- `Выбранные ссылки` — в таблице VLESS появляется активный столбец `В подписке`, где можно отметить конкретные строки.
+
+Исключенные из ротации строки не публикуются, потому что они не входят в текущий рабочий `watchdog.links`. Статус живости `OK/Error` сам по себе не фильтрует экспорт: если нужна фильтрация, используйте выборочный режим.
+
+Файл настроек расшаривания:
+
+```txt
+/etc/tproxy-manager/watchdog-share.json
+```
+
 ### Happ capture
 
 ![Watchdog Happ capture](docs/screenshots/placeholder-watchdog-happ-capture.png)
@@ -620,6 +659,7 @@ Batch-template получает три плейсхолдера:
 | GEO updater | `/usr/bin/tproxy-manager-geo-update.sh` |
 | Пользовательские списки | `/etc/tproxy-manager` |
 | Watchdog subscriptions DB | `/etc/tproxy-manager/watchdog-subscriptions.json` |
+| Профиль расшаривания Watchdog | `/etc/tproxy-manager/watchdog-share.json` |
 | Watchdog links | `/etc/tproxy-manager/watchdog.links` |
 | Watchdog batch-template | `/etc/tproxy-manager/watchdog-batch-test-config.template.jsonc` |
 | GEO datadir | `/usr/share/tproxy-manager` |

@@ -5,9 +5,11 @@ local sys = require "luci.sys"
 local http = require "luci.http"
 local xml = require "luci.xml"
 local jsonc = require "luci.jsonc"
+local disp = require "luci.dispatcher"
 local helpers = require "luci.model.cbi.tproxy_manager.modules.watchdog_helpers"
 local utils = require "luci.model.cbi.tproxy_manager.utils"
 local happ_decrypt = require "tproxy_manager.happ_decrypt"
+local share = require "tproxy_manager.subscription_share"
 local _ = require "luci.model.cbi.tproxy_manager.i18n"
 
 local pcdata = xml.pcdata
@@ -16,6 +18,7 @@ local SUBSCRIPTIONS_SCRIPT = "/usr/bin/tproxy-manager-subscriptions.lua"
 local WATCHDOG_LINK_STATE_DIR = "/tmp/tproxy-manager-watchdog-links"
 local DEFAULT_SUBSCRIPTIONS_FILE = "/etc/tproxy-manager/watchdog-subscriptions.json"
 local DEFAULT_CAPTURE_LOG = "/tmp/tproxy-manager-happ-capture.log"
+local DEFAULT_SHARE_FILE = "/etc/tproxy-manager/watchdog-share.json"
 
 local function read_file(path)
   return utils.read_file(path)
@@ -326,6 +329,15 @@ local function capture_url(token, port)
   return "http://" .. host .. ":" .. port .. "/" .. token
 end
 
+local function public_luci_url(...)
+  local scheme = trim(http.getenv("REQUEST_SCHEME"))
+  if scheme ~= "http" and scheme ~= "https" then
+    scheme = http.getenv("HTTPS") == "on" and "https" or "http"
+  end
+  local host = http.getenv("HTTP_HOST") or "192.168.1.1"
+  return scheme .. "://" .. host .. disp.build_url(...)
+end
+
 local function subscription_enabled(sub)
   return sub.enabled == true or sub.enabled == "1" or sub.enabled == 1
 end
@@ -433,6 +445,7 @@ local function render(ctx)
 
   local links_path = getu("watchdog_links_file", "/etc/tproxy-manager/watchdog.links")
   local subscriptions_path = getu("watchdog_subscriptions_file", DEFAULT_SUBSCRIPTIONS_FILE)
+  local share_file = getu("watchdog_share_file", DEFAULT_SHARE_FILE)
   local capture_log = getu("watchdog_happ_capture_log", DEFAULT_CAPTURE_LOG)
   local capture_defaults = nil
   local show_capture_details = false
@@ -498,6 +511,49 @@ local function render(ctx)
 
   if http.formvalue("_sub_show_capture") == "1" then
     show_capture_details = true
+  end
+
+  if http.formvalue("_share_save") == "1" then
+    local mode = trim(http.formvalue("share_selection_mode"))
+    local path = trim(http.formvalue("watchdog_share_file"))
+    local current_cfg = share.read_config(path ~= "" and path or share_file)
+    local selected = current_cfg.selected or {}
+    if mode ~= "selected" then mode = "all" end
+    if path == "" then
+      set_err(_("Shared subscription file path is required."))
+    elseif not utils.is_abs_path(path) then
+      set_err(_("Shared subscription file path must be absolute."))
+    else
+      if mode == "selected" then
+        selected = {}
+        local allowed = {}
+        for __, entry in ipairs(helpers.parse_links_file(links_path)) do
+          if entry.hash and entry.hash ~= "" then allowed[entry.hash] = true end
+        end
+        local values = http.formvalue("share_selected_hash")
+        if type(values) ~= "table" then values = values and { values } or {} end
+        for __, hash in ipairs(values) do
+          hash = trim(hash):lower()
+          if allowed[hash] then selected[hash] = true end
+        end
+      end
+      local saved = share.write_config(path, {
+        version = 1,
+        selection_mode = mode,
+        selected = selected,
+      })
+      if not saved then
+        set_err(_("Failed to save shared subscription settings."))
+        return m
+      end
+      uci:set(PKG, "main", "watchdog_share_enabled", http.formvalue("watchdog_share_enabled") and "1" or "0")
+      uci:set(PKG, "main", "watchdog_share_file", path)
+      uci:commit(PKG)
+      set_err(nil)
+      set_info(_("Shared subscription settings saved."))
+      helpers.redirect_watchdog()
+      return m
+    end
   end
 
   if http.formvalue("_sub_save") == "1" then
@@ -793,6 +849,9 @@ local function render(ctx)
   local edit_sub = edit_sub_id ~= "" and find_subscription(sub_db, edit_sub_id) or nil
   local links = helpers.parse_links_file(links_path)
   links = merge_excluded_subscription_links(links, sub_db)
+  local share_enabled = getu("watchdog_share_enabled", "0") == "1"
+  local share_cfg = share.read_config(share_file)
+  local share_export_entries = share.selected_entries(share.parse_links_file(links_path), share_cfg)
   local active_entry, active_detected_by = find_active_entry(links, status)
   local active_hash = active_entry and active_entry.hash or ""
   local active_text = active_entry and active_source_text(sub_db, active_entry) or "-"
@@ -837,6 +896,9 @@ local function render(ctx)
 .happ-decrypt-actions{margin-top:.6rem;display:flex;gap:.35rem;flex-wrap:wrap}
 .wd-subblock{border:1px solid #e5e7eb;border-radius:.45rem;padding:.75rem;margin:.75rem 0}
 .wd-subblock h4{margin-top:0}
+.wd-share-url{display:flex;gap:.35rem}
+.wd-share-url input{width:100%}
+.wd-share-url button{min-width:2.4rem;padding-left:.45rem;padding-right:.45rem}
 </style>
 ]]
     end
@@ -1137,10 +1199,26 @@ local function render(ctx)
     dv.rawhtml = true
     function dv.cfgvalue()
       local rows = {}
+      local share_mode = share_cfg.selection_mode or "all"
+      local share_selected = share_cfg.selected or {}
+      local function share_checkbox(entry)
+        local hash = tostring(entry.hash or "")
+        local blocked = entry.excluded or hash == ""
+        local selected = share_selected[hash] == true
+        local checked = ((share_mode == "all" and not blocked) or (share_mode == "selected" and selected)) and " checked" or ""
+        local disabled = (share_mode ~= "selected" or blocked) and " disabled" or ""
+        return string.format(
+          "<input class='wd-share-checkbox' type='checkbox' name='share_selected_hash' value='%s' data-share-selected='%s' data-share-blocked='%s'%s%s>",
+          pcdata(hash),
+          selected and "1" or "0",
+          blocked and "1" or "0",
+          checked,
+          disabled)
+      end
       rows[#rows + 1] = "<div class='box'>"
-      rows[#rows + 1] = "<table class='wd-table'><thead><tr><th style='width:10%'>" .. _("Source") .. "</th><th style='width:16%'>" .. _("Comment") .. "</th><th style='width:36%'>" .. _("VLESS link") .. "</th><th style='width:10%'>" .. _("Status") .. "</th><th style='width:12%'>" .. _("Last check") .. "</th><th style='width:16%'>" .. _("Action") .. "</th></tr></thead><tbody>"
+      rows[#rows + 1] = "<table class='wd-table'><thead><tr><th style='width:9%'>" .. _("Source") .. "</th><th style='width:8%'>" .. _("Shared") .. "</th><th style='width:14%'>" .. _("Comment") .. "</th><th style='width:34%'>" .. _("VLESS link") .. "</th><th style='width:9%'>" .. _("Status") .. "</th><th style='width:11%'>" .. _("Last check") .. "</th><th style='width:15%'>" .. _("Action") .. "</th></tr></thead><tbody>"
       if #links == 0 then
-        rows[#rows + 1] = "<tr><td colspan='6' style='color:#6b7280'>" .. _("Link list is empty") .. "</td></tr>"
+        rows[#rows + 1] = "<tr><td colspan='7' style='color:#6b7280'>" .. _("Link list is empty") .. "</td></tr>"
       end
       for i, entry in ipairs(links) do
         local label, checked = helpers.status_label(entry, pcdata)
@@ -1162,6 +1240,7 @@ local function render(ctx)
           rows[#rows + 1] = string.format([[
 <tr%s>
   <td>%s</td>
+  <td style="text-align:center">%s</td>
   <td><input type="hidden" name="wd_edit_hash" value="%s"><div style="color:#6b7280">%s</div></td>
   <td><input type="text" name="wd_edit_link" value="%s" style="width:100%%"></td>
   <td>%s</td>
@@ -1171,7 +1250,7 @@ local function render(ctx)
     <button class="cbi-button cbi-button-reset" name="_wd_edit_cancel" value="1">%s</button>
   </td>
 </tr>]],
-            row_class, source_html, pcdata(entry.hash), pcdata(entry.comment or "—"), pcdata(entry.raw_link or ""), label, pcdata(checked),
+            row_class, source_html, share_checkbox(entry), pcdata(entry.hash), pcdata(entry.comment or "—"), pcdata(entry.raw_link or ""), label, pcdata(checked),
             pcdata(_("Save")), pcdata(_("Cancel")))
         else
           local action_buttons
@@ -1215,6 +1294,7 @@ local function render(ctx)
           rows[#rows + 1] = string.format([[
 <tr%s>
   <td>%s</td>
+  <td style="text-align:center">%s</td>
   <td>%s</td>
   <td class="wd-code" title="%s">%s</td>
   <td>%s</td>
@@ -1225,6 +1305,7 @@ local function render(ctx)
 </tr>]],
             row_class,
             source_html,
+            share_checkbox(entry),
             pcdata(entry.comment or "—"),
             pcdata(entry.raw_link or ""),
             pcdata(entry.link or ""),
@@ -1236,6 +1317,7 @@ local function render(ctx)
       rows[#rows + 1] = [[
 <tr>
   <td><span class="svc-badge">local</span></td>
+  <td style="color:#6b7280;text-align:center">—</td>
   <td style="color:#6b7280">]] .. pcdata(_("New link file line")) .. [[</td>
   <td><input type="text" name="wd_add_link" placeholder="vless://..." style="width:100%"></td>
   <td colspan="2" style="color:#6b7280">]] .. pcdata(_("Comment will be taken from the part after # inside the link")) .. [[</td>
@@ -1248,6 +1330,102 @@ local function render(ctx)
       rows[#rows + 1] = string.format("<textarea class='wd-textarea' name='watchdog_links_text' rows='12' spellcheck='false'>%s</textarea>", pcdata(read_file(links_path)))
       rows[#rows + 1] = "<div style='margin-top:.5rem'><button class='cbi-button cbi-button-apply' name='_watchdog_save_links_text' value='1'>" .. _("Save LINKS_FILE") .. "</button></div>"
       rows[#rows + 1] = "</div></details></div>"
+      return table.concat(rows, "\n")
+    end
+  end
+
+  do
+    local sec = m:section(SimpleSection, _("Shared router subscription"))
+    local dv = sec:option(DummyValue, "_watchdog_share")
+    dv.rawhtml = true
+    function dv.cfgvalue()
+      local rows = {}
+      local mode = share_cfg.selection_mode or "all"
+      local current_entries = share.parse_links_file(links_path)
+      local plain_url = public_luci_url("tproxy-manager", "subscription", "plain")
+      local base64_url = public_luci_url("tproxy-manager", "subscription", "base64")
+      rows[#rows + 1] = "<details class='wd-details'><summary>" .. _("Shared router subscription") .. "</summary><div class='box' style='margin-top:.5rem'>"
+      rows[#rows + 1] = "<div style='color:#b45309;margin-bottom:.6rem'>" .. _("These subscription URLs are public. Anyone who knows the URL can download the exported proxy list.") .. "</div>"
+      rows[#rows + 1] = string.format([[
+<div class="wd-grid">
+  <label>%s</label><input type="checkbox" name="watchdog_share_enabled" value="1" %s>
+  <label>%s</label>
+  <select id="share_selection_mode" name="share_selection_mode">
+    <option value="all"%s>%s</option>
+    <option value="selected"%s>%s</option>
+  </select>
+  <label>%s</label><input type="text" name="watchdog_share_file" value="%s">
+  <label>%s</label><div>%s</div>
+  <label>%s</label><div>%s</div>
+</div>]],
+        pcdata(_("Enable sharing")),
+        share_enabled and "checked" or "",
+        pcdata(_("Link selection")),
+        mode == "all" and " selected" or "",
+        pcdata(_("All links")),
+        mode == "selected" and " selected" or "",
+        pcdata(_("Selected links")),
+        pcdata(_("Shared subscription file")),
+        pcdata(share_file),
+        pcdata(_("Available links")),
+        pcdata(tostring(#current_entries)),
+        pcdata(_("Exported links")),
+        pcdata(tostring(#share_export_entries)))
+
+      rows[#rows + 1] = string.format([[
+<table class="wd-table" style="margin-top:.7rem">
+  <thead><tr><th style="width:16%%">%s</th><th style="width:84%%">URL</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>plain</td>
+      <td><div class="wd-share-url"><input id="share_url_plain" type="text" readonly value="%s" onclick="this.select()"><button type="button" class="cbi-button cbi-button-action" title="%s" onclick="var e=document.getElementById('share_url_plain');e.select();if(navigator.clipboard){navigator.clipboard.writeText(e.value);}else{document.execCommand('copy');}">💾</button></div></td>
+    </tr>
+    <tr>
+      <td>base64</td>
+      <td><div class="wd-share-url"><input id="share_url_base64" type="text" readonly value="%s" onclick="this.select()"><button type="button" class="cbi-button cbi-button-action" title="%s" onclick="var e=document.getElementById('share_url_base64');e.select();if(navigator.clipboard){navigator.clipboard.writeText(e.value);}else{document.execCommand('copy');}">💾</button></div></td>
+    </tr>
+  </tbody>
+</table>
+<div style="margin-top:.5rem;color:#6b7280">%s</div>]],
+        pcdata(_("Format")),
+        pcdata(plain_url),
+        pcdata(_("Copy")),
+        pcdata(base64_url),
+        pcdata(_("Copy")),
+        pcdata(_("Recommended format: base64 for v2RayTun, Shadowrocket, v2Box and V2rayNG; plain for Happ and clients that accept raw VLESS lists.")))
+
+      rows[#rows + 1] = "<div style='margin-top:.6rem'><button class='cbi-button cbi-button-apply' name='_share_save' value='1'>" .. _("Save sharing settings") .. "</button></div>"
+      rows[#rows + 1] = [[
+<script>
+(function(){
+  function initShareSelection(){
+    var mode = document.getElementById('share_selection_mode');
+    var boxes = document.querySelectorAll('.wd-share-checkbox');
+    if (!mode || !boxes.length) return;
+    function syncShareBoxes(){
+      var selectedMode = mode.value === 'selected';
+      for (var i = 0; i < boxes.length; i++) {
+        var box = boxes[i];
+        var blocked = box.getAttribute('data-share-blocked') === '1';
+        box.disabled = !selectedMode || blocked;
+        if (selectedMode) {
+          box.checked = box.getAttribute('data-share-selected') === '1';
+        } else {
+          box.checked = !blocked;
+        }
+      }
+    }
+    mode.addEventListener('change', syncShareBoxes);
+    syncShareBoxes();
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initShareSelection);
+  } else {
+    initShareSelection();
+  }
+})();
+</script>]]
+      rows[#rows + 1] = "</div></details>"
       return table.concat(rows, "\n")
     end
   end

@@ -31,6 +31,16 @@ if [ ! -s /etc/tproxy-manager/watchdog-subscriptions.json ]; then
 EOF
 fi
 
+if [ ! -s /etc/tproxy-manager/watchdog-share.json ]; then
+  cat > /etc/tproxy-manager/watchdog-share.json <<'EOF'
+{
+  "version": 1,
+  "selection_mode": "all",
+  "selected": {}
+}
+EOF
+fi
+
 if [ ! -s /etc/tproxy-manager/geo-sources.conf ]; then
   cat > /etc/tproxy-manager/geo-sources.conf <<'EOF'
 [
@@ -131,6 +141,8 @@ set_default tproxy-manager main watchdog_batch_check_concurrency '8'
 set_default tproxy-manager main watchdog_batch_check_fallback '1'
 set_default tproxy-manager main watchdog_batch_test_template_file '/etc/tproxy-manager/watchdog-batch-test-config.template.jsonc'
 set_default tproxy-manager main watchdog_subscriptions_file '/etc/tproxy-manager/watchdog-subscriptions.json'
+set_default tproxy-manager main watchdog_share_enabled '0'
+set_default tproxy-manager main watchdog_share_file '/etc/tproxy-manager/watchdog-share.json'
 set_default tproxy-manager main watchdog_happ_capture_enabled '0'
 set_default tproxy-manager main watchdog_happ_capture_token ''
 set_default tproxy-manager main watchdog_happ_capture_until '0'

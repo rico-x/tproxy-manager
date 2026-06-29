@@ -4,8 +4,11 @@ local fs = require "nixio.fs"
 local http = require "luci.http"
 local uci = require("luci.model.uci").cursor()
 local _ = require "luci.model.cbi.tproxy_manager.i18n"
+local share = require "tproxy_manager.subscription_share"
 
 local PKG = "tproxy-manager"
+local DEFAULT_LINKS_FILE = "/etc/tproxy-manager/watchdog.links"
+local DEFAULT_SHARE_FILE = "/etc/tproxy-manager/watchdog-share.json"
 
 local function trim(value)
     return tostring(value or ""):gsub("\r", ""):gsub("^%s+", ""):gsub("%s+$", "")
@@ -105,6 +108,44 @@ function action_happ_capture()
     http.write("OK\n")
 end
 
+local function write_not_found()
+    if http.status then http.status(404, "Not Found") end
+    http.prepare_content("text/plain; charset=utf-8")
+    http.write("not found\n")
+end
+
+function action_subscription_share()
+    local disp = require "luci.dispatcher"
+    local path = disp.context.requestpath or {}
+    local variant = trim(path[3]):lower()
+
+    if not share.is_variant(variant) then
+        write_not_found()
+        return
+    end
+
+    if uci:get(PKG, "main", "watchdog_share_enabled") ~= "1" then
+        write_not_found()
+        return
+    end
+
+    local links_path = trim(uci:get(PKG, "main", "watchdog_links_file"))
+    local share_file = trim(uci:get(PKG, "main", "watchdog_share_file"))
+    if links_path == "" then links_path = DEFAULT_LINKS_FILE end
+    if share_file == "" then share_file = DEFAULT_SHARE_FILE end
+
+    local config = share.read_config(share_file)
+    local entries = share.selected_entries(share.parse_links_file(links_path), config)
+    local payload = share.render_payload(entries, variant)
+
+    if http.header then
+        http.header("Cache-Control", "no-store")
+        http.header("Content-Disposition", string.format('inline; filename="tproxy-manager-subscription-%s.txt"', variant))
+    end
+    http.prepare_content("text/plain; charset=utf-8")
+    http.write(payload)
+end
+
 function index()
     if not fs.access("/etc/config/tproxy-manager") then
         entry({"admin","network","tproxy_manager"}, firstchild(), _("TPROXY Manager"), 90)
@@ -112,4 +153,5 @@ function index()
     -- Use "form" action because the model returns a SimpleForm
     entry({"admin","network","tproxy_manager"}, form("tproxy_manager/manage"), _("TPROXY Manager"), 90).leaf = true
     entry({"tproxy-manager","happ-capture"}, call("action_happ_capture"), nil).leaf = true
+    entry({"tproxy-manager","subscription"}, call("action_subscription_share"), nil).leaf = true
 end

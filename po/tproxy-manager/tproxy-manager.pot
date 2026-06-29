@@ -782,6 +782,60 @@ msgstr ""
 msgid "For Happ, you can specify a regular https:// URL or an encrypted happ://crypt* link. Raw, base64 and JSON responses of Happ subscriptions are parsed automatically."
 msgstr ""
 
+msgid "Shared subscription file path is required."
+msgstr ""
+
+msgid "Shared subscription file path must be absolute."
+msgstr ""
+
+msgid "Shared subscription settings saved."
+msgstr ""
+
+msgid "Failed to save shared subscription settings."
+msgstr ""
+
+msgid "Shared router subscription"
+msgstr ""
+
+msgid "These subscription URLs are public. Anyone who knows the URL can download the exported proxy list."
+msgstr ""
+
+msgid "Enable sharing"
+msgstr ""
+
+msgid "Link selection"
+msgstr ""
+
+msgid "All links"
+msgstr ""
+
+msgid "Selected links"
+msgstr ""
+
+msgid "Shared subscription file"
+msgstr ""
+
+msgid "Available links"
+msgstr ""
+
+msgid "Exported links"
+msgstr ""
+
+msgid "Client"
+msgstr ""
+
+msgid "Format"
+msgstr ""
+
+msgid "Recommended format: base64 for v2RayTun, Shadowrocket, v2Box and V2rayNG; plain for Happ and clients that accept raw VLESS lists."
+msgstr ""
+
+msgid "Save sharing settings"
+msgstr ""
+
+msgid "Shared"
+msgstr ""
+
 msgid "VLESS link list"
 msgstr ""
 

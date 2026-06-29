@@ -258,6 +258,7 @@ function M.save_watchdog_settings(ctx)
     watchdog_vless2json = trim(http.formvalue("watchdog_vless2json")),
     watchdog_batch_test_template_file = trim(http.formvalue("watchdog_batch_test_template_file")),
     watchdog_subscriptions_file = trim(http.formvalue("watchdog_subscriptions_file")),
+    watchdog_share_file = trim(http.formvalue("watchdog_share_file")),
     watchdog_happ_capture_log = trim(http.formvalue("watchdog_happ_capture_log")),
   }
   for key, value in pairs(text_fields) do
