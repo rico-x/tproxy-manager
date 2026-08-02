@@ -10,6 +10,7 @@ local helpers = require "luci.model.cbi.tproxy_manager.modules.watchdog_helpers"
 local utils = require "luci.model.cbi.tproxy_manager.utils"
 local happ_decrypt = require "tproxy_manager.happ_decrypt"
 local share = require "tproxy_manager.subscription_share"
+local proxy_links = require "tproxy_manager.proxy_links"
 local _ = require "luci.model.cbi.tproxy_manager.i18n"
 
 local pcdata = xml.pcdata
@@ -208,6 +209,53 @@ local function source_badges(db, hash)
   return table.concat(out, " "), true
 end
 
+local TEMPLATE_CHOICES = {
+  {
+    id = "vless_outbound",
+    key = "watchdog_template_file",
+    label = "VLESS outbound template",
+    fallback = "/etc/tproxy-manager/watchdog-outbound.template.jsonc"
+  },
+  {
+    id = "vless_test",
+    key = "watchdog_test_template_file",
+    label = "VLESS test template",
+    fallback = "/etc/tproxy-manager/watchdog-test-config.template.jsonc"
+  },
+  {
+    id = "vless_batch",
+    key = "watchdog_batch_test_template_file",
+    label = "VLESS batch test template",
+    fallback = "/etc/tproxy-manager/watchdog-batch-test-config.template.jsonc"
+  },
+  {
+    id = "hy2_outbound",
+    key = "watchdog_hysteria_template_file",
+    label = "Hysteria 2 outbound template",
+    fallback = "/etc/tproxy-manager/watchdog-hysteria-outbound.template.jsonc"
+  },
+  {
+    id = "hy2_test",
+    key = "watchdog_hysteria_test_template_file",
+    label = "Hysteria 2 test template",
+    fallback = "/etc/tproxy-manager/watchdog-hysteria-test-config.template.jsonc"
+  },
+  {
+    id = "hy2_batch",
+    key = "watchdog_hysteria_batch_test_template_file",
+    label = "Hysteria 2 batch test template",
+    fallback = "/etc/tproxy-manager/watchdog-hysteria-batch-test-config.template.jsonc"
+  }
+}
+
+local function template_choice_by_id(id)
+  id = trim(id)
+  for _, choice in ipairs(TEMPLATE_CHOICES) do
+    if choice.id == id then return choice end
+  end
+  return TEMPLATE_CHOICES[1]
+end
+
 local function active_source_text(db, entry)
   if not entry then return "-" end
   local labels = subscription_sources_for_hash(db, entry.hash)
@@ -223,6 +271,44 @@ end
 
 local function vless_signature(raw_link)
   raw_link = trim(raw_link)
+  local scheme = proxy_links.scheme(raw_link)
+  if scheme == "hysteria2" or scheme == "hy2" then
+    local without_fragment = raw_link:gsub("#.*$", "")
+    local base, query = without_fragment, ""
+    if without_fragment:find("?", 1, true) then
+      base = without_fragment:match("^(.-)%?") or without_fragment
+      query = without_fragment:match("%?(.*)$") or ""
+    end
+    local _, body = base:match("^([A-Za-z][A-Za-z0-9+.-]*)://(.+)$")
+    local authority = (body or ""):gsub("/.*$", "")
+    local userinfo, hostport = authority:match("^(.-)@(.+)$")
+    if not hostport then
+      userinfo = ""
+      hostport = authority
+    end
+    local address, port
+    if hostport:match("^%[") then
+      address, port = hostport:match("^%[([^%]]+)%]:(%d+)")
+      if not address then
+        address = hostport:match("^%[([^%]]+)%]$")
+        port = "443"
+      end
+    else
+      address, port = hostport:match("^([^:]+):(%d+)")
+      if not address then
+        address = hostport
+        port = "443"
+      end
+    end
+    local params = parse_query(query)
+    return {
+      protocol = "hy2",
+      auth = trim(urldecode_component(userinfo or "")),
+      address = trim(address or ""),
+      port = tostring(port or "443"),
+      server_name = trim(params.sni or "")
+    }
+  end
   local without_fragment = raw_link:gsub("#.*$", "")
   local base, query = without_fragment, ""
   if without_fragment:find("?", 1, true) then
@@ -242,6 +328,7 @@ local function vless_signature(raw_link)
   if not address or not port then return nil end
   local params = parse_query(query)
   return {
+    protocol = "vless",
     uuid = trim(uuid),
     address = trim(address),
     port = tostring(port),
@@ -253,10 +340,15 @@ end
 
 local function config_contains_signature(config_text, sig)
   if not sig or config_text == "" then return false end
-  if sig.uuid == "" or sig.address == "" or sig.port == "" then return false end
-  if not config_text:find(sig.uuid, 1, true) then return false end
+  if sig.address == "" or sig.port == "" then return false end
   if not config_text:find(sig.address, 1, true) then return false end
   if not config_text:find(sig.port, 1, true) then return false end
+  if sig.protocol == "hy2" then
+    if sig.auth ~= "" and not config_text:find(sig.auth, 1, true) then return false end
+    if sig.server_name ~= "" and not config_text:find(sig.server_name, 1, true) then return false end
+    return true
+  end
+  if sig.uuid == "" or not config_text:find(sig.uuid, 1, true) then return false end
   local strong = 0
   if sig.public_key ~= "" and config_text:find(sig.public_key, 1, true) then strong = strong + 1 end
   if sig.short_id ~= "" and config_text:find(sig.short_id, 1, true) then strong = strong + 1 end
@@ -264,14 +356,94 @@ local function config_contains_signature(config_text, sig)
   return strong > 0 or (sig.public_key == "" and sig.short_id == "" and sig.server_name == "")
 end
 
+local function first_proxy_outbound(config_text)
+  local ok, parsed = pcall(jsonc.parse, config_text)
+  if not ok or type(parsed) ~= "table" then return nil end
+  local outbounds = parsed.outbounds
+  if type(outbounds) ~= "table" then return nil end
+  for __, outbound in ipairs(outbounds) do
+    if type(outbound) == "table" and tostring(outbound.tag or "") == "proxy" then
+      return outbound
+    end
+  end
+  return type(outbounds[1]) == "table" and outbounds[1] or nil
+end
+
+local function outbound_value_signature(outbound)
+  if type(outbound) ~= "table" then return nil end
+  local protocol = trim(outbound.protocol or "")
+  local settings = type(outbound.settings) == "table" and outbound.settings or {}
+  local stream = type(outbound.streamSettings) == "table" and outbound.streamSettings or {}
+
+  if protocol == "hysteria" then
+    local hysteria = type(stream.hysteriaSettings) == "table" and stream.hysteriaSettings or {}
+    local tls = type(stream.tlsSettings) == "table" and stream.tlsSettings or {}
+    return {
+      protocol = "hy2",
+      address = trim(settings.address or ""),
+      port = tostring(settings.port or ""),
+      auth = trim(hysteria.auth or settings.auth or ""),
+      server_name = trim(tls.serverName or "")
+    }
+  end
+
+  if protocol == "vless" then
+    local vnext = type(settings.vnext) == "table" and settings.vnext[1] or nil
+    if type(vnext) ~= "table" then return nil end
+    local user = type(vnext.users) == "table" and vnext.users[1] or nil
+    user = type(user) == "table" and user or {}
+    local reality = type(stream.realitySettings) == "table" and stream.realitySettings or {}
+    local tls = type(stream.tlsSettings) == "table" and stream.tlsSettings or {}
+    return {
+      protocol = "vless",
+      address = trim(vnext.address or ""),
+      port = tostring(vnext.port or ""),
+      uuid = trim(user.id or ""),
+      public_key = trim(reality.publicKey or ""),
+      short_id = trim(reality.shortId or ""),
+      server_name = trim(reality.serverName or tls.serverName or "")
+    }
+  end
+
+  return nil
+end
+
+local function signatures_match(active, candidate)
+  if not active or not candidate then return false end
+  if active.protocol ~= candidate.protocol then return false end
+  if active.address == "" or candidate.address == "" or active.address ~= candidate.address then return false end
+  if active.port == "" or candidate.port == "" or active.port ~= candidate.port then return false end
+
+  if active.protocol == "hy2" then
+    if active.auth ~= "" and candidate.auth ~= "" and active.auth ~= candidate.auth then return false end
+    if active.server_name ~= "" and candidate.server_name ~= "" and active.server_name ~= candidate.server_name then return false end
+    return true
+  end
+
+  if active.uuid == "" or candidate.uuid == "" or active.uuid ~= candidate.uuid then return false end
+  if active.public_key ~= "" and candidate.public_key ~= "" and active.public_key ~= candidate.public_key then return false end
+  if active.short_id ~= "" and candidate.short_id ~= "" and active.short_id ~= candidate.short_id then return false end
+  if active.server_name ~= "" and candidate.server_name ~= "" and active.server_name ~= candidate.server_name then return false end
+  return true
+end
+
 local function find_active_entry(links, status)
   local outbound_file = trim(status.OUTBOUND_FILE or "")
   if outbound_file ~= "" then
     local config_text = read_file(outbound_file)
     if config_text ~= "" then
-      for __, entry in ipairs(links or {}) do
-        if config_contains_signature(config_text, vless_signature(entry.raw_link or entry.link or "")) then
-          return entry, "config"
+      local active_sig = outbound_value_signature(first_proxy_outbound(config_text))
+      if active_sig then
+        for __, entry in ipairs(links or {}) do
+          if signatures_match(active_sig, vless_signature(entry.raw_link or entry.link or "")) then
+            return entry, "config"
+          end
+        end
+      else
+        for __, entry in ipairs(links or {}) do
+          if config_contains_signature(config_text, vless_signature(entry.raw_link or entry.link or "")) then
+            return entry, "config"
+          end
         end
       end
     end
@@ -633,35 +805,39 @@ local function render(ctx)
   end
 
   if http.formvalue("_watchdog_save_template") == "1" then
-    local path = trim(http.formvalue("watchdog_template_file"))
+    local choice = template_choice_by_id(http.formvalue("watchdog_template_kind"))
+    local path = trim(http.formvalue("watchdog_template_path"))
     local text = http.formvalue("watchdog_template_text") or ""
     if path == "" then
       set_err(_("Template file path is required."))
-    elseif not helpers.validate_jsonc_text(text) then
+    elseif not helpers.validate_template_jsonc_text(text) then
       set_err(_("Invalid template JSON/JSONC."))
     else
-      uci:set(PKG, "main", "watchdog_template_file", path)
+      uci:set(PKG, "main", choice.key, path)
       uci:commit(PKG)
       write_file(path, text)
       set_err(nil)
       set_info(_("Watchdog template saved: ") .. path)
-      helpers.redirect_watchdog()
+      helpers.redirect_watchdog("watchdog_template_kind=" .. http.urlencode(choice.id))
       return m
     end
   end
 
   if http.formvalue("_watchdog_save_test_template") == "1" then
+    local choice = template_choice_by_id("vless_test")
     local path = trim(http.formvalue("watchdog_test_template_file"))
     local text = http.formvalue("watchdog_test_template_text") or ""
     if path == "" then
       set_err(_("Test template file path is required."))
+    elseif not helpers.validate_template_jsonc_text(text) then
+      set_err(_("Invalid template JSON/JSONC."))
     else
-      uci:set(PKG, "main", "watchdog_test_template_file", path)
+      uci:set(PKG, "main", choice.key, path)
       uci:commit(PKG)
       write_file(path, text)
       set_err(nil)
       set_info(_("Test template saved: ") .. path)
-      helpers.redirect_watchdog()
+      helpers.redirect_watchdog("watchdog_template_kind=" .. http.urlencode(choice.id))
       return m
     end
   end
@@ -774,7 +950,7 @@ local function render(ctx)
     local raw_link = trim(http.formvalue("wd_add_link"))
     local parsed = helpers.parse_link_line(raw_link)
     if not parsed then
-      set_err(_("Added line must start with vless://"))
+      set_err(_("Added line must start with vless://, hysteria2:// or hy2://"))
     else
       entries[#entries + 1] = { raw_link = parsed.raw_link }
       helpers.write_links_file(links_path, entries)
@@ -797,7 +973,7 @@ local function render(ctx)
     elseif is_subscription_link(db, hash) then
       set_err(_("Subscription links cannot be edited directly. Exclude the link or edit the subscription."))
     elseif not parsed then
-      set_err(_("Link must start with vless://"))
+      set_err(_("Link must start with vless://, hysteria2:// or hy2://"))
     else
       entries[idx].raw_link = parsed.raw_link
       helpers.write_links_file(links_path, entries)
@@ -1194,7 +1370,7 @@ local function render(ctx)
   end
 
   do
-    local sec = m:section(SimpleSection, _("VLESS link list"))
+    local sec = m:section(SimpleSection, _("Proxy link list"))
     local dv = sec:option(DummyValue, "_watchdog_links")
     dv.rawhtml = true
     function dv.cfgvalue()
@@ -1216,9 +1392,9 @@ local function render(ctx)
           disabled)
       end
       rows[#rows + 1] = "<div class='box'>"
-      rows[#rows + 1] = "<table class='wd-table'><thead><tr><th style='width:9%'>" .. _("Source") .. "</th><th style='width:8%'>" .. _("Shared") .. "</th><th style='width:14%'>" .. _("Comment") .. "</th><th style='width:34%'>" .. _("VLESS link") .. "</th><th style='width:9%'>" .. _("Status") .. "</th><th style='width:11%'>" .. _("Last check") .. "</th><th style='width:15%'>" .. _("Action") .. "</th></tr></thead><tbody>"
+      rows[#rows + 1] = "<table class='wd-table'><thead><tr><th style='width:9%'>" .. _("Source") .. "</th><th style='width:7%'>" .. _("Protocol") .. "</th><th style='width:8%'>" .. _("Shared") .. "</th><th style='width:13%'>" .. _("Comment") .. "</th><th style='width:31%'>" .. _("Proxy link") .. "</th><th style='width:9%'>" .. _("Status") .. "</th><th style='width:10%'>" .. _("Last check") .. "</th><th style='width:13%'>" .. _("Action") .. "</th></tr></thead><tbody>"
       if #links == 0 then
-        rows[#rows + 1] = "<tr><td colspan='7' style='color:#6b7280'>" .. _("Link list is empty") .. "</td></tr>"
+        rows[#rows + 1] = "<tr><td colspan='8' style='color:#6b7280'>" .. _("Link list is empty") .. "</td></tr>"
       end
       for i, entry in ipairs(links) do
         local label, checked = helpers.status_label(entry, pcdata)
@@ -1240,6 +1416,7 @@ local function render(ctx)
           rows[#rows + 1] = string.format([[
 <tr%s>
   <td>%s</td>
+  <td><span class="svc-badge">%s</span></td>
   <td style="text-align:center">%s</td>
   <td><input type="hidden" name="wd_edit_hash" value="%s"><div style="color:#6b7280">%s</div></td>
   <td><input type="text" name="wd_edit_link" value="%s" style="width:100%%"></td>
@@ -1250,7 +1427,7 @@ local function render(ctx)
     <button class="cbi-button cbi-button-reset" name="_wd_edit_cancel" value="1">%s</button>
   </td>
 </tr>]],
-            row_class, source_html, share_checkbox(entry), pcdata(entry.hash), pcdata(entry.comment or "—"), pcdata(entry.raw_link or ""), label, pcdata(checked),
+            row_class, source_html, pcdata(entry.protocol_label or "-"), share_checkbox(entry), pcdata(entry.hash), pcdata(entry.comment or "—"), pcdata(entry.raw_link or ""), label, pcdata(checked),
             pcdata(_("Save")), pcdata(_("Cancel")))
         else
           local action_buttons
@@ -1294,6 +1471,7 @@ local function render(ctx)
           rows[#rows + 1] = string.format([[
 <tr%s>
   <td>%s</td>
+  <td><span class="svc-badge">%s</span></td>
   <td style="text-align:center">%s</td>
   <td>%s</td>
   <td class="wd-code" title="%s">%s</td>
@@ -1305,6 +1483,7 @@ local function render(ctx)
 </tr>]],
             row_class,
             source_html,
+            pcdata(entry.protocol_label or "-"),
             share_checkbox(entry),
             pcdata(entry.comment or "—"),
             pcdata(entry.raw_link or ""),
@@ -1317,16 +1496,17 @@ local function render(ctx)
       rows[#rows + 1] = [[
 <tr>
   <td><span class="svc-badge">local</span></td>
+  <td><span class="svc-badge">-</span></td>
   <td style="color:#6b7280;text-align:center">—</td>
   <td style="color:#6b7280">]] .. pcdata(_("New link file line")) .. [[</td>
-  <td><input type="text" name="wd_add_link" placeholder="vless://..." style="width:100%"></td>
+  <td><input type="text" name="wd_add_link" placeholder="vless:// or hysteria2://..." style="width:100%"></td>
   <td colspan="2" style="color:#6b7280">]] .. pcdata(_("Comment will be taken from the part after # inside the link")) .. [[</td>
   <td class="actions"><button class="cbi-button cbi-button-apply" name="_wd_add" value="1">]] .. pcdata(_("Add")) .. [[</button></td>
 </tr>]]
       rows[#rows + 1] = "</tbody></table>"
       rows[#rows + 1] = "<details class='wd-details'><summary>" .. _("LINKS_FILE editor") .. "</summary><div class='box editor-wrap editor-wide' style='margin-top:.5rem'>"
       rows[#rows + 1] = string.format("<div class='wd-grid'><label>LINKS_FILE</label><input type='text' name='watchdog_links_file' value='%s'></div>", pcdata(links_path))
-      rows[#rows + 1] = "<div style='margin:.5rem 0;color:#6b7280'>" .. _("For bulk paste: one VLESS link per line. Empty lines and lines starting with # are allowed.") .. "</div>"
+      rows[#rows + 1] = "<div style='margin:.5rem 0;color:#6b7280'>" .. _("For bulk paste: one proxy link per line. Empty lines and lines starting with # are allowed.") .. "</div>"
       rows[#rows + 1] = string.format("<textarea class='wd-textarea' name='watchdog_links_text' rows='12' spellcheck='false'>%s</textarea>", pcdata(read_file(links_path)))
       rows[#rows + 1] = "<div style='margin-top:.5rem'><button class='cbi-button cbi-button-apply' name='_watchdog_save_links_text' value='1'>" .. _("Save LINKS_FILE") .. "</button></div>"
       rows[#rows + 1] = "</div></details></div>"
@@ -1335,7 +1515,7 @@ local function render(ctx)
   end
 
   do
-    local sec = m:section(SimpleSection, _("Shared router subscription"))
+    local sec = m:section(SimpleSection)
     local dv = sec:option(DummyValue, "_watchdog_share")
     dv.rawhtml = true
     function dv.cfgvalue()
@@ -1392,7 +1572,7 @@ local function render(ctx)
         pcdata(_("Copy")),
         pcdata(base64_url),
         pcdata(_("Copy")),
-        pcdata(_("Recommended format: base64 for v2RayTun, Shadowrocket, v2Box and V2rayNG; plain for Happ and clients that accept raw VLESS lists.")))
+        pcdata(_("Recommended format: base64 for v2RayTun, Shadowrocket, v2Box and V2rayNG; plain for Happ and clients that accept raw proxy lists.")))
 
       rows[#rows + 1] = "<div style='margin-top:.6rem'><button class='cbi-button cbi-button-apply' name='_share_save' value='1'>" .. _("Save sharing settings") .. "</button></div>"
       rows[#rows + 1] = [[
@@ -1451,6 +1631,8 @@ local function render(ctx)
       <label>%s</label><input type="text" name="watchdog_service_path" value="%s">
       <label>%s</label><input type="text" value="restart" readonly>
       <label>%s</label><input type="text" name="watchdog_test_command" value="%s">
+      <label>%s</label><input type="text" name="watchdog_hysteria_template_file" value="%s">
+      <label>%s</label><input type="text" name="watchdog_hysteria_test_template_file" value="%s">
       <label>%s</label>
       <select name="watchdog_selection_mode">
         <option value="ordered"%s>%s</option>
@@ -1465,6 +1647,7 @@ local function render(ctx)
       <label>%s</label><input type="number" min="1" name="watchdog_background_check_interval" value="%s">
       <label>%s</label><input type="checkbox" name="watchdog_batch_check_enabled" value="1" %s>
       <label>%s</label><input type="text" name="watchdog_batch_test_template_file" value="%s">
+      <label>%s</label><input type="text" name="watchdog_hysteria_batch_test_template_file" value="%s">
       <label>%s</label><input type="number" min="1" max="65535" name="watchdog_batch_check_port_start" value="%s">
       <label>%s</label><input type="number" min="1" name="watchdog_batch_check_batch_size" value="%s">
       <label>%s</label><input type="number" min="1" name="watchdog_batch_check_concurrency" value="%s">
@@ -1494,13 +1677,17 @@ local function render(ctx)
         pcdata(getu("watchdog_max_time", "20")),
         pcdata(_("Outbound file")),
         pcdata(getu("watchdog_outbound_file", "/etc/xray/04_outbounds.json")),
-        pcdata(_("VLESS converter")),
+        pcdata(_("Link converter")),
         pcdata(getu("watchdog_vless2json", "/usr/bin/vless2json.sh")),
         pcdata(_("Managed service")),
         pcdata(getu("watchdog_service_path", "/etc/init.d/xray")),
         pcdata(_("Restart command")),
         pcdata(_("Test command")),
         pcdata(getu("watchdog_test_command", "/usr/bin/xray -c {config}")),
+        pcdata(_("Hysteria outbound template")),
+        pcdata(getu("watchdog_hysteria_template_file", "/etc/tproxy-manager/watchdog-hysteria-outbound.template.jsonc")),
+        pcdata(_("Hysteria test template")),
+        pcdata(getu("watchdog_hysteria_test_template_file", "/etc/tproxy-manager/watchdog-hysteria-test-config.template.jsonc")),
         pcdata(_("Selection mode")),
         getu("watchdog_selection_mode", "random") == "ordered" and " selected" or "",
         pcdata(_("ordered")),
@@ -1524,6 +1711,8 @@ local function render(ctx)
         getu("watchdog_batch_check_enabled", "1") == "1" and "checked" or "",
         pcdata(_("Batch test template")),
         pcdata(getu("watchdog_batch_test_template_file", "/etc/tproxy-manager/watchdog-batch-test-config.template.jsonc")),
+        pcdata(_("Hysteria batch test template")),
+        pcdata(getu("watchdog_hysteria_batch_test_template_file", "/etc/tproxy-manager/watchdog-hysteria-batch-test-config.template.jsonc")),
         pcdata(_("Batch start port")),
         pcdata(getu("watchdog_batch_check_port_start", "10882")),
         pcdata(_("Batch size")),
@@ -1549,17 +1738,36 @@ local function render(ctx)
     local dv = sec:option(DummyValue, "_watchdog_template")
     dv.rawhtml = true
     function dv.cfgvalue()
-      local current_path = getu("watchdog_template_file", "/etc/tproxy-manager/watchdog-outbound.template.jsonc")
-      local content = read_file(current_path)
+      local selected = template_choice_by_id(http.formvalue("watchdog_template_kind"))
+      local current_path = getu(selected.key, selected.fallback)
+      local options = {}
+      local template_data = {}
+      for __, choice in ipairs(TEMPLATE_CHOICES) do
+        local path = getu(choice.key, choice.fallback)
+        template_data[choice.id] = {
+          path = path,
+          text = read_file(path)
+        }
+        options[#options + 1] = string.format(
+          "<option value='%s'%s>%s</option>",
+          pcdata(choice.id),
+          choice.id == selected.id and " selected" or "",
+          pcdata(_(choice.label)))
+      end
+      local template_json = (jsonc.stringify(template_data, true) or "{}"):gsub("</script", "<\\/script")
       return [[
 <details class="wd-details">
-  <summary>]] .. pcdata(_("Outbounds template")) .. [[</summary>
+  <summary>]] .. pcdata(_("Templates editor")) .. [[</summary>
   <div class="box editor-wrap editor-wide" style="margin-top:.5rem">
     <div class="wd-grid" style="margin-bottom:.5rem">
-      <label>TEMPLATE_FILE</label><input type="text" name="watchdog_template_file" value="]] .. pcdata(current_path) .. [[">
+      <label>]] .. pcdata(_("Template type")) .. [[</label>
+      <select name="watchdog_template_kind" id="watchdog_template_kind">
+        ]] .. table.concat(options, "\n        ") .. [[
+      </select>
+      <label>]] .. pcdata(_("Template file")) .. [[</label><input type="text" name="watchdog_template_path" value="]] .. pcdata(current_path) .. [[">
     </div>
-    <div style="margin-bottom:.4rem;color:#6b7280">]] .. pcdata(_("The template is stored in a separate file and is processed by the built-in /usr/bin/vless2json.sh converter by default. The path can be overridden in settings.")) .. [[</div>
-    <textarea class="wd-textarea" name="watchdog_template_text" rows="18" spellcheck="false">]] .. pcdata(content) .. [[</textarea>
+    <div style="margin-bottom:.4rem;color:#6b7280">]] .. pcdata(_("Choose a VLESS or Hysteria 2 template, edit it and save it back to its own file. The active path is also stored in UCI settings.")) .. [[</div>
+    <textarea class="wd-textarea" name="watchdog_template_text" rows="18" spellcheck="false">]] .. pcdata(template_data[selected.id] and template_data[selected.id].text or "") .. [[</textarea>
     <div style="height:5px"></div>
     <div class="box editor-wrap editor-680" id="watchdog-template-status-box">
       <div id="watchdog_template_status" style="margin:.08rem 0 .14rem 0; font-weight:600"></div>
@@ -1571,6 +1779,7 @@ local function render(ctx)
 </details>
 <script>
 (function(){
+  var templateStore = ]] .. template_json .. [[;
   function stripJsonComments(str){
     var out = '', i = 0, n = str.length, inStr = false, esc = false;
     while (i < n) {
@@ -1583,13 +1792,99 @@ local function render(ctx)
     }
     return out;
   }
+  function normalizeTemplateJsonc(str){
+    var replacements = {
+      __ADDRESS__: '127.0.0.1',
+      __PORT__: '443',
+      __UUID__: '00000000-0000-0000-0000-000000000000',
+      __FLOW__: '',
+      __NETWORK__: 'tcp',
+      __SECURITY__: 'none',
+      __SERVER_NAME__: 'example.com',
+      __FINGERPRINT__: 'chrome',
+      __PUBLIC_KEY__: '',
+      __SHORT_ID__: '',
+      __SPIDER_X__: '/',
+      __HEADER_TYPE__: 'none',
+      __REMARKS__: 'template',
+      __TEST_PORT__: '10881',
+      __OUTBOUND_TAG__: 'proxy',
+      __OUTBOUNDS__: '[]',
+      __BATCH_INBOUNDS__: '[]',
+      __BATCH_OUTBOUNDS__: '[]',
+      __BATCH_RULES__: '[]',
+      __HY2_AUTH__: 'password',
+      __HY2_STREAM_SETTINGS__: '{}',
+      __HY2_HYSTERIA_SETTINGS__: '{}',
+      __HY2_TLS_SETTINGS__: '{}',
+      __HY2_UDPMASKS__: '[]',
+      __ALLOW_INSECURE__: 'false',
+      __ALLOW_INSECURE_BOOL__: 'false',
+      __ALPN__: 'h3',
+      __ALPN_ARRAY__: '[]',
+      __HY2_ALPN_ARRAY__: '[]'
+    };
+    return str.replace(/\b__[A-Z0-9_]+__\b/g, function(token){
+      return Object.prototype.hasOwnProperty.call(replacements, token) ? replacements[token] : token;
+    });
+  }
+  var sel = document.getElementById('watchdog_template_kind');
+  var pathInput = document.querySelector('input[name="watchdog_template_path"]');
   var ta = document.querySelector('textarea[name="watchdog_template_text"]');
   var badge = document.getElementById('watchdog_template_status');
-  if (!ta || !badge) return;
+  if (!sel || !pathInput || !ta || !badge) return;
+  var current = sel.value || 'vless_outbound';
   function debounce(fn, ms){ var t; return function(){ clearTimeout(t); t = setTimeout(fn, ms); }; }
+  function ensureEntry(id){
+    if (!templateStore[id]) templateStore[id] = { path: '', text: '' };
+    return templateStore[id];
+  }
+  function rememberCurrent(){
+    var item = ensureEntry(current);
+    item.path = pathInput.value || '';
+    item.text = ta.value || '';
+  }
+  function loadTemplate(id){
+    rememberCurrent();
+    current = id || current;
+    var item = ensureEntry(current);
+    pathInput.value = item.path || '';
+    ta.value = item.text || '';
+    validate();
+  }
+  function saveEditorPosition(){
+    try {
+      sessionStorage.setItem('tpm.watchdog.template.editor', JSON.stringify({
+        kind: current,
+        pageY: window.scrollY || document.documentElement.scrollTop || 0,
+        textY: ta.scrollTop || 0,
+        selStart: ta.selectionStart || 0,
+        selEnd: ta.selectionEnd || 0,
+        focused: document.activeElement === ta ? 'textarea' : (document.activeElement === pathInput ? 'path' : (document.activeElement === sel ? 'select' : ''))
+      }));
+    } catch(e) {}
+  }
+  function restoreEditorPosition(){
+    try {
+      var raw = sessionStorage.getItem('tpm.watchdog.template.editor');
+      if (!raw) return;
+      sessionStorage.removeItem('tpm.watchdog.template.editor');
+      var st = JSON.parse(raw);
+      if (st.kind && st.kind !== current && templateStore[st.kind]) {
+        sel.value = st.kind;
+        loadTemplate(st.kind);
+      }
+      if (typeof st.textY === 'number') ta.scrollTop = st.textY;
+      if (typeof st.selStart === 'number' && typeof st.selEnd === 'number') ta.setSelectionRange(st.selStart, st.selEnd);
+      if (st.focused === 'textarea') ta.focus();
+      else if (st.focused === 'path') pathInput.focus();
+      else if (st.focused === 'select') sel.focus();
+      if (typeof st.pageY === 'number') setTimeout(function(){ window.scrollTo(0, st.pageY); }, 0);
+    } catch(e) {}
+  }
   function validate(){
     try {
-      JSON.parse(stripJsonComments(ta.value));
+      JSON.parse(normalizeTemplateJsonc(stripJsonComments(ta.value)));
       badge.textContent = ']] .. pcdata(_("Template JSONC is valid")) .. [[';
       badge.style.color = '#16a34a';
     } catch(e) {
@@ -1598,33 +1893,20 @@ local function render(ctx)
     }
   }
   ta.addEventListener('input', debounce(validate, 200));
+  ta.addEventListener('input', rememberCurrent);
+  pathInput.addEventListener('input', rememberCurrent);
+  sel.addEventListener('change', function(){ loadTemplate(sel.value); });
+  var form = sel.closest && sel.closest('form');
+  if (form) form.addEventListener('submit', function(e){
+    var submitter = e.submitter || document.activeElement;
+    var isTemplateSave = submitter && submitter.name === '_watchdog_save_template';
+    rememberCurrent();
+    if (isTemplateSave) saveEditorPosition();
+  }, true);
   validate();
+  restoreEditorPosition();
 })();
 </script>]]
-    end
-  end
-
-  do
-    local sec = m:section(SimpleSection)
-    local dv = sec:option(DummyValue, "_watchdog_test_template")
-    dv.rawhtml = true
-    function dv.cfgvalue()
-      local current_path = getu("watchdog_test_template_file", "/etc/tproxy-manager/watchdog-test-config.template.jsonc")
-      local content = read_file(current_path)
-      return [[
-<details class="wd-details">
-  <summary>]] .. pcdata(_("Test template")) .. [[</summary>
-  <div class="box editor-wrap editor-wide" style="margin-top:.5rem">
-    <div class="wd-grid" style="margin-bottom:.5rem">
-      <label>TEST_TEMPLATE_FILE</label><input type="text" name="watchdog_test_template_file" value="]] .. pcdata(current_path) .. [[">
-    </div>
-    <div style="margin-bottom:.4rem;color:#6b7280">]] .. pcdata(_("This template is used for the temporary test-instance. The default variant supports placeholders __TEST_PORT__, __OUTBOUNDS__ and __OUTBOUND_TAG__.")) .. [[</div>
-    <textarea class="wd-textarea" name="watchdog_test_template_text" rows="18" spellcheck="false">]] .. pcdata(content) .. [[</textarea>
-    <div style="margin-top:.5rem">
-      <button class="cbi-button cbi-button-apply" name="_watchdog_save_test_template" value="1">]] .. pcdata(_("Save test template")) .. [[</button>
-    </div>
-  </div>
-</details>]]
     end
   end
 

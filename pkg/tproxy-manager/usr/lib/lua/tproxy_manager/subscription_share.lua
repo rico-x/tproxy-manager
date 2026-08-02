@@ -1,6 +1,7 @@
 local fs = require "nixio.fs"
 local sys = require "luci.sys"
 local jsonc = require "luci.jsonc"
+local proxy_links = require "tproxy_manager.proxy_links"
 
 local M = {}
 
@@ -46,43 +47,8 @@ local function atomic_write(path, data)
   return true
 end
 
-local function urldecode_component(s)
-  s = tostring(s or ""):gsub("+", " ")
-  return (s:gsub("%%(%x%x)", function(hex)
-    return string.char(tonumber(hex, 16))
-  end))
-end
-
-local function md5_hash(raw_link)
-  local out = sys.exec("printf %s " .. shellescape(raw_link) .. " | md5sum | awk '{print $1}'") or ""
-  return trim(out):match("^[0-9a-fA-F]+$") and trim(out):lower() or ""
-end
-
 local function parse_link_line(line)
-  local value = trim(line)
-  if value == "" or value:match("^#") then return nil end
-
-  local raw_link, external_comment = value, ""
-  if value:find(" # ", 1, true) then
-    raw_link = value:match("^(.-) # ") or value
-    external_comment = trim(value:match(" # (.*)$") or "")
-  end
-
-  raw_link = trim(raw_link)
-  if not raw_link:match("^vless://") then return nil end
-
-  local fragment = raw_link:match("#(.*)$") or ""
-  local display_link = raw_link:gsub("#.*$", "")
-  local comment = external_comment ~= "" and external_comment or trim(urldecode_component(fragment))
-  local hash = md5_hash(raw_link)
-  if hash == "" then return nil end
-
-  return {
-    hash = hash,
-    raw_link = raw_link,
-    display_link = display_link,
-    comment = comment,
-  }
+  return proxy_links.parse_link_line(line)
 end
 
 local function normalize_selected(value)

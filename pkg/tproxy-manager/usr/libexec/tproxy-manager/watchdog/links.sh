@@ -25,7 +25,38 @@ split_link_comment() {
 valid_link() {
     case "$1" in
         vless://*) return 0 ;;
+        hysteria2://*) return 0 ;;
+        hy2://*) return 0 ;;
         *) return 1 ;;
+    esac
+}
+
+link_protocol() {
+    case "$1" in
+        hysteria2://*|hy2://*) printf '%s\n' "hy2" ;;
+        vless://*) printf '%s\n' "vless" ;;
+        *) printf '%s\n' "unknown" ;;
+    esac
+}
+
+outbound_template_for_link() {
+    case "$(link_protocol "$1")" in
+        hy2) printf '%s\n' "$HYSTERIA_TEMPLATE_FILE" ;;
+        *) printf '%s\n' "$TEMPLATE_FILE" ;;
+    esac
+}
+
+test_template_for_link() {
+    case "$(link_protocol "$1")" in
+        hy2) printf '%s\n' "$HYSTERIA_TEST_TEMPLATE_FILE" ;;
+        *) printf '%s\n' "$TEST_TEMPLATE_FILE" ;;
+    esac
+}
+
+batch_template_for_protocol() {
+    case "$1" in
+        hy2) printf '%s\n' "$HYSTERIA_BATCH_TEST_TEMPLATE_FILE" ;;
+        *) printf '%s\n' "$BATCH_TEST_TEMPLATE_FILE" ;;
     esac
 }
 

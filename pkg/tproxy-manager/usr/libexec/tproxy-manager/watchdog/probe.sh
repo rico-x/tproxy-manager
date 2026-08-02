@@ -53,9 +53,9 @@ probe_link_runtime() {
 
     printf '%s\n' "$link" > "$single_links_file"
 
-    generate_rendered_config "$single_links_file" "$rendered_file" || return 1
+    generate_rendered_config "$single_links_file" "$rendered_file" "$link" || return 1
     extract_outbounds_array "$rendered_file" "$array_file" || return 1
-    render_test_config "$array_file" "$config_file" "$TEST_PORT" || return 1
+    render_test_config "$array_file" "$config_file" "$TEST_PORT" "$link" || return 1
     start_test_instance "$config_file" "$log_file" || return 1
 
     probe_result="$(probe_proxy_url_with_time "socks5h://127.0.0.1:$TEST_PORT")"

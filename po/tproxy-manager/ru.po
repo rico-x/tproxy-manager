@@ -1031,6 +1031,9 @@ msgstr "Файл outbound"
 msgid "VLESS converter"
 msgstr "Конвертер VLESS"
 
+msgid "Link converter"
+msgstr "Конвертер ссылок"
+
 msgid "Managed service"
 msgstr "Управляемый сервис"
 
@@ -1114,3 +1117,147 @@ msgstr "Сохранить настройки расшаривания"
 
 msgid "Shared"
 msgstr "В подписке"
+
+msgid "Added line must start with vless://, hysteria2:// or hy2://"
+msgstr "Добавляемая строка должна начинаться с vless://, hysteria2:// или hy2://"
+
+msgid "Link must start with vless://, hysteria2:// or hy2://"
+msgstr "Ссылка должна начинаться с vless://, hysteria2:// или hy2://"
+
+msgid "Proxy link list"
+msgstr "Список proxy-ссылок"
+
+msgid "Protocol"
+msgstr "Протокол"
+
+msgid "Proxy link"
+msgstr "Proxy-ссылка"
+
+msgid "For bulk paste: one proxy link per line. Empty lines and lines starting with # are allowed."
+msgstr "Для массовой вставки: одна proxy-ссылка на строку. Пустые строки и строки, начинающиеся с #, разрешены."
+
+msgid "Recommended format: base64 for v2RayTun, Shadowrocket, v2Box and V2rayNG; plain for Happ and clients that accept raw proxy lists."
+msgstr "Рекомендуемый формат: base64 для v2RayTun, Shadowrocket, v2Box и V2rayNG; plain для Happ и клиентов, принимающих raw-списки proxy."
+
+msgid "Hysteria outbound template"
+msgstr "Шаблон outbound Hysteria"
+
+msgid "Hysteria test template"
+msgstr "Тестовый шаблон Hysteria"
+
+msgid "Hysteria batch test template"
+msgstr "Batch-шаблон проверки Hysteria"
+
+msgid "Xray version"
+msgstr "Версия Xray"
+
+msgid "Xray version information refreshed."
+msgstr "Информация о версии Xray обновлена."
+
+msgid "Failed to refresh Xray version information."
+msgstr "Не удалось обновить информацию о версии Xray."
+
+msgid "Latest Xray version is not available."
+msgstr "Актуальная версия Xray недоступна."
+
+msgid "Xray updated."
+msgstr "Xray обновлен."
+
+msgid "Xray update failed."
+msgstr "Не удалось обновить Xray."
+
+msgid "Select Xray version to install."
+msgstr "Выберите версию Xray для установки."
+
+msgid "Xray version installed."
+msgstr "Версия Xray установлена."
+
+msgid "Xray install failed."
+msgstr "Не удалось установить Xray."
+
+msgid "Xray rollback completed."
+msgstr "Откат Xray выполнен."
+
+msgid "Xray rollback failed."
+msgstr "Не удалось откатить Xray."
+
+msgid "Binary path"
+msgstr "Путь к бинарю"
+
+msgid "Current version"
+msgstr "Текущая версия"
+
+msgid "Latest stable"
+msgstr "Последняя stable"
+
+msgid "Router architecture"
+msgstr "Архитектура роутера"
+
+msgid "Selected asset"
+msgstr "Выбранный архив"
+
+msgid "Hysteria 2 support"
+msgstr "Поддержка Hysteria 2"
+
+msgid "unknown"
+msgstr "неизвестно"
+
+msgid "available"
+msgstr "доступна"
+
+msgid "requires Xray v26.3.27+"
+msgstr "требуется Xray v26.3.27+"
+
+msgid "Refresh versions"
+msgstr "Обновить версии"
+
+msgid "Update Xray to latest stable version?"
+msgstr "Обновить Xray до последней stable-версии?"
+
+msgid "Update to latest"
+msgstr "Обновить до актуальной"
+
+msgid "Rollback Xray to previous binary?"
+msgstr "Откатить Xray на предыдущий бинарь?"
+
+msgid "Rollback previous binary"
+msgstr "Откатить предыдущий бинарь"
+
+msgid "No repository versions available"
+msgstr "Версии из репозитория недоступны"
+
+msgid "Install selected Xray version?"
+msgstr "Установить выбранную версию Xray?"
+
+msgid "Install selected version"
+msgstr "Установить выбранную версию"
+
+msgid "Templates editor"
+msgstr "Редактор шаблонов"
+
+msgid "Template type"
+msgstr "Тип шаблона"
+
+msgid "Template file"
+msgstr "Файл шаблона"
+
+msgid "VLESS outbound template"
+msgstr "VLESS шаблон outbound"
+
+msgid "VLESS test template"
+msgstr "VLESS тестовый шаблон"
+
+msgid "VLESS batch test template"
+msgstr "VLESS batch-шаблон проверки"
+
+msgid "Hysteria 2 outbound template"
+msgstr "Hysteria 2 шаблон outbound"
+
+msgid "Hysteria 2 test template"
+msgstr "Hysteria 2 тестовый шаблон"
+
+msgid "Hysteria 2 batch test template"
+msgstr "Hysteria 2 batch-шаблон проверки"
+
+msgid "Choose a VLESS or Hysteria 2 template, edit it and save it back to its own file. The active path is also stored in UCI settings."
+msgstr "Выберите VLESS или Hysteria 2 шаблон, отредактируйте его и сохраните обратно в свой файл. Активный путь также сохраняется в UCI-настройках."

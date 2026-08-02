@@ -6,8 +6,9 @@ Usage:
   vless2json.sh -r <links_file> -t <template_file> [--tag <outbound_tag>] [--one-outbound]
 
 Description:
-  Reads the first valid VLESS link from <links_file>, applies its values to the
+  Reads the first valid proxy link from <links_file>, applies its values to the
   JSON/JSONC template from <template_file> and prints rendered JSON to stdout.
+  Supported schemes: vless://, hysteria2://, hy2://.
   --tag rewrites the first rendered outbound tag.
   --one-outbound prints only the first rendered outbound object.
 ]])
@@ -167,13 +168,17 @@ local function parse_link_line(line)
     external_comment = trim(value:match(" # (.*)$") or "")
   end
   raw_link = trim(raw_link)
-  if not raw_link:match("^vless://") then
+  if not (raw_link:match("^vless://") or raw_link:match("^hysteria2://") or raw_link:match("^hy2://")) then
     return nil
   end
   return {
     raw_link = raw_link,
     external_comment = external_comment
   }
+end
+
+local function link_scheme(raw_link)
+  return (tostring(raw_link or ""):match("^([A-Za-z][A-Za-z0-9+.-]*)://") or ""):lower()
 end
 
 local function parse_vless(link_data)
@@ -234,6 +239,7 @@ local function parse_vless(link_data)
   local allow_insecure_bool = (allow_insecure == "1" or allow_insecure:lower() == "true")
 
   return {
+    protocol = "vless",
     remarks = remarks,
     address = address,
     port = tonumber(port),
@@ -260,6 +266,84 @@ local function parse_vless(link_data)
   }
 end
 
+local function first_port(port_raw)
+  port_raw = trim(port_raw)
+  if port_raw == "" then return 443 end
+  local first = port_raw:match("^(%d+)")
+  return tonumber(first) or 443
+end
+
+local function parse_hysteria(link_data)
+  local raw_link = link_data.raw_link
+  local fragment = raw_link:match("#(.*)$") or ""
+  local without_fragment = raw_link:gsub("#.*$", "")
+  local base, query = without_fragment, ""
+  if without_fragment:find("?", 1, true) then
+    base = without_fragment:match("^(.-)%?") or without_fragment
+    query = without_fragment:match("%?(.*)$") or ""
+  end
+
+  local scheme, body = base:match("^([A-Za-z][A-Za-z0-9+.-]*)://(.+)$")
+  scheme = (scheme or ""):lower()
+  if scheme ~= "hysteria2" and scheme ~= "hy2" then
+    return nil, "link does not start with hysteria2:// or hy2://"
+  end
+
+  local authority = (body or ""):gsub("/.*$", "")
+  local userinfo, hostport = authority:match("^(.-)@(.+)$")
+  if not hostport then
+    userinfo = ""
+    hostport = authority
+  end
+
+  local address, port_raw
+  if hostport:match("^%[") then
+    address, port_raw = hostport:match("^%[([^%]]+)%]:(.+)$")
+    if not address then
+      address = hostport:match("^%[([^%]]+)%]$")
+      port_raw = "443"
+    end
+  else
+    address, port_raw = hostport:match("^([^:]+):(.+)$")
+    if not address then
+      address = hostport
+      port_raw = "443"
+    end
+  end
+  address = trim(address)
+  if address == "" then
+    return nil, "missing host"
+  end
+
+  local params = parse_query(query)
+  local remarks = urldecode(fragment)
+  if remarks == "" then
+    remarks = link_data.external_comment or ""
+  end
+  local insecure = trim(params.insecure or "0")
+  local insecure_bool = (insecure == "1" or insecure:lower() == "true")
+  local auth = urldecode(userinfo or "")
+  if auth == "" then auth = trim(params.auth or "") end
+
+  return {
+    protocol = "hy2",
+    remarks = remarks,
+    address = address,
+    port = first_port(port_raw),
+    port_raw = trim(port_raw ~= "" and port_raw or "443"),
+    auth = auth,
+    sni = trim(params.sni or ""),
+    insecure = insecure,
+    insecure_bool = insecure_bool,
+    pin_sha256 = trim(params.pinSHA256 or params.pinsha256 or ""),
+    ech = trim(params.ech or ""),
+    alpn = trim(params.alpn or ""),
+    alpn_array = split_csv(params.alpn or ""),
+    obfs = trim(params.obfs or ""),
+    obfs_password = trim(params["obfs-password"] or params.obfsPassword or "")
+  }
+end
+
 local function load_first_link(path)
   local text, err = read_file(path)
   if not text then
@@ -271,7 +355,7 @@ local function load_first_link(path)
       return parsed
     end
   end
-  return nil, "no valid VLESS links found"
+  return nil, "no valid proxy links found"
 end
 
 local function load_template(path)
@@ -293,6 +377,62 @@ end
 
 local function build_placeholders(link)
   local remarks = link.remarks ~= "" and link.remarks or link.address
+  if link.protocol == "hy2" then
+    local hysteria_settings = {
+      version = 2,
+      auth = link.auth,
+      udpIdleTimeout = 60
+    }
+    local stream_settings = {
+      network = "hysteria",
+      method = "hysteria",
+      security = "tls",
+      hysteriaSettings = hysteria_settings
+    }
+    local tls_settings = {}
+    if link.sni ~= "" then tls_settings.serverName = link.sni end
+    if link.pin_sha256 ~= "" then tls_settings.pinnedPeerCertSha256 = link.pin_sha256 end
+    if link.ech ~= "" then tls_settings.echConfigList = link.ech end
+    if #link.alpn_array > 0 then tls_settings.alpn = link.alpn_array end
+    if next(tls_settings) ~= nil then
+      stream_settings.tlsSettings = tls_settings
+    end
+    local udpmasks = {}
+    if link.obfs ~= "" then
+      udpmasks[1] = {
+        type = link.obfs,
+        settings = {
+          password = link.obfs_password
+        }
+      }
+    end
+    return {
+      ["__REMARKS__"] = remarks,
+      ["__ADDRESS__"] = link.address,
+      ["__HOST__"] = link.address,
+      ["__PORT__"] = link.port,
+      ["__PORT_RAW__"] = link.port_raw,
+      ["__AUTH__"] = link.auth,
+      ["__HY2_AUTH__"] = link.auth,
+      ["__SNI__"] = link.sni,
+      ["__SERVER_NAME__"] = link.sni,
+      ["__ALLOW_INSECURE__"] = link.insecure,
+      ["__ALLOW_INSECURE_BOOL__"] = link.insecure_bool,
+      ["__PIN_SHA256__"] = link.pin_sha256,
+      ["__PINNED_PEER_CERT_SHA256__"] = link.pin_sha256,
+      ["__ECH__"] = link.ech,
+      ["__ECH_CONFIG_LIST__"] = link.ech,
+      ["__ALPN__"] = link.alpn,
+      ["__ALPN_ARRAY__"] = link.alpn_array,
+      ["__HY2_ALPN_ARRAY__"] = link.alpn_array,
+      ["__OBFS__"] = link.obfs,
+      ["__OBFS_PASSWORD__"] = link.obfs_password,
+      ["__HY2_HYSTERIA_SETTINGS__"] = hysteria_settings,
+      ["__HY2_TLS_SETTINGS__"] = tls_settings,
+      ["__HY2_UDPMASKS__"] = udpmasks,
+      ["__HY2_STREAM_SETTINGS__"] = stream_settings
+    }
+  end
   return {
     ["__REMARKS__"] = remarks,
     ["__ADDRESS__"] = link.address,
@@ -392,9 +532,15 @@ if not link_line then
   os.exit(1)
 end
 
-local parsed_link, parse_err = parse_vless(link_line)
+local scheme = link_scheme(link_line.raw_link)
+local parsed_link, parse_err
+if scheme == "hysteria2" or scheme == "hy2" then
+  parsed_link, parse_err = parse_hysteria(link_line)
+else
+  parsed_link, parse_err = parse_vless(link_line)
+end
 if not parsed_link then
-  io.stderr:write("vless2json: invalid VLESS link: " .. parse_err .. "\n")
+  io.stderr:write("vless2json: invalid proxy link: " .. parse_err .. "\n")
   os.exit(1)
 end
 

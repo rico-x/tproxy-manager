@@ -1,6 +1,6 @@
 {
-  // Базовый шаблон для встроенного конвертера /usr/bin/vless2json.sh.
-  // Конвертер может заменить плейсхолдеры значениями из VLESS-ссылки.
+  // Базовый VLESS-шаблон для встроенного конвертера /usr/bin/vless2json.sh.
+  // Для Hysteria 2 используется отдельный watchdog-hysteria-outbound.template.jsonc.
   "remarks": "__REMARKS__",
   "outbounds": [
     {

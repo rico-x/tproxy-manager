@@ -36,7 +36,8 @@ local function render(ctx)
   local function getu(k)
     local v = uci:get(PKG, "main", k)
     if v == nil or v == "" then return defaults[k] or "" end
-    return v
+    if type(v) ~= "string" and type(v) ~= "number" then return defaults[k] or "" end
+    return tostring(v)
   end
 
   -- Toolbar handlers for log

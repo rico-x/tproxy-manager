@@ -33,6 +33,7 @@ run_safe /usr/bin/setup-bbr.sh
 chmod +x /etc/init.d/tproxy-manager 2>/dev/null || true
 chmod +x /etc/init.d/tproxy-manager-watchdog 2>/dev/null || true
 chmod +x /usr/bin/vless2json.sh 2>/dev/null || true
+chmod +x /usr/bin/tproxy-manager-xray-version.lua 2>/dev/null || true
 
 # 4) Включить и запустить сервис (если есть), ошибки не фатальны
 if [ -x /etc/init.d/tproxy-manager ]; then

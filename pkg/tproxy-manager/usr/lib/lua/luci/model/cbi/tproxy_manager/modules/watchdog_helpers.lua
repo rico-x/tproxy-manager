@@ -4,6 +4,7 @@ local http = require "luci.http"
 local disp = require "luci.dispatcher"
 local utils = require "luci.model.cbi.tproxy_manager.utils"
 local _ = require "luci.model.cbi.tproxy_manager.i18n"
+local proxy_links = require "tproxy_manager.proxy_links"
 
 local M = {}
 
@@ -23,35 +24,8 @@ local function parse_int(value, fallback)
   return tonumber(value)
 end
 
-local function urldecode_component(s)
-  s = tostring(s or ""):gsub("+", " ")
-  return (s:gsub("%%(%x%x)", function(hex)
-    return string.char(tonumber(hex, 16))
-  end))
-end
-
 local function parse_link_line(line)
-  local value = trim(line)
-  if value == "" or value:match("^#") then return nil end
-
-  local raw_link, external_comment = value, ""
-  if value:find(" # ", 1, true) then
-    raw_link = value:match("^(.-) # ") or value
-    external_comment = trim(value:match(" # (.*)$") or "")
-  end
-
-  raw_link = trim(raw_link)
-  if not raw_link:match("^vless://") then return nil end
-
-  local fragment = raw_link:match("#(.*)$") or ""
-  local display_link = raw_link:gsub("#.*$", "")
-  local comment = external_comment ~= "" and external_comment or trim(urldecode_component(fragment))
-
-  return {
-    raw_link = raw_link,
-    display_link = display_link,
-    comment = comment
-  }
+  return proxy_links.parse_link_line(line)
 end
 
 local function run_cmd_capture(cmd)
@@ -91,8 +65,7 @@ local function md5_hash(link)
   if md5_cache[link] ~= nil then
     return md5_cache[link]
   end
-  local rc, out = run_cmd_capture("printf %s " .. utils.shellescape(link) .. " | md5sum | awk '{print $1}'")
-  local value = rc == 0 and trim(out) or ""
+  local value = proxy_links.hash(link)
   md5_cache[link] = value
   return value
 end
@@ -116,6 +89,8 @@ function M.parse_links_file(path)
         raw_link = parsed.raw_link,
         link = parsed.display_link,
         comment = parsed.comment,
+        protocol = parsed.protocol,
+        protocol_label = parsed.protocol_label,
         state = state
       }
     end
@@ -254,9 +229,12 @@ function M.save_watchdog_settings(ctx)
     watchdog_links_file = trim(http.formvalue("watchdog_links_file")),
     watchdog_template_file = trim(http.formvalue("watchdog_template_file")),
     watchdog_test_template_file = trim(http.formvalue("watchdog_test_template_file")),
+    watchdog_hysteria_template_file = trim(http.formvalue("watchdog_hysteria_template_file")),
+    watchdog_hysteria_test_template_file = trim(http.formvalue("watchdog_hysteria_test_template_file")),
     watchdog_outbound_file = trim(http.formvalue("watchdog_outbound_file")),
     watchdog_vless2json = trim(http.formvalue("watchdog_vless2json")),
     watchdog_batch_test_template_file = trim(http.formvalue("watchdog_batch_test_template_file")),
+    watchdog_hysteria_batch_test_template_file = trim(http.formvalue("watchdog_hysteria_batch_test_template_file")),
     watchdog_subscriptions_file = trim(http.formvalue("watchdog_subscriptions_file")),
     watchdog_share_file = trim(http.formvalue("watchdog_share_file")),
     watchdog_happ_capture_log = trim(http.formvalue("watchdog_happ_capture_log")),
@@ -311,6 +289,50 @@ function M.validate_test_command(value)
   value = trim(value)
   if value == "" then return nil, _("Test start command is required.") end
   return value
+end
+
+local template_placeholder_values = {
+  __ADDRESS__ = "127.0.0.1",
+  __PORT__ = "443",
+  __UUID__ = "00000000-0000-0000-0000-000000000000",
+  __FLOW__ = "",
+  __NETWORK__ = "tcp",
+  __SECURITY__ = "none",
+  __SERVER_NAME__ = "example.com",
+  __FINGERPRINT__ = "chrome",
+  __PUBLIC_KEY__ = "",
+  __SHORT_ID__ = "",
+  __SPIDER_X__ = "/",
+  __HEADER_TYPE__ = "none",
+  __REMARKS__ = "template",
+  __TEST_PORT__ = "10881",
+  __OUTBOUND_TAG__ = "proxy",
+  __OUTBOUNDS__ = "[]",
+  __BATCH_INBOUNDS__ = "[]",
+  __BATCH_OUTBOUNDS__ = "[]",
+  __BATCH_RULES__ = "[]",
+  __HY2_AUTH__ = "password",
+  __HY2_STREAM_SETTINGS__ = "{}",
+  __HY2_HYSTERIA_SETTINGS__ = "{}",
+  __HY2_TLS_SETTINGS__ = "{}",
+  __HY2_UDPMASKS__ = "[]",
+  __ALLOW_INSECURE__ = "false",
+  __ALLOW_INSECURE_BOOL__ = "false",
+  __ALPN__ = "h3",
+  __ALPN_ARRAY__ = "[]",
+  __HY2_ALPN_ARRAY__ = "[]"
+}
+
+function M.normalize_template_jsonc_for_validation(text)
+  local out = tostring(text or "")
+  for placeholder, value in pairs(template_placeholder_values) do
+    out = out:gsub(placeholder, value)
+  end
+  return out
+end
+
+function M.validate_template_jsonc_text(text)
+  return utils.validate_jsonc_text(M.normalize_template_jsonc_for_validation(text))
 end
 
 M.trim = trim

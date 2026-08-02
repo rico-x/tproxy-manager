@@ -13,6 +13,7 @@ local pcdata = xml.pcdata
 
 local XRAY_DIR  = "/etc/xray"
 local LOG_TEST  = "/tmp/tproxy_manager_xray_test.log"
+local XRAY_VERSION_SCRIPT = "/usr/bin/tproxy-manager-xray-version.lua"
 
 local function get_xray_bin()
   if fs.access("/usr/bin/xray") then return "/usr/bin/xray"
@@ -22,6 +23,39 @@ end
 local XRAY_BIN = get_xray_bin()
 local read_file = utils.read_file
 local write_file = utils.write_file
+
+local function run_cmd_capture(cmd)
+  local marker = "__TPM_XRAY_RC__:"
+  local wrapped = string.format("(%s) 2>&1; printf '\\n%s%%s' \"$?\"", cmd, marker)
+  local out = sys.exec(wrapped) or ""
+  local rc = tonumber(out:match(marker .. "([%-%d]+)%s*$")) or 1
+  out = out:gsub("\n?" .. marker .. "[%-%d]+%s*$", "")
+  return rc, utils.trim(out)
+end
+
+local function run_xray_version(args)
+  local parts = { utils.shellescape(XRAY_VERSION_SCRIPT) }
+  for _, arg in ipairs(args or {}) do
+    parts[#parts + 1] = utils.shellescape(arg)
+  end
+  return run_cmd_capture(table.concat(parts, " "))
+end
+
+local function parse_tsv_versions(text)
+  local out = {}
+  for line in ((text or "") .. "\n"):gmatch("([^\n]*)\n") do
+    local tag, published, prerelease, asset = line:match("^([^\t]+)\t([^\t]*)\t([^\t]*)\t([^\t]*)$")
+    if tag then
+      out[#out + 1] = {
+        tag = tag,
+        published = published,
+        prerelease = prerelease == "1",
+        asset = asset,
+      }
+    end
+  end
+  return out
+end
 
 local function write_json_file_xray(path, text)
   text = (text or ""):gsub("\r\n", "\n")
@@ -60,11 +94,110 @@ local function render(ctx)
   if http.formvalue("_clearlog_json") then
     write_file(LOG_TEST, ""); set_err(nil); redirect_here("xray"); return m
   end
+  if http.formvalue("_xray_version_refresh") == "1" then
+    local rc, out = run_xray_version({ "status", "--refresh" })
+    if rc == 0 then set_info(_("Xray version information refreshed.")) else set_err(out ~= "" and out or _("Failed to refresh Xray version information.")) end
+    redirect_here("xray"); return m
+  end
+  if http.formvalue("_xray_update_latest") == "1" then
+    local rc, out = run_xray_version({ "status", "--refresh" })
+    local status = utils.parse_kv_text(out)
+    local tag = utils.trim(status.LATEST_TAG or "")
+    if rc ~= 0 or tag == "" then
+      set_err(out ~= "" and out or _("Latest Xray version is not available."))
+    else
+      local install_rc, install_out = run_xray_version({ "install", tag })
+      if install_rc == 0 then set_info(install_out ~= "" and install_out or _("Xray updated.")) else set_err(install_out ~= "" and install_out or _("Xray update failed.")) end
+    end
+    redirect_here("xray"); return m
+  end
+  if http.formvalue("_xray_install_version") == "1" then
+    local tag = utils.trim(http.formvalue("xray_install_tag"))
+    if tag == "" then
+      set_err(_("Select Xray version to install."))
+    else
+      local rc, out = run_xray_version({ "install", tag })
+      if rc == 0 then set_info(out ~= "" and out or _("Xray version installed.")) else set_err(out ~= "" and out or _("Xray install failed.")) end
+    end
+    redirect_here("xray"); return m
+  end
+  if http.formvalue("_xray_rollback") == "1" then
+    local rc, out = run_xray_version({ "rollback" })
+    if rc == 0 then set_info(out ~= "" and out or _("Xray rollback completed.")) else set_err(out ~= "" and out or _("Xray rollback failed.")) end
+    redirect_here("xray"); return m
+  end
 
   -- Xray status
   do
     local ss = m:section(SimpleSection, _("Xray service status and controls"))
     service_block(ss, "xray", "Xray", "xray")
+  end
+
+  do
+    local sec = m:section(SimpleSection)
+    local dv = sec:option(DummyValue, "_xray_version")
+    dv.rawhtml = true
+    function dv.cfgvalue()
+      local status_rc, status_out = run_xray_version({ "status" })
+      local status = utils.parse_kv_text(status_out)
+      local list_rc, list_out = run_xray_version({ "list" })
+      local versions = list_rc == 0 and parse_tsv_versions(list_out) or {}
+      local current_version = status.CURRENT_VERSION or ""
+      local latest_tag = status.LATEST_TAG or ""
+      local arch = status.ARCH or ""
+      local color = status.STATUS_COLOR or "gray"
+      local css_color = color == "green" and "#16a34a" or color == "blue" and "#2563eb" or color == "orange" and "#d97706" or "#6b7280"
+      local rows = {}
+      rows[#rows + 1] = "<details><summary><strong>" .. _("Xray version") .. "</strong></summary>"
+      rows[#rows + 1] = "<div class='box editor-wrap editor-680' style='margin-top:.5rem'>"
+      rows[#rows + 1] = string.format([[
+<div style="display:grid;grid-template-columns:12rem 1fr;gap:.35rem .7rem;align-items:center">
+  <div>%s</div><div><code>%s</code></div>
+  <div>%s</div><div><span style="font-weight:700;color:%s">%s</span></div>
+  <div>%s</div><div>%s</div>
+  <div>%s</div><div>%s</div>
+  <div>%s</div><div><code>%s</code></div>
+  <div>%s</div><div>%s</div>
+</div>]],
+        pcdata(_("Binary path")),
+        pcdata(status.XRAY_BIN or XRAY_BIN),
+        pcdata(_("Current version")),
+        css_color,
+        pcdata(current_version ~= "" and current_version or _("unknown")),
+        pcdata(_("Latest stable")),
+        pcdata(latest_tag ~= "" and latest_tag or _("unknown")),
+        pcdata(_("Router architecture")),
+        pcdata(arch ~= "" and arch or _("unknown")),
+        pcdata(_("Selected asset")),
+        pcdata(status.ASSET or ""),
+        pcdata(_("Hysteria 2 support")),
+        pcdata(status.HY2_SUPPORTED == "1" and _("available") or _("requires Xray v26.3.27+")))
+      if status.ERROR and status.ERROR ~= "" then
+        rows[#rows + 1] = "<div style='margin-top:.5rem;color:#dc2626'>" .. pcdata(status.ERROR) .. "</div>"
+      end
+      rows[#rows + 1] = "<div style='margin-top:.6rem'>"
+      rows[#rows + 1] = "<button class='cbi-button cbi-button-action' name='_xray_version_refresh' value='1'>" .. _("Refresh versions") .. "</button> "
+      rows[#rows + 1] = "<button class='cbi-button cbi-button-apply' name='_xray_update_latest' value='1' onclick=\"return confirm('" .. pcdata(_("Update Xray to latest stable version?")) .. "')\">" .. _("Update to latest") .. "</button> "
+      rows[#rows + 1] = "<button class='cbi-button cbi-button-reset' name='_xray_rollback' value='1' onclick=\"return confirm('" .. pcdata(_("Rollback Xray to previous binary?")) .. "')\"" .. ((status.BACKUP_FILE or "") == "" and " disabled" or "") .. ">" .. _("Rollback previous binary") .. "</button>"
+      rows[#rows + 1] = "</div>"
+      rows[#rows + 1] = "<div style='margin-top:.7rem'>"
+      rows[#rows + 1] = "<select name='xray_install_tag' style='max-width:18rem'>"
+      for _, item in ipairs(versions) do
+        local suffix = item.prerelease and " prerelease" or ""
+        rows[#rows + 1] = string.format("<option value='%s'>%s%s · %s</option>", pcdata(item.tag), pcdata(item.tag), pcdata(suffix), pcdata(item.published))
+      end
+      if #versions == 0 then
+        rows[#rows + 1] = "<option value=''>" .. pcdata(_("No repository versions available")) .. "</option>"
+      end
+      rows[#rows + 1] = "</select> "
+      rows[#rows + 1] = "<button class='cbi-button cbi-button-apply' name='_xray_install_version' value='1' onclick=\"return confirm('" .. pcdata(_("Install selected Xray version?")) .. "')\">" .. _("Install selected version") .. "</button>"
+      rows[#rows + 1] = "</div>"
+      if status_rc ~= 0 then
+        rows[#rows + 1] = "<pre style='white-space:pre-wrap;color:#dc2626'>" .. pcdata(status_out) .. "</pre>"
+      end
+      rows[#rows + 1] = "</div></details>"
+      return table.concat(rows, "\n")
+    end
   end
 
   -- Combined system logread

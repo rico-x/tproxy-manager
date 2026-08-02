@@ -3,6 +3,7 @@
 local jsonc = require "luci.jsonc"
 local ok_nixio, nixio = pcall(require, "nixio")
 local happ_decrypt = require "tproxy_manager.happ_decrypt"
+local proxy_links = require "tproxy_manager.proxy_links"
 
 local PKG = "tproxy-manager"
 local DEFAULT_DB = "/etc/tproxy-manager/watchdog-subscriptions.json"
@@ -92,15 +93,8 @@ local function now_human(ts)
 end
 
 local function parse_link_line(line)
-  local value = trim(line)
-  if value == "" or value:match("^#") then return nil end
-  local raw_link = value
-  if value:find(" # ", 1, true) then
-    raw_link = value:match("^(.-) # ") or value
-  end
-  raw_link = trim(raw_link)
-  if not raw_link:match("^vless://") then return nil end
-  return raw_link
+  local parsed = proxy_links.parse_link_line(line)
+  return parsed and parsed.raw_link or nil
 end
 
 local function parse_links_text(text)
@@ -155,9 +149,9 @@ local function resolve_subscription_url(url)
   return happ_decrypt.resolve_subscription_url(url)
 end
 
-local function add_vless_link(out, seen, link)
+local function add_proxy_link(out, seen, link)
   link = trim(link)
-  if not link:match("^vless://") then return end
+  if not proxy_links.is_supported(link) then return end
   local hash = md5(link)
   if hash ~= "" and not seen[hash] then
     out[#out + 1] = { hash = hash, raw_link = link }
@@ -171,6 +165,10 @@ local function host_for_vless(address)
     return "[" .. address .. "]"
   end
   return address
+end
+
+local function host_for_uri(address)
+  return host_for_vless(address)
 end
 
 local function value_or_empty(value)
@@ -248,19 +246,78 @@ local function outbound_to_vless(config, outbound, suffix)
     urlencode(remarks))
 end
 
-local function extract_json_vless(node, out, seen)
+local function first_hysteria_server(settings)
+  if type(settings.servers) == "table" and type(settings.servers[1]) == "table" then
+    return settings.servers[1]
+  end
+  if type(settings.server) == "table" then
+    return settings.server
+  end
+  return settings
+end
+
+local function outbound_to_hysteria(config, outbound, suffix)
+  if type(outbound) ~= "table" or outbound.protocol ~= "hysteria" then return nil end
+  local settings = type(outbound.settings) == "table" and outbound.settings or {}
+  local server = first_hysteria_server(settings)
+  local address = value_or_empty(server.address or server.host)
+  local port = tonumber(server.port)
+  if address == "" or not port then return nil end
+
+  local stream = type(outbound.streamSettings) == "table" and outbound.streamSettings or {}
+  local hysteria = type(stream.hysteriaSettings) == "table" and stream.hysteriaSettings or {}
+  local auth = value_or_empty(hysteria.auth or settings.auth or server.auth)
+  local params = {}
+  local tls = type(stream.tlsSettings) == "table" and stream.tlsSettings or {}
+  add_query(params, "sni", tls.serverName or server.sni)
+  if tls.allowInsecure ~= nil then add_query(params, "insecure", tls.allowInsecure and "1" or "0") end
+  add_query(params, "pinSHA256", tls.pinSHA256 or tls.pinnedPeerCertSha256)
+  add_query(params, "ech", tls.ech or tls.echConfigList)
+  if type(tls.alpn) == "table" then
+    local alpn = {}
+    for _, item in ipairs(tls.alpn) do
+      if value_or_empty(item) ~= "" then alpn[#alpn + 1] = value_or_empty(item) end
+    end
+    add_query(params, "alpn", table.concat(alpn, ","))
+  else
+    add_query(params, "alpn", tls.alpn)
+  end
+
+  local remarks = value_or_empty(type(config) == "table" and config.remarks or "")
+  if suffix and suffix ~= "" then
+    remarks = remarks ~= "" and (remarks .. " " .. suffix) or suffix
+  end
+  local query = table.concat(params, "&")
+  local userinfo = auth ~= "" and (urlencode(auth) .. "@") or ""
+  local query_part = query ~= "" and ("?" .. query) or ""
+  return string.format("hysteria2://%s%s:%d/%s#%s",
+    userinfo,
+    host_for_uri(address),
+    port,
+    query_part,
+    urlencode(remarks))
+end
+
+local function extract_json_proxy_links(node, out, seen)
   local function walk(value)
     if type(value) ~= "table" then return end
     if type(value.outbounds) == "table" then
       local vless_outbounds = {}
+      local hysteria_outbounds = {}
       for _, outbound in ipairs(value.outbounds) do
         if type(outbound) == "table" and outbound.protocol == "vless" then
           vless_outbounds[#vless_outbounds + 1] = outbound
+        elseif type(outbound) == "table" and outbound.protocol == "hysteria" then
+          hysteria_outbounds[#hysteria_outbounds + 1] = outbound
         end
       end
       for _, outbound in ipairs(vless_outbounds) do
         local suffix = #vless_outbounds > 1 and value_or_empty(outbound.tag) or ""
-        add_vless_link(out, seen, outbound_to_vless(value, outbound, suffix) or "")
+        add_proxy_link(out, seen, outbound_to_vless(value, outbound, suffix) or "")
+      end
+      for _, outbound in ipairs(hysteria_outbounds) do
+        local suffix = #hysteria_outbounds > 1 and value_or_empty(outbound.tag) or ""
+        add_proxy_link(out, seen, outbound_to_hysteria(value, outbound, suffix) or "")
       end
     else
       for _, child in pairs(value) do walk(child) end
@@ -269,16 +326,16 @@ local function extract_json_vless(node, out, seen)
   walk(node)
 end
 
-local function extract_vless_links(text)
+local function extract_proxy_links(text)
   local out, seen = {}, {}
   local function add_from(source)
     source = tostring(source or "")
-    for link in source:gmatch("(vless://[^%s\"'<>]+)") do
-      add_vless_link(out, seen, link)
+    for _, item in ipairs(proxy_links.extract_from_text(source)) do
+      add_proxy_link(out, seen, item.raw_link)
     end
     local ok, parsed = pcall(jsonc.parse, source)
     if ok and type(parsed) == "table" then
-      extract_json_vless(parsed, out, seen)
+      extract_json_proxy_links(parsed, out, seen)
     end
   end
   add_from(text)
@@ -288,7 +345,7 @@ local function extract_vless_links(text)
 end
 
 local function classify_subscription_response(text)
-  if #extract_vless_links(text) > 0 then
+  if #extract_proxy_links(text) > 0 then
     local ok, parsed = pcall(jsonc.parse, text)
     if ok and type(parsed) == "table" then return "json" end
     local decoded = base64_decode(text)
@@ -559,10 +616,10 @@ local function fetch_subscription(db, sub)
   end
 
   local response_kind = classify_subscription_response(response)
-  local links = extract_vless_links(response)
+  local links = extract_proxy_links(response)
   if #links == 0 then
     sub.last_status = "error"
-    sub.last_error = "ответ не содержит валидных VLESS-ссылок"
+    sub.last_error = "ответ не содержит валидных proxy-ссылок"
     sub.last_update = now()
     sub.last_update_human = now_human(sub.last_update)
     return false, sub.last_error

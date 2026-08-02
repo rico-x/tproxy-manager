@@ -1,0 +1,33 @@
+{
+  // Base template for Hysteria 2 links rendered through Xray.
+  // The converter replaces __HY2_STREAM_SETTINGS__ with a JSON object.
+  "remarks": "__REMARKS__",
+  "outbounds": [
+    {
+      "protocol": "hysteria",
+      "tag": "proxy",
+      "settings": {
+        "version": 2,
+        "address": "__ADDRESS__",
+        "port": "__PORT__"
+      },
+      "streamSettings": "__HY2_STREAM_SETTINGS__"
+    },
+    {
+      "protocol": "freedom",
+      "tag": "direct",
+      "settings": {
+        "domainStrategy": "AsIs"
+      }
+    },
+    {
+      "protocol": "blackhole",
+      "tag": "block",
+      "settings": {
+        "response": {
+          "type": "http"
+        }
+      }
+    }
+  ]
+}

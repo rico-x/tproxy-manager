@@ -41,9 +41,11 @@ render_batch_test_config() {
     outbounds_file="$2"
     rules_file="$3"
     config_file="$4"
+    protocol="${5:-vless}"
+    batch_template="$(batch_template_for_protocol "$protocol")"
 
-    if [ ! -f "$BATCH_TEST_TEMPLATE_FILE" ]; then
-        log_msg "ошибка: не найден batch-шаблон $BATCH_TEST_TEMPLATE_FILE"
+    if [ ! -f "$batch_template" ]; then
+        log_msg "ошибка: не найден batch-шаблон $batch_template"
         return 1
     fi
 
@@ -73,13 +75,14 @@ render_batch_test_config() {
                 printf '%s\n' "$line" >> "$config_file"
                 ;;
         esac
-    done < "$BATCH_TEST_TEMPLATE_FILE"
+    done < "$batch_template"
 }
 
 build_batch_config() {
     chunk_file="$1"
     config_file="$2"
     probe_map="$3"
+    protocol="${4:-vless}"
 
     inbounds_entries="$TEST_DIR/inbounds.entries"
     outbounds_entries="$TEST_DIR/outbounds.entries"
@@ -111,7 +114,8 @@ build_batch_config() {
         outbound_file="$TEST_DIR/outbound-$tag.json"
         printf '%s\n' "$link" > "$single_link_file"
 
-        if ! "$VLESS2JSON" -r "$single_link_file" -t "$TEMPLATE_FILE" --one-outbound --tag "$tag" > "$outbound_file" 2>"$TEST_DIR/render-$tag.err"; then
+        render_template="$(outbound_template_for_link "$link")"
+        if ! "$VLESS2JSON" -r "$single_link_file" -t "$render_template" --one-outbound --tag "$tag" > "$outbound_file" 2>"$TEST_DIR/render-$tag.err"; then
             mark_link_dead "$hash" "000" "0" "render-error"
             log_msg "batch: не удалось сгенерировать outbound для $hash"
             continue
@@ -137,12 +141,13 @@ build_batch_config() {
     wrap_json_array "$inbounds_entries" "$inbounds_json"
     wrap_json_array "$outbounds_entries" "$outbounds_json"
     wrap_json_array "$rules_entries" "$rules_json"
-    render_batch_test_config "$inbounds_json" "$outbounds_json" "$rules_json" "$config_file"
+    render_batch_test_config "$inbounds_json" "$outbounds_json" "$rules_json" "$config_file" "$protocol"
 }
 
 probe_batch_chunk() {
     chunk_file="$1"
     chunk_no="$2"
+    protocol="${3:-vless}"
 
     TEST_DIR="$BATCH_DIR/run-$chunk_no"
     mkdir -p "$TEST_DIR" || return 1
@@ -153,7 +158,7 @@ probe_batch_chunk() {
     result_dir="$TEST_DIR/results"
     mkdir -p "$result_dir" || return 1
 
-    build_batch_config "$chunk_file" "$config_file" "$probe_map" || return 1
+    build_batch_config "$chunk_file" "$config_file" "$probe_map" "$protocol" || return 1
     start_test_instance "$config_file" "$log_file" || return 1
 
     running=0
@@ -206,6 +211,45 @@ probe_batch_chunk() {
     return 0
 }
 
+probe_links_batch_protocol_runtime() {
+    protocol="$1"
+    input_file="$2"
+    [ -s "$input_file" ] || return 0
+
+    chunk_file="$BATCH_DIR/chunk-$protocol-1.tsv"
+    : > "$chunk_file"
+    chunk_count=0
+    chunk_no=1
+
+    while IFS="$(printf '\t')" read -r hash link comment lineno; do
+        [ -n "$hash" ] || continue
+        printf '%s\t%s\t%s\t%s\n' "$hash" "$link" "$comment" "$lineno" >> "$chunk_file"
+        BATCH_TOTAL=$((BATCH_TOTAL + 1))
+        chunk_count=$((chunk_count + 1))
+
+        if [ "$chunk_count" -ge "$BATCH_CHECK_BATCH_SIZE" ]; then
+            BATCH_CHUNKS=$((BATCH_CHUNKS + 1))
+            if ! probe_batch_chunk "$chunk_file" "$protocol-$chunk_no" "$protocol"; then
+                return 1
+            fi
+            BATCH_ALIVE=$((BATCH_ALIVE + BATCH_CHUNK_ALIVE))
+            chunk_no=$((chunk_no + 1))
+            chunk_file="$BATCH_DIR/chunk-$protocol-$chunk_no.tsv"
+            : > "$chunk_file"
+            chunk_count=0
+        fi
+    done < "$input_file"
+
+    if [ "$chunk_count" -gt 0 ]; then
+        BATCH_CHUNKS=$((BATCH_CHUNKS + 1))
+        if ! probe_batch_chunk "$chunk_file" "$protocol-$chunk_no" "$protocol"; then
+            return 1
+        fi
+        BATCH_ALIVE=$((BATCH_ALIVE + BATCH_CHUNK_ALIVE))
+    fi
+    return 0
+}
+
 probe_links_batch_runtime() {
     input_file="$1"
     BATCH_ALIVE=0
@@ -222,40 +266,27 @@ probe_links_batch_runtime() {
         return 1
     fi
 
-    started="$(now_ts)"
-    chunk_file="$BATCH_DIR/chunk-1.tsv"
-    : > "$chunk_file"
-    chunk_count=0
-    chunk_no=1
+    vless_input="$BATCH_DIR/input-vless.tsv"
+    hy2_input="$BATCH_DIR/input-hy2.tsv"
+    : > "$vless_input"
+    : > "$hy2_input"
 
     while IFS="$(printf '\t')" read -r hash link comment lineno; do
         [ -n "$hash" ] || continue
-        printf '%s\t%s\t%s\t%s\n' "$hash" "$link" "$comment" "$lineno" >> "$chunk_file"
-        BATCH_TOTAL=$((BATCH_TOTAL + 1))
-        chunk_count=$((chunk_count + 1))
-
-        if [ "$chunk_count" -ge "$BATCH_CHECK_BATCH_SIZE" ]; then
-            BATCH_CHUNKS=$((BATCH_CHUNKS + 1))
-            if ! probe_batch_chunk "$chunk_file" "$chunk_no"; then
-                rm -rf "$BATCH_DIR"
-                return 1
-            fi
-            BATCH_ALIVE=$((BATCH_ALIVE + BATCH_CHUNK_ALIVE))
-            chunk_no=$((chunk_no + 1))
-            chunk_file="$BATCH_DIR/chunk-$chunk_no.tsv"
-            : > "$chunk_file"
-            chunk_count=0
-        fi
+        case "$(link_protocol "$link")" in
+            hy2) printf '%s\t%s\t%s\t%s\n' "$hash" "$link" "$comment" "$lineno" >> "$hy2_input" ;;
+            *) printf '%s\t%s\t%s\t%s\n' "$hash" "$link" "$comment" "$lineno" >> "$vless_input" ;;
+        esac
     done < "$input_file"
 
-    if [ "$chunk_count" -gt 0 ]; then
-        BATCH_CHUNKS=$((BATCH_CHUNKS + 1))
-        if ! probe_batch_chunk "$chunk_file" "$chunk_no"; then
+    started="$(now_ts)"
+    for protocol in vless hy2; do
+        protocol_input="$BATCH_DIR/input-$protocol.tsv"
+        if ! probe_links_batch_protocol_runtime "$protocol" "$protocol_input"; then
             rm -rf "$BATCH_DIR"
             return 1
         fi
-        BATCH_ALIVE=$((BATCH_ALIVE + BATCH_CHUNK_ALIVE))
-    fi
+    done
 
     finished="$(now_ts)"
     duration=$((finished - started))

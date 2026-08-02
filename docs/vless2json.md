@@ -2,7 +2,7 @@
 
 [English version](en/vless2json.md)
 
-`vless2json.sh` — встроенный конвертер проекта для `WATCHDOG`.
+`vless2json.sh` — встроенный protocol-aware конвертер проекта для `WATCHDOG`.
 
 Скрипт входит в пакет и устанавливается в:
 
@@ -11,7 +11,7 @@
 Это штатный конвертер по умолчанию для `watchdog_vless2json`. Его задача простая:
 
 1. прочитать файл со ссылками;
-2. взять первую валидную VLESS-ссылку;
+2. взять первую валидную proxy-ссылку;
 3. распарсить ссылку;
 4. подставить её значения в JSON/JSONC-шаблон;
 5. вывести итоговый JSON в `stdout`.
@@ -39,8 +39,8 @@ vless2json.sh --help
 
 - игнорирует пустые строки;
 - игнорирует строки, начинающиеся с `#`;
-- поддерживает строки вида `vless://...` и `vless://... # comment`;
-- использует первую валидную VLESS-ссылку из файла;
+- поддерживает строки вида `vless://...`, `hysteria2://...`, `hy2://...` и вариант `link # comment`;
+- использует первую валидную proxy-ссылку из файла;
 - читает шаблон как JSONC;
 - удаляет комментарии из шаблона перед разбором;
 - печатает на выходе уже чистый JSON.
@@ -53,12 +53,14 @@ vless2json.sh --help
 
 ```txt
 vless://uuid@example.com:443?...#Comment
+hysteria2://password@example.com:443/?sni=example.com#Comment
 ```
 
 или
 
 ```txt
 vless://uuid@example.com:443?... # Comment
+hy2://password@example.com:443/?sni=example.com # Comment
 ```
 
 Внешний комментарий после ` space # space ` используется только как fallback, если внутри самой ссылки нет `#fragment`.
@@ -88,6 +90,26 @@ vless://uuid@example.com:443?... # Comment
 - `allowinsecure`
 - `alpn`
 - `#fragment` как `remarks`
+
+## Поддерживаемые поля Hysteria 2
+
+Из ссылок `hysteria2://` и `hy2://` извлекаются:
+
+- `auth`
+- `address`
+- `port`, по умолчанию `443`
+- `sni`
+- `insecure`
+- `pinSHA256`
+- `ech`
+- `alpn`
+- `obfs`
+- `obfs-password`
+- `#fragment` как `remarks`
+
+Для Xray генерируется outbound `protocol: hysteria` с `settings.version = 2` и `streamSettings.network = "hysteria"`. Минимальная рекомендуемая версия Xray для HY2 — `v26.3.27+`.
+URI-поля `pinSHA256`, `ech` и `alpn` преобразуются в Xray TLS-поля `pinnedPeerCertSha256`, `echConfigList` и `alpn`.
+Параметр `insecure` распознаётся для совместимости URI, но стандартный HY2-шаблон его не применяет: в актуальном Xray `allowInsecure` удалён, вместо него нужно указывать `pinSHA256`.
 
 ## Плейсхолдеры шаблона
 
@@ -125,13 +147,31 @@ vless://uuid@example.com:443?... # Comment
 - `__ALPN__`
 - `__ALPN_ARRAY__`
 
+Для HY2 дополнительно доступны:
+
+- `__AUTH__`
+- `__HY2_AUTH__`
+- `__PORT_RAW__`
+- `__PIN_SHA256__`
+- `__PINNED_PEER_CERT_SHA256__`
+- `__ECH__`
+- `__ECH_CONFIG_LIST__`
+- `__HY2_ALPN_ARRAY__`
+- `__OBFS__`
+- `__OBFS_PASSWORD__`
+- `__HY2_HYSTERIA_SETTINGS__`
+- `__HY2_TLS_SETTINGS__`
+- `__HY2_UDPMASKS__`
+- `__HY2_STREAM_SETTINGS__`
+
 ## Типы подстановки
 
 Если строка шаблона равна плейсхолдеру целиком, конвертер подставляет типизированное значение:
 
 - `__PORT__` превращается в число;
 - `__ALLOW_INSECURE_BOOL__` превращается в boolean;
-- `__ALPN_ARRAY__` превращается в массив строк.
+- `__ALPN_ARRAY__` и `__HY2_ALPN_ARRAY__` превращаются в массив строк.
+- `__HY2_STREAM_SETTINGS__`, `__HY2_HYSTERIA_SETTINGS__`, `__HY2_TLS_SETTINGS__` и `__HY2_UDPMASKS__` превращаются в JSON-объекты или массивы.
 
 Если плейсхолдер встроен внутрь другой строки, подстановка выполняется как текстовая.
 
@@ -159,17 +199,20 @@ vless://uuid@example.com:443?... # Comment
 
 ## Базовый шаблон
 
-Пакет поставляет seed-шаблон:
+Пакет поставляет seed-шаблоны:
 
 - `/usr/share/tproxy-manager/watchdog-outbound.template.jsonc`
+- `/usr/share/tproxy-manager/watchdog-hysteria-outbound.template.jsonc`
 
 При первом установочном прогоне он копируется в:
 
 - `/etc/tproxy-manager/watchdog-outbound.template.jsonc`
+- `/etc/tproxy-manager/watchdog-hysteria-outbound.template.jsonc`
 
 Этот шаблон включает:
 
 - основной `vless` outbound с `tag: proxy`;
+- основной `hysteria` outbound с `tag: proxy` для HY2-шаблона;
 - `freedom` outbound `direct`;
 - `blackhole` outbound `block`.
 

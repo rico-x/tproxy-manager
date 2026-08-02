@@ -1,0 +1,11 @@
+{
+  "log": {
+    "loglevel": "warning"
+  },
+  "inbounds": __BATCH_INBOUNDS__,
+  "outbounds": __BATCH_OUTBOUNDS__,
+  "routing": {
+    "domainStrategy": "AsIs",
+    "rules": __BATCH_RULES__
+  }
+}

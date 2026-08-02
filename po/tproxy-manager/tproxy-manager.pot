@@ -1082,6 +1082,9 @@ msgstr ""
 msgid "VLESS converter"
 msgstr ""
 
+msgid "Link converter"
+msgstr ""
+
 msgid "Managed service"
 msgstr ""
 
@@ -1110,4 +1113,148 @@ msgid "Happ capture port"
 msgstr ""
 
 msgid "Happ capture log"
+msgstr ""
+
+msgid "Added line must start with vless://, hysteria2:// or hy2://"
+msgstr ""
+
+msgid "Link must start with vless://, hysteria2:// or hy2://"
+msgstr ""
+
+msgid "Proxy link list"
+msgstr ""
+
+msgid "Protocol"
+msgstr ""
+
+msgid "Proxy link"
+msgstr ""
+
+msgid "For bulk paste: one proxy link per line. Empty lines and lines starting with # are allowed."
+msgstr ""
+
+msgid "Recommended format: base64 for v2RayTun, Shadowrocket, v2Box and V2rayNG; plain for Happ and clients that accept raw proxy lists."
+msgstr ""
+
+msgid "Hysteria outbound template"
+msgstr ""
+
+msgid "Hysteria test template"
+msgstr ""
+
+msgid "Hysteria batch test template"
+msgstr ""
+
+msgid "Xray version"
+msgstr ""
+
+msgid "Xray version information refreshed."
+msgstr ""
+
+msgid "Failed to refresh Xray version information."
+msgstr ""
+
+msgid "Latest Xray version is not available."
+msgstr ""
+
+msgid "Xray updated."
+msgstr ""
+
+msgid "Xray update failed."
+msgstr ""
+
+msgid "Select Xray version to install."
+msgstr ""
+
+msgid "Xray version installed."
+msgstr ""
+
+msgid "Xray install failed."
+msgstr ""
+
+msgid "Xray rollback completed."
+msgstr ""
+
+msgid "Xray rollback failed."
+msgstr ""
+
+msgid "Binary path"
+msgstr ""
+
+msgid "Current version"
+msgstr ""
+
+msgid "Latest stable"
+msgstr ""
+
+msgid "Router architecture"
+msgstr ""
+
+msgid "Selected asset"
+msgstr ""
+
+msgid "Hysteria 2 support"
+msgstr ""
+
+msgid "unknown"
+msgstr ""
+
+msgid "available"
+msgstr ""
+
+msgid "requires Xray v26.3.27+"
+msgstr ""
+
+msgid "Refresh versions"
+msgstr ""
+
+msgid "Update Xray to latest stable version?"
+msgstr ""
+
+msgid "Update to latest"
+msgstr ""
+
+msgid "Rollback Xray to previous binary?"
+msgstr ""
+
+msgid "Rollback previous binary"
+msgstr ""
+
+msgid "No repository versions available"
+msgstr ""
+
+msgid "Install selected Xray version?"
+msgstr ""
+
+msgid "Install selected version"
+msgstr ""
+
+msgid "Templates editor"
+msgstr ""
+
+msgid "Template type"
+msgstr ""
+
+msgid "Template file"
+msgstr ""
+
+msgid "VLESS outbound template"
+msgstr ""
+
+msgid "VLESS test template"
+msgstr ""
+
+msgid "VLESS batch test template"
+msgstr ""
+
+msgid "Hysteria 2 outbound template"
+msgstr ""
+
+msgid "Hysteria 2 test template"
+msgstr ""
+
+msgid "Hysteria 2 batch test template"
+msgstr ""
+
+msgid "Choose a VLESS or Hysteria 2 template, edit it and save it back to its own file. The active path is also stored in UCI settings."
 msgstr ""

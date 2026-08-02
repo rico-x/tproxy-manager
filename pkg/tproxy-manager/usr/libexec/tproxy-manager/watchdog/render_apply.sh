@@ -30,6 +30,8 @@ probe_proxy_url_with_time() {
 generate_rendered_config() {
     single_links_file="$1"
     rendered_file="$2"
+    source_link="${3:-}"
+    render_template="$(outbound_template_for_link "$source_link")"
 
     if [ ! -x "$VLESS2JSON" ]; then
         log_msg "ошибка: не найден исполняемый скрипт $VLESS2JSON"
@@ -39,12 +41,12 @@ generate_rendered_config() {
         log_msg "ошибка: не найден файл ссылок $single_links_file"
         return 1
     fi
-    if [ ! -f "$TEMPLATE_FILE" ]; then
-        log_msg "ошибка: не найден файл шаблона $TEMPLATE_FILE"
+    if [ ! -f "$render_template" ]; then
+        log_msg "ошибка: не найден файл шаблона $render_template"
         return 1
     fi
 
-    if "$VLESS2JSON" -r "$single_links_file" -t "$TEMPLATE_FILE" > "$rendered_file"; then
+    if "$VLESS2JSON" -r "$single_links_file" -t "$render_template" > "$rendered_file"; then
         if grep -q '^[[:space:]]*\[[[:space:]]*$\|^[[:space:]]*\[' "$rendered_file" 2>/dev/null || grep -q '^[[:space:]]*{' "$rendered_file" 2>/dev/null; then
             return 0
         fi
@@ -107,9 +109,11 @@ render_test_config() {
     array_file="$1"
     config_file="$2"
     port="$3"
+    source_link="${4:-}"
+    test_template="$(test_template_for_link "$source_link")"
 
-    if [ ! -f "$TEST_TEMPLATE_FILE" ]; then
-        log_msg "ошибка: не найден тестовый шаблон $TEST_TEMPLATE_FILE"
+    if [ ! -f "$test_template" ]; then
+        log_msg "ошибка: не найден тестовый шаблон $test_template"
         return 1
     fi
 
@@ -134,7 +138,7 @@ render_test_config() {
                 printf '%s\n' "$rendered_line" >> "$config_file"
                 ;;
         esac
-    done < "$TEST_TEMPLATE_FILE"
+    done < "$test_template"
 }
 
 apply_generated_outbounds() {

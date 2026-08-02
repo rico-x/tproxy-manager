@@ -7,7 +7,7 @@
 
 ![Dashboard](docs/screenshots/placeholder-dashboard.png)
 
-TPROXY Manager is a LuCI panel and a set of OpenWrt system scripts. It manages transparent traffic interception through `nftables`, routing lists, Xray/Mihomo configuration files, GEO databases, VLESS subscriptions, and automatic outbound rotation through Watchdog.
+TPROXY Manager is a LuCI panel and a set of OpenWrt system scripts. It manages transparent traffic interception through `nftables`, routing lists, Xray/Mihomo configuration files, GEO databases, proxy subscriptions, and automatic outbound rotation through Watchdog.
 
 The package is designed for routers where the proxy daemon is installed separately. The managed service can be Xray, Mihomo, sing-box, or another daemon that can consume generated config fragments and link lists.
 
@@ -19,16 +19,16 @@ Main features:
 - JSON/JSONC and YAML editors with server-side validation before saving.
 - Configurable `geoip.dat` and `geosite.dat` download sources.
 - Cron-based GEO database updates.
-- Built-in `/usr/bin/vless2json.sh` converter for VLESS links.
+- Built-in `/usr/bin/vless2json.sh` converter for VLESS and Hysteria 2 links.
 - Watchdog for subscriptions, batch link checks, dead-link exclusion, and automatic rotation.
 - Router-side subscription sharing for v2RayTun, Happ, Shadowrocket, v2Box, and V2rayNG clients.
 - Happ subscriptions with regular `https://` URLs, encrypted `happ://crypt*` URLs, and Xray-like JSON responses.
-- Batch VLESS checks through one test instance with separate outbound tags and SOCKS ports.
+- Batch proxy checks through one test instance with separate outbound tags and SOCKS ports.
 - Active-link selection modes: ordered, random, and fastest.
 - Fast package builds without the OpenWrt SDK: `.ipk` for OpenWrt 24.10 and `.apk` for OpenWrt 25.12.
 
 Low-level TPROXY engine reference: [docs/en/tproxy-doc.md](docs/en/tproxy-doc.md).  
-Built-in VLESS converter reference: [docs/en/vless2json.md](docs/en/vless2json.md).
+Built-in link converter reference: [docs/en/vless2json.md](docs/en/vless2json.md).
 
 ## Installation
 
@@ -200,6 +200,7 @@ The `XRAY` tab provides basic Xray maintenance:
 - File creation and deletion.
 - JSONC validation before saving.
 - Full configuration validation through `xray -test -format json -confdir /etc/xray`.
+- Xray version view with the current binary version, latest stable GitHub release, router architecture asset, one-click update, and rollback.
 
 ## MIHOMO
 
@@ -244,7 +245,7 @@ Watchdog is a separate LuCI tab and a separate OpenWrt service:
 - `/usr/bin/tproxy-manager-watchdog.sh`
 - `/usr/bin/tproxy-manager-subscriptions.lua`
 
-It checks the active proxy through `CHECK_URL`. If the check fails repeatedly, Watchdog selects another VLESS link, probes it with a test instance, generates an outbound config, and restarts the configured managed service.
+It checks the active proxy through `CHECK_URL`. If the check fails repeatedly, Watchdog selects another proxy link, probes it with a test instance, generates an outbound config, and restarts the configured managed service.
 
 The status line shows:
 
@@ -264,9 +265,9 @@ Watchdog can update the proxy list from subscriptions while preserving local lin
 Supported subscription behavior:
 
 - Happ subscriptions can use a regular `https://` URL or an encrypted `happ://crypt*` URL.
-- Raw text responses are scanned for `vless://` links.
+- Raw text responses are scanned for `vless://`, `hysteria2://`, and `hy2://` links.
 - Base64 responses are decoded and scanned.
-- Xray-like JSON responses are parsed and VLESS outbounds are converted to normal `vless://` links.
+- Xray-like JSON responses are parsed and VLESS/Hysteria outbounds are converted to normal shareable links.
 
 Each subscription has its own refresh timer. When a subscription changes, Watchdog updates the subscription database and synchronizes the final `watchdog.links` file. Local links are not removed.
 
@@ -291,20 +292,20 @@ Supported clients:
 
 The block generates two universal URLs:
 
-- `plain`: newline-separated `vless://` links.
+- `plain`: newline-separated proxy links.
 - `base64`: base64 of the same newline-separated list.
 
 Recommended format:
 
 - `base64`: v2RayTun, Shadowrocket, v2Box, and V2rayNG.
-- `plain`: Happ and clients that accept raw VLESS lists.
+- `plain`: Happ and clients that accept raw proxy lists.
 
 Sharing is disabled by default. Once enabled, URLs are public: any device that knows the URL can download the exported proxy list.
 
 Selection modes:
 
-- `All links`: export every valid VLESS link from the current `watchdog.links`.
-- `Selected links`: enable the `Shared` checkbox column in the VLESS table and export only checked rows.
+- `All links`: export every valid proxy link from the current `watchdog.links`.
+- `Selected links`: enable the `Shared` checkbox column in the proxy table and export only checked rows.
 
 Links excluded from rotation are not exported because they are not part of the active `watchdog.links` file. Link health does not filter the export by itself; use selected mode when you need manual filtering.
 
@@ -377,6 +378,9 @@ Watchdog does not embed the outbound JSON in the shell script. It uses external 
 - `/etc/tproxy-manager/watchdog-outbound.template.jsonc`
 - `/etc/tproxy-manager/watchdog-test-config.template.jsonc`
 - `/etc/tproxy-manager/watchdog-batch-test-config.template.jsonc`
+- `/etc/tproxy-manager/watchdog-hysteria-outbound.template.jsonc`
+- `/etc/tproxy-manager/watchdog-hysteria-test-config.template.jsonc`
+- `/etc/tproxy-manager/watchdog-hysteria-batch-test-config.template.jsonc`
 
 The default converter is:
 
@@ -396,8 +400,9 @@ Template placeholders are documented in [docs/en/vless2json.md](docs/en/vless2js
 | Watchdog init.d | `/etc/init.d/tproxy-manager-watchdog` |
 | Watchdog runtime | `/usr/bin/tproxy-manager-watchdog.sh` |
 | Watchdog subscriptions | `/usr/bin/tproxy-manager-subscriptions.lua` |
+| Xray version helper | `/usr/bin/tproxy-manager-xray-version.lua` |
 | Watchdog libs | `/usr/libexec/tproxy-manager/watchdog/*` |
-| VLESS converter | `/usr/bin/vless2json.sh` |
+| Link converter | `/usr/bin/vless2json.sh` |
 | GEO updater | `/usr/bin/tproxy-manager-geo-update.sh` |
 | Main config | `/etc/config/tproxy-manager` |
 | Watchdog links | `/etc/tproxy-manager/watchdog.links` |
@@ -443,7 +448,7 @@ Then configure your proxy daemon to use `/usr/share/tproxy-manager/`.
 
 Start with:
 
-1. Add VLESS links or a Happ subscription.
+1. Add proxy links or a Happ subscription.
 2. Run `Check all links`.
 3. Apply one known-good link.
 4. Enable Watchdog service.

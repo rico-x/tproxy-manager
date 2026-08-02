@@ -70,6 +70,18 @@ if [ ! -e /etc/tproxy-manager/watchdog-batch-test-config.template.jsonc ] && [ -
   cp /usr/share/tproxy-manager/watchdog-batch-test-config.template.jsonc /etc/tproxy-manager/watchdog-batch-test-config.template.jsonc
 fi
 
+if [ ! -e /etc/tproxy-manager/watchdog-hysteria-outbound.template.jsonc ] && [ -f /usr/share/tproxy-manager/watchdog-hysteria-outbound.template.jsonc ]; then
+  cp /usr/share/tproxy-manager/watchdog-hysteria-outbound.template.jsonc /etc/tproxy-manager/watchdog-hysteria-outbound.template.jsonc
+fi
+
+if [ ! -e /etc/tproxy-manager/watchdog-hysteria-test-config.template.jsonc ] && [ -f /usr/share/tproxy-manager/watchdog-hysteria-test-config.template.jsonc ]; then
+  cp /usr/share/tproxy-manager/watchdog-hysteria-test-config.template.jsonc /etc/tproxy-manager/watchdog-hysteria-test-config.template.jsonc
+fi
+
+if [ ! -e /etc/tproxy-manager/watchdog-hysteria-batch-test-config.template.jsonc ] && [ -f /usr/share/tproxy-manager/watchdog-hysteria-batch-test-config.template.jsonc ]; then
+  cp /usr/share/tproxy-manager/watchdog-hysteria-batch-test-config.template.jsonc /etc/tproxy-manager/watchdog-hysteria-batch-test-config.template.jsonc
+fi
+
 # --- UCI доступен? ---
 command -v uci >/dev/null 2>&1 || exit 0
 
@@ -127,6 +139,8 @@ set_default tproxy-manager main watchdog_service_path '/etc/init.d/xray'
 set_default tproxy-manager main watchdog_restart_cmd 'restart'
 set_default tproxy-manager main watchdog_test_command '/usr/bin/xray -c {config}'
 set_default tproxy-manager main watchdog_test_template_file '/etc/tproxy-manager/watchdog-test-config.template.jsonc'
+set_default tproxy-manager main watchdog_hysteria_template_file '/etc/tproxy-manager/watchdog-hysteria-outbound.template.jsonc'
+set_default tproxy-manager main watchdog_hysteria_test_template_file '/etc/tproxy-manager/watchdog-hysteria-test-config.template.jsonc'
 set_default tproxy-manager main watchdog_selection_mode 'random'
 set_default tproxy-manager main watchdog_exclude_dead '0'
 set_default tproxy-manager main watchdog_dead_cooldown_hours '0'
@@ -140,6 +154,7 @@ set_default tproxy-manager main watchdog_batch_check_batch_size '64'
 set_default tproxy-manager main watchdog_batch_check_concurrency '8'
 set_default tproxy-manager main watchdog_batch_check_fallback '1'
 set_default tproxy-manager main watchdog_batch_test_template_file '/etc/tproxy-manager/watchdog-batch-test-config.template.jsonc'
+set_default tproxy-manager main watchdog_hysteria_batch_test_template_file '/etc/tproxy-manager/watchdog-hysteria-batch-test-config.template.jsonc'
 set_default tproxy-manager main watchdog_subscriptions_file '/etc/tproxy-manager/watchdog-subscriptions.json'
 set_default tproxy-manager main watchdog_share_enabled '0'
 set_default tproxy-manager main watchdog_share_file '/etc/tproxy-manager/watchdog-share.json'

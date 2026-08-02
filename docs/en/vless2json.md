@@ -2,7 +2,7 @@
 
 [Русская версия](../vless2json.md)
 
-`vless2json.sh` is the built-in converter used by `WATCHDOG`.
+`vless2json.sh` is the built-in protocol-aware converter used by `WATCHDOG`.
 
 It is installed as:
 
@@ -11,7 +11,7 @@ It is installed as:
 Its job is intentionally small:
 
 1. Read a file with links.
-2. Take the first valid VLESS link.
+2. Take the first valid proxy link.
 3. Parse the link.
 4. Substitute parsed values into a JSON/JSONC template.
 5. Print the resulting JSON to `stdout`.
@@ -39,8 +39,8 @@ The converter:
 
 - Ignores empty lines.
 - Ignores lines starting with `#`.
-- Supports `vless://...` and `vless://... # comment`.
-- Uses the first valid VLESS link from the file.
+- Supports `vless://...`, `hysteria2://...`, `hy2://...`, and `link # comment`.
+- Uses the first valid proxy link from the file.
 - Reads the template as JSONC.
 - Removes comments before parsing.
 - Prints clean JSON.
@@ -53,12 +53,14 @@ Supported line:
 
 ```txt
 vless://uuid@example.com:443?...#Comment
+hysteria2://password@example.com:443/?sni=example.com#Comment
 ```
 
 Also supported:
 
 ```txt
 vless://uuid@example.com:443?... # Comment
+hy2://password@example.com:443/?sni=example.com # Comment
 ```
 
 The external comment after ` space # space ` is used only as a fallback when the link itself has no `#fragment`.
@@ -88,6 +90,26 @@ The converter extracts:
 - `allowinsecure`
 - `alpn`
 - `#fragment` as `remarks`
+
+## Supported Hysteria 2 Fields
+
+The converter extracts from `hysteria2://` and `hy2://` links:
+
+- `auth`
+- `address`
+- `port`, default `443`
+- `sni`
+- `insecure`
+- `pinSHA256`
+- `ech`
+- `alpn`
+- `obfs`
+- `obfs-password`
+- `#fragment` as `remarks`
+
+For Xray, HY2 links render to an outbound with `protocol: hysteria`, `settings.version = 2`, and `streamSettings.network = "hysteria"`. The recommended minimum Xray version for HY2 is `v26.3.27+`.
+URI fields `pinSHA256`, `ech`, and `alpn` are mapped to Xray TLS fields `pinnedPeerCertSha256`, `echConfigList`, and `alpn`.
+The `insecure` parameter is still parsed for URI compatibility, but the default HY2 template does not apply it: recent Xray builds removed `allowInsecure`, so `pinSHA256` should be used instead.
 
 ## Template Placeholders
 
@@ -125,13 +147,31 @@ Supported placeholders:
 - `__ALPN__`
 - `__ALPN_ARRAY__`
 
+HY2 adds:
+
+- `__AUTH__`
+- `__HY2_AUTH__`
+- `__PORT_RAW__`
+- `__PIN_SHA256__`
+- `__PINNED_PEER_CERT_SHA256__`
+- `__ECH__`
+- `__ECH_CONFIG_LIST__`
+- `__HY2_ALPN_ARRAY__`
+- `__OBFS__`
+- `__OBFS_PASSWORD__`
+- `__HY2_HYSTERIA_SETTINGS__`
+- `__HY2_TLS_SETTINGS__`
+- `__HY2_UDPMASKS__`
+- `__HY2_STREAM_SETTINGS__`
+
 ## Typed Substitution
 
 If a template value is exactly one placeholder, typed substitution is used:
 
 - `__PORT__` becomes a number.
 - `__ALLOW_INSECURE_BOOL__` becomes a boolean.
-- `__ALPN_ARRAY__` becomes an array of strings.
+- `__ALPN_ARRAY__` and `__HY2_ALPN_ARRAY__` become arrays of strings.
+- `__HY2_STREAM_SETTINGS__`, `__HY2_HYSTERIA_SETTINGS__`, `__HY2_TLS_SETTINGS__`, and `__HY2_UDPMASKS__` become JSON objects or arrays.
 
 If a placeholder is embedded in a larger string, substitution is textual.
 
@@ -159,17 +199,20 @@ Result:
 
 ## Default Template
 
-The package ships a seed template:
+The package ships seed templates:
 
 - `/usr/share/tproxy-manager/watchdog-outbound.template.jsonc`
+- `/usr/share/tproxy-manager/watchdog-hysteria-outbound.template.jsonc`
 
 During first install it is copied to:
 
 - `/etc/tproxy-manager/watchdog-outbound.template.jsonc`
+- `/etc/tproxy-manager/watchdog-hysteria-outbound.template.jsonc`
 
 The default template includes:
 
 - Main `vless` outbound with `tag: proxy`.
+- Main `hysteria` outbound with `tag: proxy` in the HY2 template.
 - `freedom` outbound with `tag: direct`.
 - `blackhole` outbound with `tag: block`.
 

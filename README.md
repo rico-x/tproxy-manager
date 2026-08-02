@@ -7,7 +7,7 @@
 
 ![Главная панель](docs/screenshots/placeholder-dashboard.png)
 
-TPROXY Manager — это LuCI-панель и набор системных скриптов для OpenWrt. Проект помогает управлять прозрачным перехватом трафика через `nftables`, списками обхода, конфигами Xray/Mihomo, GEO-базами и автоматическим переключением VLESS outbound через Watchdog.
+TPROXY Manager — это LuCI-панель и набор системных скриптов для OpenWrt. Проект помогает управлять прозрачным перехватом трафика через `nftables`, списками обхода, конфигами Xray/Mihomo, GEO-базами и автоматическим переключением proxy outbound через Watchdog.
 
 Проект ориентирован на роутер, где proxy daemon уже установлен отдельно. Это может быть Xray, Mihomo или другой сервис, который умеет работать с подготовленными конфигами и списками.
 
@@ -19,16 +19,16 @@ TPROXY Manager — это LuCI-панель и набор системных с�
 - редакторы JSON/JSONC и YAML с серверной проверкой перед сохранением;
 - загрузка `geoip.dat` и `geosite.dat` из настраиваемых источников;
 - cron-обновление GEO-баз;
-- встроенный `vless2json.sh` для генерации outbound из VLESS-ссылок;
+- встроенный `vless2json.sh` для генерации outbound из VLESS и Hysteria 2 ссылок;
 - Watchdog для подписок, массовой проверки ссылок, исключения нерабочих узлов и автоматической ротации;
-- расшаривание итогового списка VLESS-ссылок роутера для клиентов v2RayTun, Happ, Shadowrocket, v2Box и V2rayNG;
+- расшаривание итогового списка proxy-ссылок роутера для клиентов v2RayTun, Happ, Shadowrocket, v2Box и V2rayNG;
 - Happ-подписки с обычными `https://` URL, encrypted `happ://crypt*` URL и JSON-ответами Xray-like;
-- batch-проверка VLESS-ссылок одним test-instance с отдельными outbound-тегами и SOCKS-портами;
+- batch-проверка proxy-ссылок одним test-instance с отдельными outbound-тегами и SOCKS-портами;
 - режим выбора активной ссылки `по порядку`, `случайно` или `самый быстрый`;
 - сборка пакетов без OpenWrt SDK: `.ipk` для OpenWrt 24.10 и `.apk` для OpenWrt 25.12.
 
 Низкоуровневая документация по TPROXY-движку: [docs/tproxy-doc.md](docs/tproxy-doc.md).  
-Документация по встроенному VLESS-конвертеру: [docs/vless2json.md](docs/vless2json.md).
+Документация по встроенному конвертеру ссылок: [docs/vless2json.md](docs/vless2json.md).
 
 ## Установка
 
@@ -217,7 +217,9 @@ uci commit xray
 - редактор `*.json` в `/etc/xray`;
 - создание и удаление JSON-файлов;
 - JSONC-валидация перед сохранением;
-- проверка всей конфигурации через `xray -test -format json -confdir /etc/xray`.
+- проверка всей конфигурации через `xray -test -format json -confdir /etc/xray`;
+- отображение текущей версии Xray, latest stable из GitHub Releases и архива под архитектуру роутера;
+- обновление Xray до выбранной версии или откат на предыдущий бинарь с проверкой `SHA2-256`.
 
 Лог последней проверки:
 
@@ -315,7 +317,7 @@ Watchdog — это отдельная вкладка и отдельный се
 /usr/bin/tproxy-manager-watchdog.sh
 ```
 
-Он проверяет текущий proxy через `CHECK_URL`. Если проверка несколько раз подряд завершается ошибкой, Watchdog выбирает другую VLESS-ссылку, проверяет её отдельным test-instance, генерирует outbound и перезапускает указанный сервис.
+Он проверяет текущий proxy через `CHECK_URL`. Если проверка несколько раз подряд завершается ошибкой, Watchdog выбирает другую proxy-ссылку, проверяет её отдельным test-instance, генерирует outbound и перезапускает указанный сервис.
 
 В строке состояния Watchdog показывает:
 
@@ -327,7 +329,7 @@ Watchdog — это отдельная вкладка и отдельный се
 
 Основной сценарий:
 
-1. Заполните список VLESS-ссылок.
+1. Заполните список proxy-ссылок.
 2. Если используете подписки, настройте их в блоке `Подписки`.
 3. Нажмите `Проверить все ссылки`.
 4. Убедитесь, что хотя бы часть ссылок имеет статус `OK`.
@@ -361,19 +363,19 @@ Watchdog умеет обновлять список proxy из подписок 
 - количество полученных ссылок;
 - действия `Обновить`, `Ред.`, `Удалить`.
 
-У каждой подписки есть собственный таймер обновления. При обновлении Watchdog получает список VLESS-ссылок, обновляет базу подписок и синхронизирует итоговый `watchdog.links`. Ручные `local`-ссылки при этом не удаляются.
+У каждой подписки есть собственный таймер обновления. При обновлении Watchdog получает список proxy-ссылок, обновляет базу подписок и синхронизирует итоговый `watchdog.links`. Ручные `local`-ссылки при этом не удаляются.
 
 Ответ Happ-подписки может быть:
 
-- обычным текстом со строками `vless://`;
-- base64-текстом со строками `vless://`;
+- обычным текстом со строками `vless://`, `hysteria2://` или `hy2://`;
+- base64-текстом со строками `vless://`, `hysteria2://` или `hy2://`;
 - JSON-массивом Xray-like конфигов с `outbounds`.
 
-Из JSON-ответов автоматически извлекаются только `vless` outbounds. Остальные протоколы игнорируются, чтобы общий список Watchdog оставался совместимым с текущей проверкой и ротацией VLESS.
+Из JSON-ответов автоматически извлекаются `vless` и `hysteria` outbounds, которые превращаются в обычные ссылки для общего списка Watchdog.
 
 Когда сервис Watchdog запущен, он периодически вызывает обновление подписок и фоновую проверку ссылок по настроенным таймерам. Ошибка обновления подписки не затирает текущий рабочий список ссылок.
 
-В таблице VLESS-ссылок первый столбец показывает источник:
+В таблице proxy-ссылок первый столбец показывает источник:
 
 - `local` — ссылка добавлена вручную;
 - `happ N` — ссылка пришла из Happ-подписки с номером `N`;
@@ -395,20 +397,20 @@ JSON-ответы Happ-подписок разбираются автомати�
 
 Формируются две универсальные ссылки:
 
-- `plain` — обычный текст, одна `vless://` ссылка на строку;
+- `plain` — обычный текст, одна proxy-ссылка на строку;
 - `base64` — base64 от такого же списка.
 
 Рекомендуемый формат:
 
 - `base64` — для v2RayTun, Shadowrocket, v2Box и V2rayNG;
-- `plain` — для Happ и клиентов, которые принимают raw-список VLESS-ссылок.
+- `plain` — для Happ и клиентов, которые принимают raw-список proxy-ссылок.
 
 Расшаривание выключено по умолчанию. После включения URL являются публичными: любое устройство, которому известна ссылка, сможет скачать экспортируемый список proxy.
 
 Режимы выбора ссылок:
 
-- `Все ссылки` — экспортируются все валидные VLESS-ссылки из текущего `watchdog.links`;
-- `Выбранные ссылки` — в таблице VLESS появляется активный столбец `В подписке`, где можно отметить конкретные строки.
+- `Все ссылки` — экспортируются все валидные proxy-ссылки из текущего `watchdog.links`;
+- `Выбранные ссылки` — в таблице proxy-ссылок появляется активный столбец `В подписке`, где можно отметить конкретные строки.
 
 Исключенные из ротации строки не публикуются, потому что они не входят в текущий рабочий `watchdog.links`. Статус живости `OK/Error` сам по себе не фильтрует экспорт: если нужна фильтрация, используйте выборочный режим.
 
@@ -479,9 +481,9 @@ happ://crypt5/...
 - timeout запроса;
 - Happ headers: `User-Agent`, `X-HWID`, `X-Device-OS`, `X-Device-Model`, `X-Ver-OS`, `X-Real-IP`, `X-Forwarded-For` и другие.
 
-После сохранения нажмите `Обновить` у конкретной подписки или `Обновить все подписки`. Если ответ содержит VLESS-ссылки напрямую, в base64 или внутри JSON `outbounds`, они будут добавлены в `watchdog.links` и появятся в таблице proxy.
+После сохранения нажмите `Обновить` у конкретной подписки или `Обновить все подписки`. Если ответ содержит VLESS/HY2-ссылки напрямую, в base64 или внутри JSON `outbounds`, они будут добавлены в `watchdog.links` и появятся в таблице proxy.
 
-### Список VLESS-ссылок
+### Список proxy-ссылок
 
 ![Watchdog links](docs/screenshots/placeholder-watchdog-links.png)
 
@@ -496,11 +498,14 @@ happ://crypt5/...
 ```txt
 vless://...#Комментарий
 vless://... # внешний комментарий
+hysteria2://...#Комментарий
+hy2://... # внешний комментарий
 ```
 
 В таблице показываются:
 
 - источник ссылки: `local`, `happ N` или `json N`;
+- протокол: `VLESS` или `HY2`;
 - комментарий;
 - ссылка без комментария;
 - статус `OK / Error / Не проверялась`;
@@ -554,7 +559,7 @@ watchdog_batch_check_port_start=10882
 /etc/tproxy-manager/watchdog-outbound.template.jsonc
 ```
 
-Watchdog не хранит outbound внутри shell-скрипта. Шаблон редактируется во вкладке и передаётся встроенному конвертеру:
+Watchdog не хранит outbound внутри shell-скрипта. Шаблон редактируется во вкладке и передаётся встроенному конвертеру. Для Hysteria 2 используются отдельные HY2-шаблоны, которые выбираются автоматически по схеме ссылки:
 
 ```sh
 vless2json.sh -r LINKS_FILE -t TEMPLATE_FILE
@@ -566,7 +571,7 @@ vless2json.sh -r LINKS_FILE -t TEMPLATE_FILE
 /usr/bin/vless2json.sh
 ```
 
-Описание плейсхолдеров шаблона: [docs/vless2json.md](docs/vless2json.md).
+Описание плейсхолдеров VLESS/HY2-шаблонов: [docs/vless2json.md](docs/vless2json.md).
 
 ### Test-template
 
@@ -654,14 +659,18 @@ Batch-template получает три плейсхолдера:
 | Watchdog init.d | `/etc/init.d/tproxy-manager-watchdog` |
 | Watchdog runtime | `/usr/bin/tproxy-manager-watchdog.sh` |
 | Watchdog subscriptions | `/usr/bin/tproxy-manager-subscriptions.lua` |
+| Xray version helper | `/usr/bin/tproxy-manager-xray-version.lua` |
 | Watchdog internal libs | `/usr/libexec/tproxy-manager/watchdog/*` |
-| VLESS-конвертер | `/usr/bin/vless2json.sh` |
+| Конвертер ссылок | `/usr/bin/vless2json.sh` |
 | GEO updater | `/usr/bin/tproxy-manager-geo-update.sh` |
 | Пользовательские списки | `/etc/tproxy-manager` |
 | Watchdog subscriptions DB | `/etc/tproxy-manager/watchdog-subscriptions.json` |
 | Профиль расшаривания Watchdog | `/etc/tproxy-manager/watchdog-share.json` |
 | Watchdog links | `/etc/tproxy-manager/watchdog.links` |
 | Watchdog batch-template | `/etc/tproxy-manager/watchdog-batch-test-config.template.jsonc` |
+| Watchdog HY2 outbound-template | `/etc/tproxy-manager/watchdog-hysteria-outbound.template.jsonc` |
+| Watchdog HY2 test-template | `/etc/tproxy-manager/watchdog-hysteria-test-config.template.jsonc` |
+| Watchdog HY2 batch-template | `/etc/tproxy-manager/watchdog-hysteria-batch-test-config.template.jsonc` |
 | GEO datadir | `/usr/share/tproxy-manager` |
 | Xray configs | `/etc/xray` |
 | Mihomo configs | `/etc/mihomo` |
