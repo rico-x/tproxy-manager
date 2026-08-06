@@ -810,6 +810,8 @@ local function render(ctx)
     local text = http.formvalue("watchdog_template_text") or ""
     if path == "" then
       set_err(_("Template file path is required."))
+    elseif not utils.is_abs_path(path) then
+      set_err(_("Template file path must be absolute."))
     elseif not helpers.validate_template_jsonc_text(text) then
       set_err(_("Invalid template JSON/JSONC."))
     else
@@ -829,6 +831,8 @@ local function render(ctx)
     local text = http.formvalue("watchdog_test_template_text") or ""
     if path == "" then
       set_err(_("Test template file path is required."))
+    elseif not utils.is_abs_path(path) then
+      set_err(_("Test template file path must be absolute."))
     elseif not helpers.validate_template_jsonc_text(text) then
       set_err(_("Invalid template JSON/JSONC."))
     else
@@ -848,6 +852,8 @@ local function render(ctx)
     local ok, bad_line = helpers.validate_links_text(text)
     if path == "" then
       set_err(_("LINKS_FILE path is required."))
+    elseif not utils.is_abs_path(path) then
+      set_err(_("LINKS_FILE path must be absolute."))
     elseif not ok then
       set_err(_("Invalid line in LINKS_FILE: ") .. tostring(bad_line))
     else
@@ -1185,7 +1191,7 @@ local function render(ctx)
   <label>%s</label>
   <div class="inline-row" style="gap:.4rem">
     <input id="happ_capture_url" type="text" readonly value="%s" style="width:100%%" onclick="this.select()">
-    <button type="button" class="cbi-button cbi-button-action" title="%s" style="min-width:2.4rem;padding-left:.45rem;padding-right:.45rem" onclick="var e=document.getElementById('happ_capture_url');e.select();if(navigator.clipboard){navigator.clipboard.writeText(e.value);}else{document.execCommand('copy');}">💾</button>
+    <button type="button" class="cbi-button cbi-button-action" title="%s" style="min-width:2.4rem;padding-left:.45rem;padding-right:.45rem" onclick="var e=document.getElementById('happ_capture_url');e.select();if(navigator.clipboard){navigator.clipboard.writeText(e.value);}else{document.execCommand('copy');}">📋</button>
   </div>
 </div>
 <div style="margin-top:.6rem">
@@ -1558,11 +1564,11 @@ local function render(ctx)
   <tbody>
     <tr>
       <td>plain</td>
-      <td><div class="wd-share-url"><input id="share_url_plain" type="text" readonly value="%s" onclick="this.select()"><button type="button" class="cbi-button cbi-button-action" title="%s" onclick="var e=document.getElementById('share_url_plain');e.select();if(navigator.clipboard){navigator.clipboard.writeText(e.value);}else{document.execCommand('copy');}">💾</button></div></td>
+      <td><div class="wd-share-url"><input id="share_url_plain" type="text" readonly value="%s" onclick="this.select()"><button type="button" class="cbi-button cbi-button-action" title="%s" onclick="var e=document.getElementById('share_url_plain');e.select();if(navigator.clipboard){navigator.clipboard.writeText(e.value);}else{document.execCommand('copy');}">📋</button></div></td>
     </tr>
     <tr>
       <td>base64</td>
-      <td><div class="wd-share-url"><input id="share_url_base64" type="text" readonly value="%s" onclick="this.select()"><button type="button" class="cbi-button cbi-button-action" title="%s" onclick="var e=document.getElementById('share_url_base64');e.select();if(navigator.clipboard){navigator.clipboard.writeText(e.value);}else{document.execCommand('copy');}">💾</button></div></td>
+      <td><div class="wd-share-url"><input id="share_url_base64" type="text" readonly value="%s" onclick="this.select()"><button type="button" class="cbi-button cbi-button-action" title="%s" onclick="var e=document.getElementById('share_url_base64');e.select();if(navigator.clipboard){navigator.clipboard.writeText(e.value);}else{document.execCommand('copy');}">📋</button></div></td>
     </tr>
   </tbody>
 </table>
@@ -1628,11 +1634,15 @@ local function render(ctx)
       <label>%s</label><input type="number" min="1" name="watchdog_max_time" value="%s">
       <label>%s</label><input type="text" name="watchdog_outbound_file" value="%s">
       <label>%s</label><input type="text" name="watchdog_vless2json" value="%s">
+      <label>%s</label><input type="text" name="watchdog_proxy2mihomo" value="%s">
+      <label>%s</label><input type="text" name="watchdog_proxy2singbox" value="%s">
       <label>%s</label><input type="text" name="watchdog_service_path" value="%s">
       <label>%s</label><input type="text" value="restart" readonly>
       <label>%s</label><input type="text" name="watchdog_test_command" value="%s">
       <label>%s</label><input type="text" name="watchdog_hysteria_template_file" value="%s">
       <label>%s</label><input type="text" name="watchdog_hysteria_test_template_file" value="%s">
+      <label>%s</label><input type="text" name="watchdog_mihomo_test_template_file" value="%s">
+      <label>%s</label><input type="text" name="watchdog_singbox_test_template_file" value="%s">
       <label>%s</label>
       <select name="watchdog_selection_mode">
         <option value="ordered"%s>%s</option>
@@ -1648,6 +1658,8 @@ local function render(ctx)
       <label>%s</label><input type="checkbox" name="watchdog_batch_check_enabled" value="1" %s>
       <label>%s</label><input type="text" name="watchdog_batch_test_template_file" value="%s">
       <label>%s</label><input type="text" name="watchdog_hysteria_batch_test_template_file" value="%s">
+      <label>%s</label><input type="text" name="watchdog_mihomo_batch_test_template_file" value="%s">
+      <label>%s</label><input type="text" name="watchdog_singbox_batch_test_template_file" value="%s">
       <label>%s</label><input type="number" min="1" max="65535" name="watchdog_batch_check_port_start" value="%s">
       <label>%s</label><input type="number" min="1" name="watchdog_batch_check_batch_size" value="%s">
       <label>%s</label><input type="number" min="1" name="watchdog_batch_check_concurrency" value="%s">
@@ -1679,6 +1691,10 @@ local function render(ctx)
         pcdata(getu("watchdog_outbound_file", "/etc/xray/04_outbounds.json")),
         pcdata(_("Link converter")),
         pcdata(getu("watchdog_vless2json", "/usr/bin/vless2json.sh")),
+        pcdata(_("Mihomo converter")),
+        pcdata(getu("watchdog_proxy2mihomo", "/usr/bin/proxy2mihomo.lua")),
+        pcdata(_("sing-box converter")),
+        pcdata(getu("watchdog_proxy2singbox", "/usr/bin/proxy2singbox.lua")),
         pcdata(_("Managed service")),
         pcdata(getu("watchdog_service_path", "/etc/init.d/xray")),
         pcdata(_("Restart command")),
@@ -1688,6 +1704,10 @@ local function render(ctx)
         pcdata(getu("watchdog_hysteria_template_file", "/etc/tproxy-manager/watchdog-hysteria-outbound.template.jsonc")),
         pcdata(_("Hysteria test template")),
         pcdata(getu("watchdog_hysteria_test_template_file", "/etc/tproxy-manager/watchdog-hysteria-test-config.template.jsonc")),
+        pcdata(_("Mihomo test template")),
+        pcdata(getu("watchdog_mihomo_test_template_file", "/etc/tproxy-manager/watchdog-mihomo-test-config.template.yaml")),
+        pcdata(_("sing-box test template")),
+        pcdata(getu("watchdog_singbox_test_template_file", "/etc/tproxy-manager/watchdog-singbox-test-config.template.jsonc")),
         pcdata(_("Selection mode")),
         getu("watchdog_selection_mode", "random") == "ordered" and " selected" or "",
         pcdata(_("ordered")),
@@ -1713,6 +1733,10 @@ local function render(ctx)
         pcdata(getu("watchdog_batch_test_template_file", "/etc/tproxy-manager/watchdog-batch-test-config.template.jsonc")),
         pcdata(_("Hysteria batch test template")),
         pcdata(getu("watchdog_hysteria_batch_test_template_file", "/etc/tproxy-manager/watchdog-hysteria-batch-test-config.template.jsonc")),
+        pcdata(_("Mihomo batch test template")),
+        pcdata(getu("watchdog_mihomo_batch_test_template_file", "/etc/tproxy-manager/watchdog-mihomo-batch-test-config.template.yaml")),
+        pcdata(_("sing-box batch test template")),
+        pcdata(getu("watchdog_singbox_batch_test_template_file", "/etc/tproxy-manager/watchdog-singbox-batch-test-config.template.jsonc")),
         pcdata(_("Batch start port")),
         pcdata(getu("watchdog_batch_check_port_start", "10882")),
         pcdata(_("Batch size")),
@@ -1888,8 +1912,26 @@ local function render(ctx)
       badge.textContent = ']] .. pcdata(_("Template JSONC is valid")) .. [[';
       badge.style.color = '#16a34a';
     } catch(e) {
-      badge.textContent = ']] .. pcdata(_("JSONC error: ")) .. [[' + e.message;
+      badge.textContent = '';
       badge.style.color = '#dc2626';
+      badge.appendChild(document.createTextNode(']] .. pcdata(_("JSONC error: ")) .. [[' + e.message + ' '));
+      var m = String(e.message || '').match(/position (\d+)/);
+      if (m) {
+        var pos = parseInt(m[1], 10);
+        var jump = document.createElement('a');
+        jump.href = '#';
+        jump.textContent = ']] .. pcdata(_("jump to error")) .. [[';
+        jump.onclick = function(ev){
+          ev.preventDefault();
+          var p = Math.min(pos, ta.value.length);
+          ta.focus();
+          ta.setSelectionRange(p, Math.min(p + 1, ta.value.length));
+          var before = ta.value.slice(0, p), line = before.split('\n').length;
+          var lh = parseFloat(getComputedStyle(ta).lineHeight) || 18;
+          ta.scrollTop = Math.max(0, (line - 3) * lh);
+        };
+        badge.appendChild(jump);
+      }
     }
   }
   ta.addEventListener('input', debounce(validate, 200));
@@ -1914,9 +1956,29 @@ local function render(ctx)
     local sec = m:section(SimpleSection)
     local dv = sec:option(DummyValue, "_watchdog_log")
     dv.rawhtml = true
+    -- The "check start: proxy=... url=..." line is written on EVERY tick of
+    -- the background check (every watchdog_interval, usually 60s) and makes
+    -- up 90%+ of the log, drowning out the events that actually matter
+    -- (batch-check results, subscription errors, etc.) in repeated noise.
+    -- Visually de-emphasize these heartbeat lines instead of hiding them
+    -- outright — the history stays available, but the eye can pick out what
+    -- actually matters more easily.
+    local function render_log_lines(text)
+      local out = {}
+      for line in (text .. "\n"):gmatch("([^\n]*)\n") do
+        if line:find("check start: proxy=", 1, true) then
+          out[#out + 1] = "<span class='wd-log-heartbeat'>" .. pcdata(line) .. "</span>"
+        elseif line ~= "" then
+          out[#out + 1] = pcdata(line)
+        else
+          out[#out + 1] = ""
+        end
+      end
+      return table.concat(out, "\n")
+    end
     function dv.cfgvalue()
-      return [[<details class="wd-details"><summary><strong>]] .. pcdata(_("Watchdog log")) .. [[</strong></summary><div class="box editor-wrap" style="margin-top:.5rem"><div style="margin-bottom:.5rem"><button class="cbi-button cbi-button-remove" name="_watchdog_clear_log" value="1">]] .. pcdata(_("Clear log")) .. [[</button></div><pre style="white-space:pre-wrap;max-height:30rem;overflow:auto">]] ..
-             pcdata(helpers.watchdog_log()) .. [[</pre></div></details>]]
+      return [[<details class="wd-details"><summary><strong>]] .. pcdata(_("Watchdog log")) .. [[</strong></summary><div class="box editor-wrap" style="margin-top:.5rem"><div style="margin-bottom:.5rem"><button class="cbi-button cbi-button-remove" name="_watchdog_clear_log" value="1">]] .. pcdata(_("Clear log")) .. [[</button></div><style>.wd-log-heartbeat{color:#9ca3af}</style><pre style="white-space:pre-wrap;max-height:30rem;overflow:auto">]] ..
+             render_log_lines(helpers.watchdog_log()) .. [[</pre></div></details>]]
     end
   end
 end

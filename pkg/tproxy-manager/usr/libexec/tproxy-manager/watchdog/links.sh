@@ -72,9 +72,14 @@ build_links_index() {
         esac
         split_link_comment "$line"
         valid_link "$SPLIT_LINK" || continue
-        hash="$(link_hash "$SPLIT_LINK")"
+        # Табы вырезаем из ОБОИХ полей ДО хеширования: иначе таб внутри самой
+        # ссылки сдвигает колонки TSV-строки и ломает hash/comment/lineno у
+        # всех потребителей build_links_index (batch.sh, loop_status.sh и т.п.),
+        # а хеш перестаёт соответствовать фактически используемой ссылке.
+        link="$(printf '%s' "$SPLIT_LINK" | tr '\t' ' ')"
         comment="$(printf '%s' "$SPLIT_COMMENT" | tr '\t' ' ')"
-        printf '%s\t%s\t%s\t%s\n' "$hash" "$SPLIT_LINK" "$comment" "$lineno"
+        hash="$(link_hash "$link")"
+        printf '%s\t%s\t%s\t%s\n' "$hash" "$link" "$comment" "$lineno"
     done < "$LINKS_FILE"
 }
 

@@ -1209,7 +1209,7 @@ msgid "requires Xray v26.3.27+"
 msgstr "требуется Xray v26.3.27+"
 
 msgid "Refresh versions"
-msgstr "Обновить версии"
+msgstr "Проверить обновления"
 
 msgid "Update Xray to latest stable version?"
 msgstr "Обновить Xray до последней stable-версии?"
@@ -1261,3 +1261,162 @@ msgstr "Hysteria 2 batch-шаблон проверки"
 
 msgid "Choose a VLESS or Hysteria 2 template, edit it and save it back to its own file. The active path is also stored in UCI settings."
 msgstr "Выберите VLESS или Hysteria 2 шаблон, отредактируйте его и сохраните обратно в свой файл. Активный путь также сохраняется в UCI-настройках."
+
+msgid "Active proxy engine"
+msgstr "Активное proxy-ядро"
+
+msgid "Activate"
+msgstr "Активировать"
+
+msgid "installed"
+msgstr "установлен"
+
+msgid "not installed"
+msgstr "не установлен"
+
+msgid "Selected proxy engine binary is not installed."
+msgstr "Бинарь выбранного proxy-ядра не установлен."
+
+msgid "Proxy engine activated: %s"
+msgstr "Proxy-ядро активировано: %s"
+
+msgid "Mihomo version"
+msgstr "Версия Mihomo"
+
+msgid "Mihomo version information refreshed."
+msgstr "Информация о версиях Mihomo обновлена."
+
+msgid "Failed to refresh Mihomo version information."
+msgstr "Не удалось обновить информацию о версиях Mihomo."
+
+msgid "Latest Mihomo version is not available."
+msgstr "Актуальная версия Mihomo недоступна."
+
+msgid "Mihomo updated."
+msgstr "Mihomo обновлён."
+
+msgid "Mihomo update failed."
+msgstr "Обновление Mihomo завершилось ошибкой."
+
+msgid "Select Mihomo version to install."
+msgstr "Выберите версию Mihomo для установки."
+
+msgid "Mihomo version installed."
+msgstr "Версия Mihomo установлена."
+
+msgid "Mihomo install failed."
+msgstr "Установка Mihomo завершилась ошибкой."
+
+msgid "Mihomo rollback completed."
+msgstr "Откат Mihomo выполнен."
+
+msgid "Mihomo rollback failed."
+msgstr "Откат Mihomo завершился ошибкой."
+
+msgid "Update Mihomo to latest stable version?"
+msgstr "Обновить Mihomo до последней stable-версии?"
+
+msgid "Rollback Mihomo to previous binary?"
+msgstr "Откатить Mihomo на предыдущий бинарь?"
+
+msgid "Install selected Mihomo version?"
+msgstr "Установить выбранную версию Mihomo?"
+
+msgid "Generate managed Mihomo config from Watchdog links"
+msgstr "Сгенерировать managed-конфиг Mihomo из ссылок Watchdog"
+
+msgid "Mihomo managed config generated: "
+msgstr "Managed-конфиг Mihomo сгенерирован: "
+
+msgid "Mihomo converter"
+msgstr "Конвертер Mihomo"
+
+msgid "Mihomo test template"
+msgstr "Тестовый шаблон Mihomo"
+
+msgid "Mihomo batch test template"
+msgstr "Batch-шаблон проверки Mihomo"
+
+msgid "sing-box service status and controls"
+msgstr "Статус сервиса sing-box и управление"
+
+msgid "sing-box version"
+msgstr "Версия sing-box"
+
+msgid "sing-box version information refreshed."
+msgstr "Информация о версиях sing-box обновлена."
+
+msgid "Failed to refresh sing-box version information."
+msgstr "Не удалось обновить информацию о версиях sing-box."
+
+msgid "Latest sing-box version is not available."
+msgstr "Актуальная версия sing-box недоступна."
+
+msgid "sing-box updated."
+msgstr "sing-box обновлён."
+
+msgid "sing-box update failed."
+msgstr "Обновление sing-box завершилось ошибкой."
+
+msgid "Select sing-box version to install."
+msgstr "Выберите версию sing-box для установки."
+
+msgid "sing-box version installed."
+msgstr "Версия sing-box установлена."
+
+msgid "sing-box install failed."
+msgstr "Установка sing-box завершилась ошибкой."
+
+msgid "sing-box rollback completed."
+msgstr "Откат sing-box выполнен."
+
+msgid "sing-box rollback failed."
+msgstr "Откат sing-box завершился ошибкой."
+
+msgid "Update sing-box to latest stable version?"
+msgstr "Обновить sing-box до последней stable-версии?"
+
+msgid "Rollback sing-box to previous binary?"
+msgstr "Откатить sing-box на предыдущий бинарь?"
+
+msgid "Install selected sing-box version?"
+msgstr "Установить выбранную версию sing-box?"
+
+msgid "sing-box (JSON files in /etc/sing-box)"
+msgstr "sing-box (JSON-файлы в /etc/sing-box)"
+
+msgid "Invalid sing-box configuration. File was not saved."
+msgstr "Некорректная конфигурация sing-box. Файл не сохранён."
+
+msgid "sing-box config saved: "
+msgstr "Конфиг sing-box сохранён: "
+
+msgid "sing-box converter"
+msgstr "Конвертер sing-box"
+
+msgid "sing-box test template"
+msgstr "Тестовый шаблон sing-box"
+
+msgid "sing-box batch test template"
+msgstr "Batch-шаблон проверки sing-box"
+
+msgid "Destination path (dest) must be an absolute path without \"..\"."
+msgstr "Путь назначения (dest) должен быть абсолютным путём без «..»."
+
+msgid "Source URL must start with http:// or https://."
+msgstr "URL источника должен начинаться с http:// или https://."
+
+msgid "Invalid list_file: not one of the configured list paths."
+msgstr "Некорректный list_file: путь не входит в число настроенных."
+
+msgid "Template file path must be absolute."
+msgstr "Путь к файлу шаблона должен быть абсолютным."
+
+msgid "Test template file path must be absolute."
+msgstr "Путь к файлу тестового шаблона должен быть абсолютным."
+
+msgid "LINKS_FILE path must be absolute."
+msgstr "Путь LINKS_FILE должен быть абсолютным."
+
+msgid "jump to error"
+msgstr "перейти к ошибке"

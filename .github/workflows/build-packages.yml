@@ -12,9 +12,7 @@ on:
         type: string
 
 permissions:
-  contents: write
-  pages: write
-  id-token: write
+  contents: read
 
 env:
   PKG_DIR: pkg/tproxy-manager
@@ -33,7 +31,7 @@ jobs:
       release_tag: ${{ steps.meta.outputs.release_tag }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
@@ -85,7 +83,7 @@ jobs:
             package_ext: "apk"
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install base tools
         shell: bash
@@ -105,9 +103,19 @@ jobs:
       - name: Prepare ipkg-build
         if: matrix.series == '24.10'
         shell: bash
+        env:
+          # Пин на конкретный коммит openwrt/openwrt (последний, менявший
+          # scripts/ipkg-build на openwrt-24.10), а не на "живую" ветку —
+          # плюс проверка sha256 скачанного файла. Раньше скрипт, который
+          # выполняется в одном job с уже записанным приватным ключом
+          # подписи (см. шаг "Prepare feed signing keys" ниже), брался с
+          # изменяемой ветки без какой-либо проверки.
+          IPKG_BUILD_COMMIT: "49e8f532989c342fff44c1c558f8182585673833"
+          IPKG_BUILD_SHA256: "60714afe9b93fd0d3ecfd2fcef7839928b1a99e826ae30e2e3c0e24f1efde474"
         run: |
           set -euo pipefail
-          curl -fsSL https://raw.githubusercontent.com/openwrt/openwrt/openwrt-24.10/scripts/ipkg-build -o ipkg-build
+          curl -fsSL "https://raw.githubusercontent.com/openwrt/openwrt/${IPKG_BUILD_COMMIT}/scripts/ipkg-build" -o ipkg-build
+          echo "${IPKG_BUILD_SHA256}  ipkg-build" | sha256sum -c -
           chmod 0755 ipkg-build
           ./ipkg-build -h >/dev/null || true
 
@@ -179,13 +187,22 @@ jobs:
           fi
 
           if [[ -n "${USIGN_SECRET:-}" ]]; then
-            curl -fsSL https://github.com/openwrt/usign/archive/refs/heads/master.tar.gz -o usign.tar.gz
+            # Пин на конкретный коммит openwrt/usign (у репозитория нет тегов
+            # релизов) вместо изменяемой ветки master, плюс проверка sha256
+            # архива — иначе компрометация чужого master-репозитория дала бы
+            # произвольный код выполнения в этом же job, где уже лежит
+            # приватный ключ подписи фида ($USIGN_SECRET, распакован выше).
+            USIGN_COMMIT="c4c72b1b07945ee192361dc751291a7c98d6adcd"
+            USIGN_TARBALL_SHA256="d647f4978f56a159fe29c6888fadb1c008d0be52168c3215338f14bc47a3ae25"
+            curl -fsSL "https://github.com/openwrt/usign/archive/${USIGN_COMMIT}.tar.gz" -o usign.tar.gz
+            echo "${USIGN_TARBALL_SHA256}  usign.tar.gz" | sha256sum -c -
             mkdir usign-src
             tar xzf usign.tar.gz -C usign-src --strip-components=1
             cmake -S usign-src -B usign-build
             cmake --build usign-build -j"$(nproc)"
             ./usign-build/usign -S -m "$FEED_OUT/Packages" -s /tmp/tproxy-manager-usign.key
           fi
+          shred -u /tmp/tproxy-manager-usign.key 2>/dev/null || rm -f /tmp/tproxy-manager-usign.key
 
       - name: Build and sign apk feed
         if: matrix.series == '25.12'
@@ -200,6 +217,7 @@ jobs:
           if [[ -f /tmp/tproxy-manager-apk.key && -f keys/tproxy-manager-apk.pem ]]; then
             cp keys/tproxy-manager-apk.pem "$FEED_OUT/keys/tproxy-manager.pem"
           fi
+          shred -u /tmp/tproxy-manager-apk.key /tmp/tproxy-manager-apk.pem 2>/dev/null || rm -f /tmp/tproxy-manager-apk.key /tmp/tproxy-manager-apk.pem
 
       - name: Write checksums
         shell: bash
@@ -219,7 +237,7 @@ jobs:
           ./scripts/render-feed-page.sh "${{ matrix.series }}" "$FEED_OUT" "$PACKAGE_FILE"
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: build-${{ matrix.series }}
           path: |
@@ -232,7 +250,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install lint and inspection tools
         shell: bash
@@ -245,6 +263,10 @@ jobs:
       - name: Make build scripts executable
         shell: bash
         run: chmod 0755 scripts/*.sh
+
+      - name: Run local smoke suite
+        shell: bash
+        run: scripts/smoke-local.sh
 
       - name: Prepare apk.static
         shell: bash
@@ -328,7 +350,7 @@ jobs:
           test ! -e pkg/tproxy-manager/www/luci-static/resources/tproxy-manager/happ-decrypt-keys.json
 
       - name: Download build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: dl
 
@@ -453,7 +475,7 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Download build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: dl
 
@@ -475,26 +497,28 @@ jobs:
             '</ul>' > site/index.html
 
       - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
         with:
           path: site
 
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
 
   release:
     if: needs.meta.outputs.create_release == '1'
     needs: [meta, smoke]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
       - name: Download build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: dl
 
@@ -525,7 +549,7 @@ jobs:
           echo "body_path=$NOTES_FILE" >> "$GITHUB_OUTPUT"
 
       - name: Create or update GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: ${{ needs.meta.outputs.release_tag }}
           target_commitish: ${{ github.sha }}

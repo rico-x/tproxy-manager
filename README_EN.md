@@ -7,19 +7,20 @@
 
 ![Dashboard](docs/screenshots/placeholder-dashboard.png)
 
-TPROXY Manager is a LuCI panel and a set of OpenWrt system scripts. It manages transparent traffic interception through `nftables`, routing lists, Xray/Mihomo configuration files, GEO databases, proxy subscriptions, and automatic outbound rotation through Watchdog.
+TPROXY Manager is a LuCI panel and a set of OpenWrt system scripts. It manages transparent traffic interception through `nftables`, routing lists, Xray/Mihomo/sing-box configuration files, GEO databases, proxy subscriptions, and automatic outbound rotation through Watchdog.
 
-The package is designed for routers where the proxy daemon is installed separately. The managed service can be Xray, Mihomo, sing-box, or another daemon that can consume generated config fragments and link lists.
+The package is designed for routers where the proxy daemon is installed separately. Three managed engines are supported: Xray, Mihomo, and sing-box. The user selects the active engine on the `TPROXY` tab, and the project applies the matching Watchdog profile while stopping inactive daemons to avoid port conflicts.
 
 Main features:
 
 - TPROXY rules and policy routing management from LuCI.
 - Port, address, and source traffic list editors.
-- Xray and Mihomo service controls.
+- Active proxy engine selection: Xray, Mihomo, or sing-box.
+- Service controls for the active engine.
 - JSON/JSONC and YAML editors with server-side validation before saving.
 - Configurable `geoip.dat` and `geosite.dat` download sources.
 - Cron-based GEO database updates.
-- Built-in `/usr/bin/vless2json.sh` converter for VLESS and Hysteria 2 links.
+- Built-in converters for generating Xray, Mihomo, and sing-box configs from VLESS and Hysteria 2 links.
 - Watchdog for subscriptions, batch link checks, dead-link exclusion, and automatic rotation.
 - Router-side subscription sharing for v2RayTun, Happ, Shadowrocket, v2Box, and V2rayNG clients.
 - Happ subscriptions with regular `https://` URLs, encrypted `happ://crypt*` URLs, and Xray-like JSON responses.
@@ -108,7 +109,7 @@ The package post-install script:
 - Creates the Watchdog shared subscription profile.
 - Creates `/etc/tproxy-manager/geo-sources.conf` if it is missing or empty.
 - Copies Watchdog templates to `/etc/tproxy-manager` if they do not exist.
-- Marks init scripts and `/usr/bin/vless2json.sh` executable.
+- Marks init scripts and helper scripts in `/usr/bin` executable.
 - Enables and starts `/etc/init.d/tproxy-manager`.
 - Does not enable or start Watchdog unless the user explicitly does it.
 
@@ -143,17 +144,18 @@ If your Xray installation has no UCI wrapper, configure an equivalent `datadir` 
 
 ![Navigation](docs/screenshots/placeholder-navigation.png)
 
-The `TPROXY` tab is always available. Additional tabs are enabled from the collapsible `Additional settings` panel.
+The `TPROXY`, `GEO updates`, and `WATCHDOG` tabs are always available. The active proxy engine tab is selected on the `TPROXY` tab through the `Active proxy engine` block.
 
 Available tabs:
 
 - `TPROXY`
-- `XRAY`
-- `MIHOMO`
+- `XRAY` when Xray is active
+- `MIHOMO` when Mihomo is active
+- `SING-BOX` when sing-box is active
 - `GEO updates`
 - `WATCHDOG`
 
-`WATCHDOG` is disabled by default.
+The default active engine is Xray. The Watchdog service is not started by default until the user enables it explicitly.
 
 If an editor contains unsaved changes, the UI warns before switching tabs.
 
@@ -165,6 +167,7 @@ The `TPROXY` tab controls transparent traffic interception and routing lists.
 
 It configures:
 
+- Active proxy engine: Xray, Mihomo, or sing-box.
 - LAN interfaces that feed intercepted traffic.
 - IPv6 support.
 - A common TPROXY port or separate TCP/UDP ports.
@@ -188,6 +191,8 @@ Main list files:
 
 The embedded editor can modify these files directly from LuCI. Source lists also support quick IP insertion from active DHCP leases.
 
+The `Active proxy engine` block shows the state of all three daemons: installed/not installed, running/stopped, and autostart enabled/disabled. Activating an engine saves the current engine profile, applies the selected profile to TPROXY and Watchdog, stops the two inactive proxy daemons, starts the selected daemon if its binary exists, and restarts `tproxy-manager` / `tproxy-manager-watchdog`.
+
 ## XRAY
 
 ![XRAY](docs/screenshots/placeholder-xray.png)
@@ -206,14 +211,33 @@ The `XRAY` tab provides basic Xray maintenance:
 
 ![MIHOMO](docs/screenshots/placeholder-mihomo.png)
 
-The `MIHOMO` tab works with YAML configs in `/etc/mihomo`.
+The `MIHOMO` tab works with the Mihomo managed config and YAML files in `/etc/mihomo`.
 
 It provides:
 
-- Service controls for `mihomo`.
+- Service controls for `tproxy-manager-mihomo`.
 - YAML editor.
 - File creation and deletion.
 - Syntax validation through the existing `mihomo` binary before saving.
+- Mihomo version manager through GitHub Releases `MetaCubeX/mihomo`.
+- Managed config generation from the shared Watchdog link list.
+
+## SING-BOX
+
+![SING-BOX](docs/screenshots/placeholder-singbox.png)
+
+The `SING-BOX` tab works with the sing-box managed config and JSON files in `/etc/sing-box`.
+
+It provides:
+
+- Service controls for `tproxy-manager-sing-box`.
+- Shared `logread` viewer.
+- `*.json` editor for `/etc/sing-box`.
+- File creation and deletion.
+- JSONC editor validation and server-side validation through `sing-box check -c <tempfile>` before saving.
+- sing-box version manager through GitHub Releases `SagerNet/sing-box`.
+- Managed runtime config `/etc/sing-box/tproxy-manager.json`.
+- Managed outbounds fragment `/etc/sing-box/tproxy-manager-outbounds.json`.
 
 ## GEO Updates
 
@@ -350,7 +374,7 @@ The result is displayed as plain text only. It is not added automatically to sub
 
 ![Watchdog links](docs/screenshots/placeholder-watchdog-links.png)
 
-`Check all links` uses batch mode: Watchdog creates one temporary test config for a chunk of links. Every link receives a unique outbound tag and a dedicated local SOCKS inbound, then `curl` checks `CHECK_URL` through the corresponding port.
+For Xray, `Check all links` uses batch mode: Watchdog creates one temporary test config for a chunk of links. Every link receives a unique outbound tag and a dedicated local SOCKS inbound, then `curl` checks `CHECK_URL` through the corresponding port. For Mihomo and sing-box, the current implementation safely falls back to individual checks.
 
 Per-link state stores:
 
@@ -381,6 +405,10 @@ Watchdog does not embed the outbound JSON in the shell script. It uses external 
 - `/etc/tproxy-manager/watchdog-hysteria-outbound.template.jsonc`
 - `/etc/tproxy-manager/watchdog-hysteria-test-config.template.jsonc`
 - `/etc/tproxy-manager/watchdog-hysteria-batch-test-config.template.jsonc`
+- `/etc/tproxy-manager/watchdog-mihomo-test-config.template.yaml`
+- `/etc/tproxy-manager/watchdog-mihomo-batch-test-config.template.yaml`
+- `/etc/tproxy-manager/watchdog-singbox-test-config.template.jsonc`
+- `/etc/tproxy-manager/watchdog-singbox-batch-test-config.template.jsonc`
 
 The default converter is:
 
@@ -401,14 +429,25 @@ Template placeholders are documented in [docs/en/vless2json.md](docs/en/vless2js
 | Watchdog runtime | `/usr/bin/tproxy-manager-watchdog.sh` |
 | Watchdog subscriptions | `/usr/bin/tproxy-manager-subscriptions.lua` |
 | Xray version helper | `/usr/bin/tproxy-manager-xray-version.lua` |
+| Mihomo version helper | `/usr/bin/tproxy-manager-mihomo-version.lua` |
+| sing-box version helper | `/usr/bin/tproxy-manager-singbox-version.lua` |
 | Watchdog libs | `/usr/libexec/tproxy-manager/watchdog/*` |
 | Link converter | `/usr/bin/vless2json.sh` |
+| Mihomo converter | `/usr/bin/proxy2mihomo.lua` |
+| sing-box converter | `/usr/bin/proxy2singbox.lua` |
 | GEO updater | `/usr/bin/tproxy-manager-geo-update.sh` |
 | Main config | `/etc/config/tproxy-manager` |
 | Watchdog links | `/etc/tproxy-manager/watchdog.links` |
 | Watchdog subscriptions DB | `/etc/tproxy-manager/watchdog-subscriptions.json` |
 | Watchdog shared subscription profile | `/etc/tproxy-manager/watchdog-share.json` |
 | GEO data directory | `/usr/share/tproxy-manager` |
+| Xray configs | `/etc/xray` |
+| Mihomo configs | `/etc/mihomo` |
+| Mihomo managed config | `/etc/mihomo/tproxy-manager.yaml` |
+| Mihomo managed provider | `/etc/mihomo/tproxy-manager-proxies.yaml` |
+| sing-box configs | `/etc/sing-box` |
+| sing-box managed config | `/etc/sing-box/tproxy-manager.json` |
+| sing-box managed outbounds | `/etc/sing-box/tproxy-manager-outbounds.json` |
 
 ## Build
 

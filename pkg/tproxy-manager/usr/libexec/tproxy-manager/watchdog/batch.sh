@@ -257,6 +257,10 @@ probe_links_batch_runtime() {
     BATCH_CHUNKS=0
 
     [ "$BATCH_CHECK_ENABLED" = "1" ] || return 1
+    if [ "$PROXY_ENGINE" != "xray" ]; then
+        log_msg "batch: для engine=$PROXY_ENGINE используется fallback на индивидуальную проверку"
+        return 1
+    fi
     [ -x "$VLESS2JSON" ] || return 1
     [ -f "$BATCH_TEST_TEMPLATE_FILE" ] || return 1
 

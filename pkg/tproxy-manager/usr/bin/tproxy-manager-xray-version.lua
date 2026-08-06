@@ -4,7 +4,7 @@ local jsonc = require "luci.jsonc"
 
 local API_URL = "https://api.github.com/repos/XTLS/Xray-core/releases?per_page=20"
 local CACHE_FILE = "/tmp/tproxy-manager-xray-releases.json"
-local BACKUP_DIR = "/etc/tproxy-manager/xray-backup"
+local BACKUP_DIR = "/tmp/tproxy-manager-xray-backup"
 local BACKUP_FILE = BACKUP_DIR .. "/xray.previous"
 local BACKUP_META = BACKUP_DIR .. "/xray.previous.version"
 local MIN_HY2_VERSION = "26.3.27"
@@ -57,12 +57,32 @@ local function ensure_dir(path)
   return exec_ok("mkdir -p " .. shellescape(path) .. " >/dev/null 2>&1")
 end
 
+local function remove_path(path)
+  return exec_ok("rm -rf " .. shellescape(path) .. " >/dev/null 2>&1")
+end
+
 local function command_output(cmd)
   local p = io.popen(cmd .. " 2>/dev/null")
   if not p then return "" end
   local out = trim(p:read("*a") or "")
   p:close()
   return out
+end
+
+local function number_output(cmd)
+  local out = command_output(cmd)
+  return tonumber(out:match("(%d+)") or "") or 0
+end
+
+local function file_size_kb(path)
+  if not file_exists(path) then return 0 end
+  return number_output("du -k " .. shellescape(path) .. " | awk '{print $1}'")
+end
+
+local function fs_available_kb(path)
+  local dir = path:match("^(.*)/[^/]+$") or path
+  local out = command_output("df -k " .. shellescape(dir) .. " | awk 'NR==2 {print $4}'")
+  return tonumber(out:match("(%d+)") or "") or 0
 end
 
 local function detect_xray_bin()
@@ -272,6 +292,64 @@ local function download_file(url, path)
   return rc == 0, out
 end
 
+local function replace_xray_binary(bin, unpacked, old_version)
+  local bin_dir = bin:match("^(.*)/[^/]+$") or "/usr/bin"
+  local needed_kb = file_size_kb(unpacked)
+  local current_kb = file_size_kb(bin)
+  local available_kb = fs_available_kb(bin_dir)
+  local reserve_kb = 1024
+
+  if needed_kb > 0 and (available_kb + current_kb) < (needed_kb + reserve_kb) then
+    return false, string.format(
+      "not enough overlay space: need %d KB, available after removing old binary %d KB",
+      needed_kb + reserve_kb,
+      available_kb + current_kb
+    )
+  end
+
+  ensure_dir(BACKUP_DIR)
+  ensure_dir(bin_dir)
+  remove_path(BACKUP_FILE)
+  remove_path(BACKUP_META)
+
+  local have_old = file_exists(bin)
+  if have_old then
+    local rc, out = exec_capture("cp " .. shellescape(bin) .. " " .. shellescape(BACKUP_FILE) ..
+      " && chmod 0755 " .. shellescape(BACKUP_FILE))
+    if rc ~= 0 then return false, "unable to create temporary backup: " .. out end
+    write_file(BACKUP_META, old_version or "")
+  end
+
+  -- Keep archives, extracted binary and rollback backup in /tmp. Overlay receives
+  -- only the final active binary, avoiding a second full-size copy in /usr/bin.
+  if have_old then remove_path(bin) end
+
+  local rc, out = exec_capture("cp " .. shellescape(unpacked) .. " " .. shellescape(bin) ..
+    " && chmod 0755 " .. shellescape(bin))
+  if rc ~= 0 then
+    remove_path(bin)
+    if have_old then
+      exec_capture("cp " .. shellescape(BACKUP_FILE) .. " " .. shellescape(bin) ..
+        " && chmod 0755 " .. shellescape(bin))
+    end
+    return false, "unable to install xray binary: " .. out
+  end
+
+  local new_version, new_raw = current_version(bin)
+  if new_version == "" then
+    remove_path(bin)
+    if have_old then
+      exec_capture("cp " .. shellescape(BACKUP_FILE) .. " " .. shellescape(bin) ..
+        " && chmod 0755 " .. shellescape(bin))
+    else
+      remove_path(bin)
+    end
+    return false, "installed xray binary is not executable: " .. tostring(new_raw)
+  end
+
+  return true, new_version
+end
+
 local function install_release(tag)
   local arch = uname_m()
   local asset = asset_for_arch(arch)
@@ -305,27 +383,14 @@ local function install_release(tag)
   end
 
   local bin = detect_xray_bin()
-  local bin_dir = bin:match("^(.*)/[^/]+$") or "/usr/bin"
-  ensure_dir(BACKUP_DIR)
-  ensure_dir(bin_dir)
   local cur_version = current_version(bin)
-  if file_exists(bin) then
-    exec_ok("cp " .. shellescape(bin) .. " " .. shellescape(BACKUP_FILE))
-    write_file(BACKUP_META, cur_version or "")
+  local replaced, replace_msg = replace_xray_binary(bin, work .. "/xray", cur_version)
+  if not replaced then
+    remove_path(work)
+    return false, replace_msg
   end
-  local tmp_bin = bin .. ".tmp." .. tostring(os.time())
-  rc, unzip_out = exec_capture("cp " .. shellescape(work .. "/xray") .. " " .. shellescape(tmp_bin) .. " && chmod 0755 " .. shellescape(tmp_bin))
-  if rc ~= 0 then
-    exec_ok("rm -rf " .. shellescape(work))
-    return false, unzip_out
-  end
-  if not os.rename(tmp_bin, bin) then
-    exec_ok("rm -f " .. shellescape(tmp_bin))
-    exec_ok("rm -rf " .. shellescape(work))
-    return false, "unable to replace xray binary"
-  end
-  local new_version = current_version(bin)
-  exec_ok("rm -rf " .. shellescape(work))
+  local new_version = replace_msg
+  remove_path(work)
   exec_ok("/etc/init.d/xray restart >/dev/null 2>&1")
   return true, "installed " .. item.tag .. " (" .. tostring(new_version) .. ")"
 end
@@ -333,17 +398,29 @@ end
 local function rollback()
   if not file_exists(BACKUP_FILE) then return false, "backup is not available" end
   local bin = detect_xray_bin()
-  local tmp = bin .. ".rollback." .. tostring(os.time())
+  local tmp = BACKUP_DIR .. "/xray.current." .. tostring(os.time())
+  ensure_dir(BACKUP_DIR)
   if file_exists(bin) then
-    exec_ok("cp " .. shellescape(bin) .. " " .. shellescape(tmp))
+    local rc, out = exec_capture("cp " .. shellescape(bin) .. " " .. shellescape(tmp) ..
+      " && chmod 0755 " .. shellescape(tmp))
+    if rc ~= 0 then return false, "unable to prepare rollback swap: " .. out end
+    remove_path(bin)
   end
-  local ok = exec_ok("cp " .. shellescape(BACKUP_FILE) .. " " .. shellescape(bin) .. " && chmod 0755 " .. shellescape(bin))
-  if not ok then
-    exec_ok("rm -f " .. shellescape(tmp))
+  local rc, out = exec_capture("cp " .. shellescape(BACKUP_FILE) .. " " .. shellescape(bin) ..
+    " && chmod 0755 " .. shellescape(bin))
+  if rc ~= 0 then
+    if file_exists(tmp) then
+      exec_capture("cp " .. shellescape(tmp) .. " " .. shellescape(bin) ..
+        " && chmod 0755 " .. shellescape(bin))
+    end
+    remove_path(tmp)
     return false, "unable to restore backup"
   end
   if file_exists(tmp) then
+    remove_path(BACKUP_FILE)
     exec_ok("mv " .. shellescape(tmp) .. " " .. shellescape(BACKUP_FILE))
+    local cur_version = current_version(BACKUP_FILE)
+    write_file(BACKUP_META, cur_version or "")
   end
   exec_ok("/etc/init.d/xray restart >/dev/null 2>&1")
   return true, "rollback completed"

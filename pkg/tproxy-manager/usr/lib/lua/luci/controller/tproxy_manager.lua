@@ -44,6 +44,23 @@ local function request_env()
     return env
 end
 
+-- const_time_eq: compares strings without an early exit on the first
+-- mismatching byte (unlike "a ~= b", which on most Lua runtimes falls
+-- through to a C-level memcmp with an early exit). This is the only
+-- authorization check for this HTTP endpoint, which is reachable without
+-- a LuCI login, so it's worth closing the timing leak of the matching
+-- token prefix length here.
+local function const_time_eq(a, b)
+    a = tostring(a or "")
+    b = tostring(b or "")
+    if #a ~= #b then return false end
+    local diff = 0
+    for i = 1, #a do
+        if a:byte(i) ~= b:byte(i) then diff = diff + 1 end
+    end
+    return diff == 0
+end
+
 local function request_body()
     if type(http.content) == "function" then
         local ok, body = pcall(http.content)
@@ -62,7 +79,7 @@ function action_happ_capture()
     if log_path == "" then log_path = "/tmp/tproxy-manager-happ-capture.log" end
 
     http.prepare_content("text/plain; charset=utf-8")
-    if not enabled or token == "" or expected == "" or token ~= expected or os.time() > until_ts then
+    if not enabled or token == "" or expected == "" or not const_time_eq(token, expected) or os.time() > until_ts then
         if http.status then http.status(403, "Forbidden") end
         http.write("capture endpoint is disabled or token expired\n")
         return

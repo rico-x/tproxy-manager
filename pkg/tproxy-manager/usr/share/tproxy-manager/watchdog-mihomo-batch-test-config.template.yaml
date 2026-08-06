@@ -1,0 +1,13 @@
+# Reference template for future Mihomo batch probe configs.
+# Current runtime falls back to individual Mihomo checks.
+allow-lan: false
+bind-address: 127.0.0.1
+mode: rule
+log-level: warning
+ipv6: true
+listeners:
+__BATCH_INBOUNDS__
+proxies:
+__BATCH_PROXIES__
+rules:
+__BATCH_RULES__

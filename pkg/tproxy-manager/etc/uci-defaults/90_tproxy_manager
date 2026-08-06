@@ -6,6 +6,8 @@ set -e
 # --- /etc/tproxy-manager: каталог и пустые файлы только если их нет ---
 mkdir -p /etc/tproxy-manager
 mkdir -p /usr/share/tproxy-manager
+mkdir -p /etc/mihomo
+mkdir -p /etc/sing-box
 for f in \
   /etc/tproxy-manager/tproxy-manager.ports \
   /etc/tproxy-manager/tproxy-manager.v4 \
@@ -58,6 +60,75 @@ if [ ! -s /etc/tproxy-manager/geo-sources.conf ]; then
 EOF
 fi
 
+if [ ! -s /etc/mihomo/tproxy-manager.yaml ]; then
+  cat > /etc/mihomo/tproxy-manager.yaml <<'EOF'
+allow-lan: false
+bind-address: 127.0.0.1
+mode: global
+log-level: warning
+ipv6: true
+mixed-port: 10808
+tproxy-port: 61219
+proxy-groups:
+  - name: TPROXY-MANAGER
+    type: select
+    proxies:
+      - DIRECT
+rules:
+  - MATCH,DIRECT
+EOF
+fi
+
+if [ ! -s /etc/mihomo/tproxy-manager-proxies.yaml ]; then
+  cat > /etc/mihomo/tproxy-manager-proxies.yaml <<'EOF'
+proxies: []
+EOF
+fi
+
+if [ ! -s /etc/sing-box/tproxy-manager.json ]; then
+  cat > /etc/sing-box/tproxy-manager.json <<'EOF'
+{
+  "log": {
+    "level": "warn"
+  },
+  "inbounds": [
+    {
+      "type": "mixed",
+      "tag": "mixed-in",
+      "listen": "127.0.0.1",
+      "listen_port": 10808
+    },
+    {
+      "type": "tproxy",
+      "tag": "tproxy-in",
+      "listen": "::",
+      "listen_port": 61219
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "direct",
+      "tag": "direct"
+    }
+  ],
+  "route": {
+    "final": "direct"
+  }
+}
+EOF
+fi
+
+if [ ! -s /etc/sing-box/tproxy-manager-outbounds.json ]; then
+  cat > /etc/sing-box/tproxy-manager-outbounds.json <<'EOF'
+[
+  {
+    "type": "direct",
+    "tag": "direct"
+  }
+]
+EOF
+fi
+
 if [ ! -e /etc/tproxy-manager/watchdog-outbound.template.jsonc ] && [ -f /usr/share/tproxy-manager/watchdog-outbound.template.jsonc ]; then
   cp /usr/share/tproxy-manager/watchdog-outbound.template.jsonc /etc/tproxy-manager/watchdog-outbound.template.jsonc
 fi
@@ -80,6 +151,22 @@ fi
 
 if [ ! -e /etc/tproxy-manager/watchdog-hysteria-batch-test-config.template.jsonc ] && [ -f /usr/share/tproxy-manager/watchdog-hysteria-batch-test-config.template.jsonc ]; then
   cp /usr/share/tproxy-manager/watchdog-hysteria-batch-test-config.template.jsonc /etc/tproxy-manager/watchdog-hysteria-batch-test-config.template.jsonc
+fi
+
+if [ ! -e /etc/tproxy-manager/watchdog-mihomo-test-config.template.yaml ] && [ -f /usr/share/tproxy-manager/watchdog-mihomo-test-config.template.yaml ]; then
+  cp /usr/share/tproxy-manager/watchdog-mihomo-test-config.template.yaml /etc/tproxy-manager/watchdog-mihomo-test-config.template.yaml
+fi
+
+if [ ! -e /etc/tproxy-manager/watchdog-mihomo-batch-test-config.template.yaml ] && [ -f /usr/share/tproxy-manager/watchdog-mihomo-batch-test-config.template.yaml ]; then
+  cp /usr/share/tproxy-manager/watchdog-mihomo-batch-test-config.template.yaml /etc/tproxy-manager/watchdog-mihomo-batch-test-config.template.yaml
+fi
+
+if [ ! -e /etc/tproxy-manager/watchdog-singbox-test-config.template.jsonc ] && [ -f /usr/share/tproxy-manager/watchdog-singbox-test-config.template.jsonc ]; then
+  cp /usr/share/tproxy-manager/watchdog-singbox-test-config.template.jsonc /etc/tproxy-manager/watchdog-singbox-test-config.template.jsonc
+fi
+
+if [ ! -e /etc/tproxy-manager/watchdog-singbox-batch-test-config.template.jsonc ] && [ -f /usr/share/tproxy-manager/watchdog-singbox-batch-test-config.template.jsonc ]; then
+  cp /usr/share/tproxy-manager/watchdog-singbox-batch-test-config.template.jsonc /etc/tproxy-manager/watchdog-singbox-batch-test-config.template.jsonc
 fi
 
 # --- UCI доступен? ---
@@ -106,6 +193,7 @@ ensure_section() {
 
 # --- tproxy-manager (наш UCI) ---
 ensure_section tproxy-manager main main
+set_default tproxy-manager main proxy_engine       'xray'
 set_default tproxy-manager main log_enabled        '1'
 set_default tproxy-manager main nft_table          'tp_mgr'
 set_default tproxy-manager main ifaces             'br-lan'
@@ -135,6 +223,8 @@ set_default tproxy-manager main watchdog_links_file '/etc/tproxy-manager/watchdo
 set_default tproxy-manager main watchdog_template_file '/etc/tproxy-manager/watchdog-outbound.template.jsonc'
 set_default tproxy-manager main watchdog_outbound_file '/etc/xray/04_outbounds.json'
 set_default tproxy-manager main watchdog_vless2json '/usr/bin/vless2json.sh'
+set_default tproxy-manager main watchdog_proxy2mihomo '/usr/bin/proxy2mihomo.lua'
+set_default tproxy-manager main watchdog_proxy2singbox '/usr/bin/proxy2singbox.lua'
 set_default tproxy-manager main watchdog_service_path '/etc/init.d/xray'
 set_default tproxy-manager main watchdog_restart_cmd 'restart'
 set_default tproxy-manager main watchdog_test_command '/usr/bin/xray -c {config}'
@@ -155,6 +245,10 @@ set_default tproxy-manager main watchdog_batch_check_concurrency '8'
 set_default tproxy-manager main watchdog_batch_check_fallback '1'
 set_default tproxy-manager main watchdog_batch_test_template_file '/etc/tproxy-manager/watchdog-batch-test-config.template.jsonc'
 set_default tproxy-manager main watchdog_hysteria_batch_test_template_file '/etc/tproxy-manager/watchdog-hysteria-batch-test-config.template.jsonc'
+set_default tproxy-manager main watchdog_mihomo_test_template_file '/etc/tproxy-manager/watchdog-mihomo-test-config.template.yaml'
+set_default tproxy-manager main watchdog_mihomo_batch_test_template_file '/etc/tproxy-manager/watchdog-mihomo-batch-test-config.template.yaml'
+set_default tproxy-manager main watchdog_singbox_test_template_file '/etc/tproxy-manager/watchdog-singbox-test-config.template.jsonc'
+set_default tproxy-manager main watchdog_singbox_batch_test_template_file '/etc/tproxy-manager/watchdog-singbox-batch-test-config.template.jsonc'
 set_default tproxy-manager main watchdog_subscriptions_file '/etc/tproxy-manager/watchdog-subscriptions.json'
 set_default tproxy-manager main watchdog_share_enabled '0'
 set_default tproxy-manager main watchdog_share_file '/etc/tproxy-manager/watchdog-share.json'
@@ -164,6 +258,28 @@ set_default tproxy-manager main watchdog_happ_capture_until '0'
 set_default tproxy-manager main watchdog_happ_capture_ttl '600'
 set_default tproxy-manager main watchdog_happ_capture_port '18088'
 set_default tproxy-manager main watchdog_happ_capture_log '/tmp/tproxy-manager-happ-capture.log'
+set_default tproxy-manager main xray_profile_service_path '/etc/init.d/xray'
+set_default tproxy-manager main xray_profile_test_command '/usr/bin/xray -c {config}'
+set_default tproxy-manager main xray_profile_outbound_file '/etc/xray/04_outbounds.json'
+set_default tproxy-manager main xray_profile_tproxy_port '61219'
+set_default tproxy-manager main xray_profile_proxy_url 'socks5h://127.0.0.1:10808'
+set_default tproxy-manager main mihomo_profile_service_path '/etc/init.d/tproxy-manager-mihomo'
+set_default tproxy-manager main mihomo_profile_test_command '/usr/bin/mihomo -f {config}'
+set_default tproxy-manager main mihomo_profile_outbound_file '/etc/mihomo/tproxy-manager-proxies.yaml'
+set_default tproxy-manager main mihomo_profile_config_file '/etc/mihomo/tproxy-manager.yaml'
+set_default tproxy-manager main mihomo_profile_managed_provider_file '/etc/mihomo/tproxy-manager-proxies.yaml'
+set_default tproxy-manager main mihomo_profile_controller 'http://127.0.0.1:9090'
+set_default tproxy-manager main mihomo_profile_tproxy_port '61219'
+set_default tproxy-manager main mihomo_profile_proxy_url 'socks5h://127.0.0.1:10808'
+set_default tproxy-manager main singbox_profile_service_path '/etc/init.d/tproxy-manager-sing-box'
+set_default tproxy-manager main singbox_profile_test_command '/usr/bin/sing-box run -c {config}'
+set_default tproxy-manager main singbox_profile_outbound_file '/etc/sing-box/tproxy-manager-outbounds.json'
+set_default tproxy-manager main singbox_profile_config_file '/etc/sing-box/tproxy-manager.json'
+set_default tproxy-manager main singbox_profile_base_config_file '/etc/sing-box/config.json'
+set_default tproxy-manager main singbox_profile_managed_outbounds_file '/etc/sing-box/tproxy-manager-outbounds.json'
+set_default tproxy-manager main singbox_profile_controller 'http://127.0.0.1:9091'
+set_default tproxy-manager main singbox_profile_tproxy_port '61219'
+set_default tproxy-manager main singbox_profile_proxy_url 'socks5h://127.0.0.1:10808'
 uci commit tproxy-manager
 
 exit 0

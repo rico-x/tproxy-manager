@@ -1,0 +1,17 @@
+{
+  "log": {
+    "level": "warn"
+  },
+  "inbounds": [
+    {
+      "type": "mixed",
+      "tag": "mixed-in",
+      "listen": "127.0.0.1",
+      "listen_port": "__TEST_PORT__"
+    }
+  ],
+  "outbounds": "__OUTBOUNDS__",
+  "route": {
+    "final": "__OUTBOUND_TAG__"
+  }
+}

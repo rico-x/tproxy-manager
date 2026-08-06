@@ -14,7 +14,13 @@ trap 'rm -rf "$TMPDIR"' EXIT
 
 mkdir -p "$(dirname "$DEST")"
 
-docker run --rm -v "$TMPDIR:/out" alpine:edge sh -euxc '
+# Пин на конкретный дайджест стабильного релиза Alpine вместо "живого" тега
+# edge: apk-tools-static из edge непредсказуемо меняется между запусками CI и
+# подписывает релизный apk-фид (см. build-packages.yml), так что нужна
+# воспроизводимая, а не "текущая на момент сборки" версия инструмента.
+ALPINE_IMAGE="alpine:3.24.1@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b"
+
+docker run --rm -v "$TMPDIR:/out" "$ALPINE_IMAGE" sh -euxc '
   apk add --no-cache apk-tools-static
   cp /sbin/apk.static /out/apk.static
 '

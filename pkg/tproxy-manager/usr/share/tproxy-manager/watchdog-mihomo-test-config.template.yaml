@@ -1,0 +1,17 @@
+# Reference template for Mihomo one-link probe configs.
+# Current runtime generates this structure through /usr/bin/proxy2mihomo.lua.
+allow-lan: false
+bind-address: 127.0.0.1
+mode: global
+log-level: warning
+ipv6: true
+mixed-port: __TEST_PORT__
+proxies:
+__PROXIES__
+proxy-groups:
+  - name: TPROXY-MANAGER
+    type: select
+    proxies:
+      - __PROXY_NAME__
+rules:
+  - MATCH,TPROXY-MANAGER

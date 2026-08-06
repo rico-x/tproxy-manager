@@ -235,6 +235,58 @@ join_commas(){ [ $# -eq 0 ] && return 0; printf "%s" "$1"; shift; for x in "$@";
 # valid_port: 1..65535
 valid_port(){ p="$1"; [ "$p" -ge 1 ] && [ "$p" -le 65535 ]; }
 
+# valid_octet: 0..255, только цифры
+valid_octet(){ o="$1"; case "$o" in ''|*[!0-9]*) return 1;; esac; [ "$o" -ge 0 ] && [ "$o" -le 255 ]; }
+
+# valid_ipv4: строгая проверка IPv4-адреса (защита от инъекции в generate-nft файл)
+valid_ipv4(){
+  ip="$1"
+  printf '%s' "$ip" | grep -Eq '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$' || return 1
+  o1="${ip%%.*}"; r="${ip#*.}"
+  o2="${r%%.*}"; r="${r#*.}"
+  o3="${r%%.*}"; o4="${r#*.}"
+  valid_octet "$o1" && valid_octet "$o2" && valid_octet "$o3" && valid_octet "$o4"
+}
+
+# valid_ipv4_cidr: IPv4 + необязательный /prefix (0..32)
+valid_ipv4_cidr(){
+  spec="$1"
+  case "$spec" in
+    */*) addr="${spec%/*}"; prefix="${spec#*/}" ;;
+    *) return 1 ;;
+  esac
+  valid_ipv4 "$addr" || return 1
+  case "$prefix" in ''|*[!0-9]*) return 1;; esac
+  [ "$prefix" -ge 0 ] && [ "$prefix" -le 32 ]
+}
+
+# valid_ipv6: разрешаем только hex-группы/двоеточия (и хвост IPv4 для v4-mapped адресов) —
+# не полноценный RFC-парсер, но исключает любые символы, способные сломать синтаксис nft
+valid_ipv6(){
+  ip="$1"
+  [ -n "$ip" ] || return 1
+  case "$ip" in *[!0-9A-Fa-f:.]*) return 1;; esac
+  case "$ip" in *:*) : ;; *) return 1;; esac
+  case "$ip" in :::*|*:::*) return 1;; esac
+  return 0
+}
+
+# valid_ipv6_cidr: IPv6 + необязательный /prefix (0..128)
+valid_ipv6_cidr(){
+  spec="$1"
+  case "$spec" in
+    */*) addr="${spec%/*}"; prefix="${spec#*/}" ;;
+    *) return 1 ;;
+  esac
+  valid_ipv6 "$addr" || return 1
+  case "$prefix" in ''|*[!0-9]*) return 1;; esac
+  [ "$prefix" -ge 0 ] && [ "$prefix" -le 128 ]
+}
+
+# valid_ipv4_entry / valid_ipv6_entry: адрес ИЛИ CIDR (для sets с "flags interval")
+valid_ipv4_entry(){ case "$1" in */*) valid_ipv4_cidr "$1";; *) valid_ipv4 "$1";; esac; }
+valid_ipv6_entry(){ case "$1" in */*) valid_ipv6_cidr "$1";; *) valid_ipv6 "$1";; esac; }
+
 # validate_marks: защита от пересечения битов меток и нулевых значений
 validate_marks(){
   mt=$((FWMARK_TCP))
@@ -352,7 +404,10 @@ build_sets(){
       it="${it%%#*}"
       it="$(printf "%s" "$it" | tr -d '\r' | sed -e 's/^[[:space:]]\+//' -e 's/[[:space:]]\+$//')"
       [ -z "$it" ] && continue
-      case "$it" in */*) CIDR4_LIST="$CIDR4_LIST $it";; *) HOST4_LIST="$HOST4_LIST $it";; esac
+      case "$it" in
+        */*) valid_ipv4_cidr "$it" && CIDR4_LIST="$CIDR4_LIST $it" ;;
+        *)   valid_ipv4 "$it" && HOST4_LIST="$HOST4_LIST $it" ;;
+      esac
     done < "$BYPASS_V4_FILE"
   fi
   # Дедуп v4
@@ -370,7 +425,10 @@ build_sets(){
         it="${it%%#*}"
         it="$(printf "%s" "$it" | tr -d '\r' | sed -e 's/^[[:space:]]\+//' -e 's/[[:space:]]\+$//')"
         [ -z "$it" ] && continue
-        case "$it" in */*) CIDR6_LIST="$CIDR6_LIST $it";; *) HOST6_LIST="$HOST6_LIST $it";; esac
+        case "$it" in
+          */*) valid_ipv6_cidr "$it" && CIDR6_LIST="$CIDR6_LIST $it" ;;
+          *)   valid_ipv6 "$it" && HOST6_LIST="$HOST6_LIST $it" ;;
+        esac
       done < "$BYPASS_V6_FILE"
     fi
     # Дедуп v6
@@ -394,25 +452,25 @@ build_sets(){
   if [ -f "$SRC_ONLY_V4_FILE" ]; then
     while IFS= read -r it || [ -n "$it" ]; do
       it="${it%%#*}"; it="$(printf "%s" "$it" | tr -d '\r' | sed -e 's/^[[:space:]]\+//' -e 's/[[:space:]]\+$//')"
-      [ -z "$it" ] || SRC_ONLY4_LIST="$SRC_ONLY4_LIST $it"
+      [ -z "$it" ] || { valid_ipv4_entry "$it" && SRC_ONLY4_LIST="$SRC_ONLY4_LIST $it"; }
     done < "$SRC_ONLY_V4_FILE"
   fi
   if [ "$IPV6_ENABLED" -eq 1 ] && [ -f "$SRC_ONLY_V6_FILE" ]; then
     while IFS= read -r it || [ -n "$it" ]; do
       it="${it%%#*}"; it="$(printf "%s" "$it" | tr -d '\r' | sed -e 's/^[[:space:]]\+//' -e 's/[[:space:]]\+$//')"
-      [ -z "$it" ] || SRC_ONLY6_LIST="$SRC_ONLY6_LIST $it"
+      [ -z "$it" ] || { valid_ipv6_entry "$it" && SRC_ONLY6_LIST="$SRC_ONLY6_LIST $it"; }
     done < "$SRC_ONLY_V6_FILE"
   fi
   if [ -f "$SRC_BYPASS_V4_FILE" ]; then
     while IFS= read -r it || [ -n "$it" ]; do
       it="${it%%#*}"; it="$(printf "%s" "$it" | tr -d '\r' | sed -e 's/^[[:space:]]\+//' -e 's/[[:space:]]\+$//')"
-      [ -z "$it" ] || SRC_BYP4_LIST="$SRC_BYP4_LIST $it"
+      [ -z "$it" ] || { valid_ipv4_entry "$it" && SRC_BYP4_LIST="$SRC_BYP4_LIST $it"; }
     done < "$SRC_BYPASS_V4_FILE"
   fi
   if [ "$IPV6_ENABLED" -eq 1 ] && [ -f "$SRC_BYPASS_V6_FILE" ]; then
     while IFS= read -r it || [ -n "$it" ]; do
-      it="${it%%#*}"; it="$(printf "%s" "$it" | tr -d '\r' | sed -e 's/^[[:space:]]\+//' -е 's/[[:space:]]\+$//')"
-      [ -z "$it" ] || SRC_BYP6_LIST="$SRC_BYP6_LIST $it"
+      it="${it%%#*}"; it="$(printf "%s" "$it" | tr -d '\r' | sed -e 's/^[[:space:]]\+//' -e 's/[[:space:]]\+$//')"
+      [ -z "$it" ] || { valid_ipv6_entry "$it" && SRC_BYP6_LIST="$SRC_BYP6_LIST $it"; }
     done < "$SRC_BYPASS_V6_FILE"
   fi
   # Дедуп SRC-листов

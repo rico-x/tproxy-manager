@@ -7,6 +7,7 @@ local disp  = require "luci.dispatcher"
 local xml   = require "luci.xml"
 local utils = require "luci.model.cbi.tproxy_manager.utils"
 local _     = require "luci.model.cbi.tproxy_manager.i18n"
+local engines = require "tproxy_manager.engines"
 local ucim  = require "luci.model.uci"
 local uci   = ucim.cursor()
 local cbi   = require "luci.cbi"
@@ -197,15 +198,14 @@ local function uci_get_main(option, fallback)
   return fallback
 end
 
-local function enabled_option(option)
-  return uci_get_main(option, "0") == "1"
-end
-
--- Active module flags from UCI.
-local ENABLE_XRAY     = enabled_option("enable_xray")
-local ENABLE_MIHOMO   = enabled_option("enable_mihomo")
-local ENABLE_UPDATES  = enabled_option("enable_updates")
-local ENABLE_WATCHDOG = enabled_option("enable_watchdog")
+-- Active core tab is controlled by proxy_engine. Legacy enable_* keys stay in UCI
+-- for compatibility, but the UI no longer uses them for navigation.
+local PROXY_ENGINE = engines.current(uci, PKG)
+local ENABLE_XRAY     = PROXY_ENGINE == "xray"
+local ENABLE_MIHOMO   = PROXY_ENGINE == "mihomo"
+local ENABLE_SINGBOX  = PROXY_ENGINE == "singbox"
+local ENABLE_UPDATES  = true
+local ENABLE_WATCHDOG = true
 
 -- Network model is useful for the TPROXY core.
 local netm_init = nil
@@ -275,7 +275,7 @@ do
   window.__xray_dirty = false;
   document.addEventListener('input', function(e){
     var n = e && e.target && e.target.name;
-    if (n === 'uniedit_text' || n === 'json_text' || n === 'clash_text' || n === 'mihomo_text' || n === 'geo_sources' || n === 'watchdog_template_text' || n === 'watchdog_template_path' || n === 'watchdog_test_template_text' || n === 'watchdog_links_text' || n === 'watchdog_batch_test_template_file' || n === 'watchdog_hysteria_template_file' || n === 'watchdog_hysteria_test_template_file' || n === 'watchdog_hysteria_batch_test_template_file' || n === 'watchdog_batch_check_port_start' || n === 'watchdog_batch_check_batch_size' || n === 'watchdog_batch_check_concurrency' || n === 'wd_add_link' || n === 'wd_edit_link' || n === 'watchdog_happ_capture_ttl' || n === 'watchdog_happ_capture_port' || n === 'watchdog_happ_capture_log' || n === 'happ_capture_start_ttl' || n === 'happ_capture_start_port' || n === 'happ_capture_start_log' || (n && n.indexOf('sub_') === 0)) window.__xray_dirty = true;
+    if (n === 'uniedit_text' || n === 'json_text' || n === 'clash_text' || n === 'mihomo_text' || n === 'singbox_text' || n === 'geo_sources' || n === 'watchdog_template_text' || n === 'watchdog_template_path' || n === 'watchdog_test_template_text' || n === 'watchdog_links_text' || n === 'watchdog_proxy2mihomo' || n === 'watchdog_proxy2singbox' || n === 'watchdog_batch_test_template_file' || n === 'watchdog_hysteria_template_file' || n === 'watchdog_hysteria_test_template_file' || n === 'watchdog_hysteria_batch_test_template_file' || n === 'watchdog_mihomo_test_template_file' || n === 'watchdog_mihomo_batch_test_template_file' || n === 'watchdog_singbox_test_template_file' || n === 'watchdog_singbox_batch_test_template_file' || n === 'watchdog_batch_check_port_start' || n === 'watchdog_batch_check_batch_size' || n === 'watchdog_batch_check_concurrency' || n === 'wd_add_link' || n === 'wd_edit_link' || n === 'watchdog_happ_capture_ttl' || n === 'watchdog_happ_capture_port' || n === 'watchdog_happ_capture_log' || n === 'happ_capture_start_ttl' || n === 'happ_capture_start_port' || n === 'happ_capture_start_log' || (n && n.indexOf('sub_') === 0)) window.__xray_dirty = true;
   }, true);
   window.__xray_guard = function(){ return (!window.__xray_dirty) || confirm(']] .. pcdata(_("There are unsaved changes. Leave without saving?")) .. [['); };
   setTimeout(function(){
@@ -307,62 +307,10 @@ do
     out[#out+1] = link("tproxy", "TPROXY", true)
     out[#out+1] = link("xray",   "XRAY",   ENABLE_XRAY)
     out[#out+1] = link("mihomo", "MIHOMO", ENABLE_MIHOMO)
+    out[#out+1] = link("singbox", "SING-BOX", ENABLE_SINGBOX)
     out[#out+1] = link("updates", _("GEO updates"), ENABLE_UPDATES)
     out[#out+1] = link("watchdog","WATCHDOG", ENABLE_WATCHDOG)
     return "<div style='margin:.2rem 0 .2rem 0'>" .. table.concat(out, "") .. "</div>"
-  end
-end
-
--- Module flag save handler.
-if http.formvalue("_save_modules") == "1" then
-  local ex = http.formvalue("enable_xray") == "1" and "1" or "0"
-  local em = http.formvalue("enable_mihomo") == "1" and "1" or "0"
-  local eu = http.formvalue("enable_updates") == "1" and "1" or "0"
-  local ew = http.formvalue("enable_watchdog") == "1" and "1" or "0"
-  uci:set(PKG,"main","enable_xray",    ex)
-  uci:set(PKG,"main","enable_mihomo",  em)
-  uci:set(PKG,"main","enable_updates", eu)
-  uci:set(PKG,"main","enable_watchdog", ew)
-  uci:commit(PKG)
-  set_info(_("Module settings saved."))
-  redirect_here(fval("tab") or "tproxy")
-  return m
-end
-
--- Extra settings directly before modules, without a large gap.
-do
-  local s = m:section(SimpleSection)
-  local dv = s:option(DummyValue, "_extra"); dv.rawhtml = true
-  function dv.cfgvalue()
-    local cur = fval("tab") or "tproxy"
-    local ex = ENABLE_XRAY and "checked" or ""
-    local em = ENABLE_MIHOMO and "checked" or ""
-    local eu = ENABLE_UPDATES and "checked" or ""
-    local ew = ENABLE_WATCHDOG and "checked" or ""
-    return string.format([[
-<details id="extra-mods">
-  <summary style="cursor:pointer">%s</summary>
-  <div class="box" style="max-width:860px; margin-top:.4rem">
-    <div class="inline-row" style="flex-wrap:wrap; gap:.8rem">
-      <label><input type="checkbox" name="enable_xray" value="1" %s> %s</label>
-      <label><input type="checkbox" name="enable_mihomo" value="1" %s> %s</label>
-      <label><input type="checkbox" name="enable_updates" value="1" %s> %s</label>
-      <label><input type="checkbox" name="enable_watchdog" value="1" %s> %s</label>
-    </div>
-    <div style="margin-top:.5rem">
-      <button class="cbi-button cbi-button-apply" name="_save_modules" value="1">%s</button>
-      <input type="hidden" name="tab" value="%s"/>
-    </div>
-  </div>
-</details>]],
-      pcdata(_("Additional settings")),
-      ex, pcdata(_("XRAY tab")),
-      em, pcdata(_("MIHOMO tab")),
-      eu, pcdata(_("GEO updates tab")),
-      ew, pcdata(_("Watchdog tab")),
-      pcdata(_("Save")),
-      pcdata(cur)
-    )
   end
 end
 
@@ -373,6 +321,12 @@ if fval("tab") == "" then
 end
 
 local cur_tab = fval("tab") or "tproxy"
+if (cur_tab == "xray" and not ENABLE_XRAY)
+  or (cur_tab == "mihomo" and not ENABLE_MIHOMO)
+  or (cur_tab == "singbox" and not ENABLE_SINGBOX) then
+  http.redirect(self_url({ tab = "tproxy" }))
+  return m
+end
 
 -- Shared module context.
 local ctx = {
@@ -386,6 +340,8 @@ local ctx = {
   -- Utilities
   utils = utils,
   _ = _,
+  engines = engines,
+  proxy_engine = PROXY_ENGINE,
   write_file = write_file, read_file = read_file,
   pick_form_or_uci = pick_form_or_uci,
   append_line_unique = append_line_unique,
@@ -409,6 +365,8 @@ elseif cur_tab == "xray" and ENABLE_XRAY then
   require("luci.model.cbi.tproxy_manager.modules.xray").render(ctx)
 elseif cur_tab == "mihomo" and ENABLE_MIHOMO then
   require("luci.model.cbi.tproxy_manager.modules.mihomo").render(ctx)
+elseif cur_tab == "singbox" and ENABLE_SINGBOX then
+  require("luci.model.cbi.tproxy_manager.modules.singbox").render(ctx)
 elseif cur_tab == "updates" and ENABLE_UPDATES then
   require("luci.model.cbi.tproxy_manager.modules.updates").render(ctx)
 elseif cur_tab == "watchdog" and ENABLE_WATCHDOG then

@@ -32,8 +32,20 @@ run_safe /usr/bin/setup-bbr.sh
 # 3) Исправить исполняемые биты init.d-скриптов (если есть)
 chmod +x /etc/init.d/tproxy-manager 2>/dev/null || true
 chmod +x /etc/init.d/tproxy-manager-watchdog 2>/dev/null || true
+chmod +x /etc/init.d/tproxy-manager-mihomo 2>/dev/null || true
+chmod +x /etc/init.d/tproxy-manager-sing-box 2>/dev/null || true
 chmod +x /usr/bin/vless2json.sh 2>/dev/null || true
+chmod +x /usr/bin/proxy2mihomo.lua 2>/dev/null || true
+chmod +x /usr/bin/proxy2singbox.lua 2>/dev/null || true
 chmod +x /usr/bin/tproxy-manager-xray-version.lua 2>/dev/null || true
+chmod +x /usr/bin/tproxy-manager-mihomo-version.lua 2>/dev/null || true
+chmod +x /usr/bin/tproxy-manager-singbox-version.lua 2>/dev/null || true
+
+# 3.1) Старые версии хранили rollback-бинарники в overlay и могли занять весь
+# раздел. Новые version helpers держат временные backup в /tmp.
+rm -rf /etc/tproxy-manager/xray-backup \
+       /etc/tproxy-manager/mihomo-backup \
+       /etc/tproxy-manager/singbox-backup 2>/dev/null || true
 
 # 4) Включить и запустить сервис (если есть), ошибки не фатальны
 if [ -x /etc/init.d/tproxy-manager ]; then

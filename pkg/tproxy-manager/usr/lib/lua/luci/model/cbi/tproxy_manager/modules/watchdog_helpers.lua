@@ -233,8 +233,14 @@ function M.save_watchdog_settings(ctx)
     watchdog_hysteria_test_template_file = trim(http.formvalue("watchdog_hysteria_test_template_file")),
     watchdog_outbound_file = trim(http.formvalue("watchdog_outbound_file")),
     watchdog_vless2json = trim(http.formvalue("watchdog_vless2json")),
+    watchdog_proxy2mihomo = trim(http.formvalue("watchdog_proxy2mihomo")),
+    watchdog_proxy2singbox = trim(http.formvalue("watchdog_proxy2singbox")),
     watchdog_batch_test_template_file = trim(http.formvalue("watchdog_batch_test_template_file")),
     watchdog_hysteria_batch_test_template_file = trim(http.formvalue("watchdog_hysteria_batch_test_template_file")),
+    watchdog_mihomo_test_template_file = trim(http.formvalue("watchdog_mihomo_test_template_file")),
+    watchdog_mihomo_batch_test_template_file = trim(http.formvalue("watchdog_mihomo_batch_test_template_file")),
+    watchdog_singbox_test_template_file = trim(http.formvalue("watchdog_singbox_test_template_file")),
+    watchdog_singbox_batch_test_template_file = trim(http.formvalue("watchdog_singbox_batch_test_template_file")),
     watchdog_subscriptions_file = trim(http.formvalue("watchdog_subscriptions_file")),
     watchdog_share_file = trim(http.formvalue("watchdog_share_file")),
     watchdog_happ_capture_log = trim(http.formvalue("watchdog_happ_capture_log")),
@@ -244,7 +250,7 @@ function M.save_watchdog_settings(ctx)
       set_err(_("Required field is empty: ") .. key .. ".")
       return false
     end
-    if key:match("_file$") or key == "watchdog_vless2json" or key == "watchdog_happ_capture_log" then
+    if key:match("_file$") or key == "watchdog_vless2json" or key == "watchdog_proxy2mihomo" or key == "watchdog_proxy2singbox" or key == "watchdog_happ_capture_log" then
       if not utils.is_abs_path(value) then
         set_err(_("Invalid absolute path for ") .. key .. ".")
         return false
@@ -278,6 +284,9 @@ function M.save_watchdog_settings(ctx)
   S("watchdog_batch_check_fallback", http.formvalue("watchdog_batch_check_fallback") and "1" or "0")
   S("watchdog_happ_capture_ttl", tostring(happ_capture_ttl))
   S("watchdog_happ_capture_port", tostring(happ_capture_port))
+  if ctx.engines and ctx.proxy_engine then
+    ctx.engines.save_legacy_to_profile(uci, PKG, ctx.proxy_engine)
+  end
   uci:commit(PKG)
 
   set_err(nil)

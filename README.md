@@ -7,19 +7,20 @@
 
 ![Главная панель](docs/screenshots/placeholder-dashboard.png)
 
-TPROXY Manager — это LuCI-панель и набор системных скриптов для OpenWrt. Проект помогает управлять прозрачным перехватом трафика через `nftables`, списками обхода, конфигами Xray/Mihomo, GEO-базами и автоматическим переключением proxy outbound через Watchdog.
+TPROXY Manager — это LuCI-панель и набор системных скриптов для OpenWrt. Проект помогает управлять прозрачным перехватом трафика через `nftables`, списками обхода, конфигами Xray/Mihomo/sing-box, GEO-базами и автоматическим переключением proxy outbound через Watchdog.
 
-Проект ориентирован на роутер, где proxy daemon уже установлен отдельно. Это может быть Xray, Mihomo или другой сервис, который умеет работать с подготовленными конфигами и списками.
+Проект ориентирован на роутер, где proxy daemon уже установлен отдельно. Поддерживаются три управляемых ядра: Xray, Mihomo и sing-box. Пользователь выбирает активное ядро во вкладке `TPROXY`, а проект применяет к нему соответствующий профиль Watchdog и останавливает неактивные демоны, чтобы избежать конфликта портов.
 
 Основные возможности:
 
 - настройка TPROXY-правил и policy routing через LuCI;
 - редактирование списков портов, адресов и источников трафика;
-- управление сервисами Xray и Mihomo;
+- выбор активного proxy-ядра: Xray, Mihomo или sing-box;
+- управление сервисами активного ядра;
 - редакторы JSON/JSONC и YAML с серверной проверкой перед сохранением;
 - загрузка `geoip.dat` и `geosite.dat` из настраиваемых источников;
 - cron-обновление GEO-баз;
-- встроенный `vless2json.sh` для генерации outbound из VLESS и Hysteria 2 ссылок;
+- встроенные конвертеры для генерации конфигов Xray, Mihomo и sing-box из VLESS и Hysteria 2 ссылок;
 - Watchdog для подписок, массовой проверки ссылок, исключения нерабочих узлов и автоматической ротации;
 - расшаривание итогового списка proxy-ссылок роутера для клиентов v2RayTun, Happ, Shadowrocket, v2Box и V2rayNG;
 - Happ-подписки с обычными `https://` URL, encrypted `happ://crypt*` URL и JSON-ответами Xray-like;
@@ -108,7 +109,7 @@ apk upgrade tproxy-manager
 - создаёт профиль расшаривания подписки Watchdog;
 - создаёт `/etc/tproxy-manager/geo-sources.conf`, если файл отсутствует или пустой;
 - копирует watchdog-шаблоны в `/etc/tproxy-manager`, если их ещё нет;
-- делает исполняемыми init.d-скрипты и `/usr/bin/vless2json.sh`;
+- делает исполняемыми init.d-скрипты и helper-скрипты в `/usr/bin`;
 - включает и запускает `/etc/init.d/tproxy-manager`;
 - не включает и не запускает Watchdog без явного действия пользователя.
 
@@ -143,17 +144,18 @@ uci commit xray
 
 ![Навигация](docs/screenshots/placeholder-navigation.png)
 
-Вкладка `TPROXY` доступна всегда. Остальные вкладки включаются в сворачиваемом блоке `Дополнительные настройки`.
+Вкладки `TPROXY`, `Обновление геобаз` и `WATCHDOG` доступны всегда. Вкладка активного proxy-ядра выбирается во вкладке `TPROXY` через блок `Активное proxy-ядро`.
 
 Доступные вкладки:
 
 - `TPROXY`
-- `XRAY`
-- `MIHOMO`
+- `XRAY`, если активен Xray
+- `MIHOMO`, если активен Mihomo
+- `SING-BOX`, если активен sing-box
 - `Обновление геобаз`
 - `WATCHDOG`
 
-По умолчанию `WATCHDOG` выключен.
+По умолчанию активное ядро — Xray. Сервис Watchdog по умолчанию не запускается, пока пользователь не включит его вручную.
 
 Если в редакторах есть несохранённые изменения, интерфейс предупреждает перед переключением вкладок.
 
@@ -165,6 +167,7 @@ uci commit xray
 
 Здесь настраиваются:
 
+- активное proxy-ядро: Xray, Mihomo или sing-box;
 - LAN-интерфейсы, с которых перехватывается трафик;
 - IPv6;
 - единый TPROXY-порт или отдельные TCP/UDP-порты;
@@ -187,6 +190,8 @@ uci commit xray
 - `/etc/tproxy-manager/tproxy-manager.src6.bypass`
 
 Встроенный редактор позволяет править эти файлы прямо из LuCI. Для SRC-списков есть быстрое добавление IP из DHCP-аренд.
+
+Блок `Активное proxy-ядро` показывает состояние всех трёх демонов: установлен/не установлен, запущен/остановлен, автозапуск включён/выключен. При активации выбранного ядра проект сохраняет профиль текущего ядра, применяет профиль выбранного к TPROXY и Watchdog, останавливает два неактивных proxy-демона, запускает выбранный демон при наличии бинаря и перезапускает `tproxy-manager` / `tproxy-manager-watchdog`.
 
 Допустимые строки в списках:
 
@@ -233,16 +238,18 @@ uci commit xray
 
 ![MIHOMO](docs/screenshots/placeholder-mihomo.png)
 
-Вкладка `MIHOMO` работает с YAML-конфигами Mihomo.
+Вкладка `MIHOMO` работает с managed-конфигом Mihomo и YAML-файлами в `/etc/mihomo`.
 
 Возможности:
 
-- запуск, остановка и автозапуск сервиса `mihomo`;
+- запуск, остановка и автозапуск сервиса `tproxy-manager-mihomo`;
 - просмотр общего `logread`;
 - редактор `*.yaml` в `/etc/mihomo`;
 - создание и удаление YAML-файлов;
 - проверка выбранного конфига через `mihomo -t -f`;
 - серверная валидация перед сохранением.
+- менеджер версии Mihomo через GitHub Releases `MetaCubeX/mihomo`;
+- генерация managed-конфига `/etc/mihomo/tproxy-manager.yaml` из общего списка Watchdog.
 
 Если проверка YAML не проходит, файл не записывается на диск.
 
@@ -253,6 +260,25 @@ uci commit xray
 ```txt
 /tmp/tproxy_manager_mihomo_test.log
 ```
+
+## SING-BOX
+
+![SING-BOX](docs/screenshots/placeholder-singbox.png)
+
+Вкладка `SING-BOX` работает с managed-конфигом sing-box и JSON-файлами в `/etc/sing-box`.
+
+Возможности:
+
+- запуск, остановка и автозапуск сервиса `tproxy-manager-sing-box`;
+- просмотр общего `logread`;
+- редактор `*.json` в `/etc/sing-box`;
+- создание и удаление JSON-файлов;
+- JSONC-проверка в редакторе и серверная проверка через `sing-box check -c <tempfile>` перед сохранением;
+- менеджер версии sing-box через GitHub Releases `SagerNet/sing-box`;
+- managed runtime-конфиг `/etc/sing-box/tproxy-manager.json`;
+- managed outbounds-фрагмент `/etc/sing-box/tproxy-manager-outbounds.json`.
+
+Если проверка sing-box завершилась ошибкой, файл не перезаписывается.
 
 ## Обновление геобаз
 
@@ -531,7 +557,7 @@ hy2://... # внешний комментарий
 
 ### Массовая проверка ссылок
 
-`Проверить все ссылки` использует batch-режим: Watchdog формирует один временный test-config на пачку ссылок. Каждая ссылка получает отдельный outbound tag и отдельный локальный SOCKS inbound, после чего curl проверяет `CHECK_URL` через соответствующий порт.
+Для Xray команда `Проверить все ссылки` использует batch-режим: Watchdog формирует один временный test-config на пачку ссылок. Каждая ссылка получает отдельный outbound tag и отдельный локальный SOCKS inbound, после чего curl проверяет `CHECK_URL` через соответствующий порт. Для Mihomo и sing-box текущая реализация безопасно использует fallback на индивидуальные проверки.
 
 Преимущества batch-режима:
 
@@ -569,6 +595,22 @@ vless2json.sh -r LINKS_FILE -t TEMPLATE_FILE
 
 ```txt
 /usr/bin/vless2json.sh
+```
+
+Для Mihomo и sing-box используются отдельные converter helpers:
+
+```txt
+/usr/bin/proxy2mihomo.lua
+/usr/bin/proxy2singbox.lua
+```
+
+Дополнительные reference-шаблоны для не-Xray ядер:
+
+```txt
+/etc/tproxy-manager/watchdog-mihomo-test-config.template.yaml
+/etc/tproxy-manager/watchdog-mihomo-batch-test-config.template.yaml
+/etc/tproxy-manager/watchdog-singbox-test-config.template.jsonc
+/etc/tproxy-manager/watchdog-singbox-batch-test-config.template.jsonc
 ```
 
 Описание плейсхолдеров VLESS/HY2-шаблонов: [docs/vless2json.md](docs/vless2json.md).
@@ -660,8 +702,12 @@ Batch-template получает три плейсхолдера:
 | Watchdog runtime | `/usr/bin/tproxy-manager-watchdog.sh` |
 | Watchdog subscriptions | `/usr/bin/tproxy-manager-subscriptions.lua` |
 | Xray version helper | `/usr/bin/tproxy-manager-xray-version.lua` |
+| Mihomo version helper | `/usr/bin/tproxy-manager-mihomo-version.lua` |
+| sing-box version helper | `/usr/bin/tproxy-manager-singbox-version.lua` |
 | Watchdog internal libs | `/usr/libexec/tproxy-manager/watchdog/*` |
 | Конвертер ссылок | `/usr/bin/vless2json.sh` |
+| Mihomo converter | `/usr/bin/proxy2mihomo.lua` |
+| sing-box converter | `/usr/bin/proxy2singbox.lua` |
 | GEO updater | `/usr/bin/tproxy-manager-geo-update.sh` |
 | Пользовательские списки | `/etc/tproxy-manager` |
 | Watchdog subscriptions DB | `/etc/tproxy-manager/watchdog-subscriptions.json` |
@@ -674,6 +720,11 @@ Batch-template получает три плейсхолдера:
 | GEO datadir | `/usr/share/tproxy-manager` |
 | Xray configs | `/etc/xray` |
 | Mihomo configs | `/etc/mihomo` |
+| Mihomo managed config | `/etc/mihomo/tproxy-manager.yaml` |
+| Mihomo managed provider | `/etc/mihomo/tproxy-manager-proxies.yaml` |
+| sing-box configs | `/etc/sing-box` |
+| sing-box managed config | `/etc/sing-box/tproxy-manager.json` |
+| sing-box managed outbounds | `/etc/sing-box/tproxy-manager-outbounds.json` |
 
 ## Сборка
 

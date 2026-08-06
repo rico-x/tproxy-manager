@@ -37,4 +37,17 @@ inject_control_version "$STAGE_DIR/CONTROL/control" "$PKG_VERSION"
 
 "$IPKG_BUILD" "$STAGE_DIR" "$OUT_DIR"
 
-find "$OUT_DIR" -maxdepth 1 -type f -name '*.ipk' | sort
+IPK_FILE="$(find "$OUT_DIR" -maxdepth 1 -type f -name '*.ipk' | sort | tail -n 1)"
+[ -n "$IPK_FILE" ] && [ -f "$IPK_FILE" ] || {
+  echo "ipk package was not created" >&2
+  exit 1
+}
+
+IPK_SIZE="$(wc -c < "$IPK_FILE" | tr -d '[:space:]')"
+if [ "${IPK_SIZE:-0}" -lt 1024 ]; then
+  echo "ipk package is unexpectedly small ($IPK_SIZE bytes): $IPK_FILE" >&2
+  echo "If building on macOS, install GNU tar and run with TAR=gtar." >&2
+  exit 1
+fi
+
+printf '%s\n' "$IPK_FILE"

@@ -10,5 +10,6 @@ release/
 feed/
 keys/private/
 .apk-tools/
+ipkg-build
 *.apk
 *.ipk

@@ -26,6 +26,8 @@ copy_payload_tree() {
   mkdir -p "$dest"
   tar \
     --exclude='.DS_Store' \
+    --exclude='._*' \
+    --exclude='.AppleDouble' \
     --exclude='CONTROL' \
     -C "$src" \
     -cf - . | tar -C "$dest" -xf -
@@ -37,6 +39,8 @@ copy_control_tree() {
   mkdir -p "$dest/CONTROL"
   tar \
     --exclude='.DS_Store' \
+    --exclude='._*' \
+    --exclude='.AppleDouble' \
     -C "$src/CONTROL" \
     -cf - . | tar -C "$dest/CONTROL" -xf -
 }
@@ -45,6 +49,8 @@ normalize_tree() {
   local root="$1"
 
   find "$root" -name '.DS_Store' -type f -delete
+  find "$root" -name '._*' -type f -delete
+  find "$root" -name '.AppleDouble' -type d -exec rm -rf {} +
 
   if [ -d "$root/etc/init.d" ]; then
     find "$root/etc/init.d" -type f -exec chmod 0755 {} +

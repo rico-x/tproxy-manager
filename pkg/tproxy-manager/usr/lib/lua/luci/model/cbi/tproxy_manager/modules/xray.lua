@@ -181,15 +181,20 @@ local function render(ctx)
       rows[#rows + 1] = "<button class='cbi-button cbi-button-reset' name='_xray_rollback' value='1' onclick=\"return confirm('" .. pcdata(_("Rollback Xray to previous binary?")) .. "')\"" .. ((status.BACKUP_FILE or "") == "" and " disabled" or "") .. ">" .. _("Rollback previous binary") .. "</button>"
       rows[#rows + 1] = "</div>"
       rows[#rows + 1] = "<div style='margin-top:.7rem'>"
-      rows[#rows + 1] = "<select name='xray_install_tag' style='max-width:18rem'>"
+      rows[#rows + 1] = "<select name='xray_install_tag' style='max-width:18rem' onchange=\"this.title=this.selectedOptions[0]?this.selectedOptions[0].textContent:''\">"
       for _, item in ipairs(versions) do
         local suffix = item.prerelease and " prerelease" or ""
-        rows[#rows + 1] = string.format("<option value='%s'>%s%s · %s</option>", pcdata(item.tag), pcdata(item.tag), pcdata(suffix), pcdata(item.published))
+        local label = string.format("%s%s · %s", item.tag, suffix, item.published)
+        rows[#rows + 1] = string.format("<option value='%s' title='%s'>%s</option>", pcdata(item.tag), pcdata(label), pcdata(label))
       end
       if #versions == 0 then
         rows[#rows + 1] = "<option value=''>" .. pcdata(_("No repository versions available")) .. "</option>"
       end
       rows[#rows + 1] = "</select> "
+      -- The truncated selected-version text doesn't show its full value on
+      -- hover by default — sync the <select>'s title with the currently
+      -- selected option's text right on page load.
+      rows[#rows + 1] = "<script>(function(){var s=document.currentScript.previousElementSibling;while(s&&s.tagName!=='SELECT')s=s.previousElementSibling;if(s&&s.selectedOptions[0])s.title=s.selectedOptions[0].textContent;})()</script>"
       rows[#rows + 1] = "<button class='cbi-button cbi-button-apply' name='_xray_install_version' value='1' onclick=\"return confirm('" .. pcdata(_("Install selected Xray version?")) .. "')\">" .. _("Install selected version") .. "</button>"
       rows[#rows + 1] = "</div>"
       if status_rc ~= 0 then
@@ -251,8 +256,13 @@ local function render(ctx)
 
     if http.formvalue("_json_delete") == "1" then
       local jf = fval_last("json_file") or ""
-      if jf ~= "" then fs.remove(XRAY_DIR .. "/" .. jf) end
-      set_err(nil); redirect_here("xray"); return m
+      if is_known_json_file(jf) then
+        fs.remove(XRAY_DIR .. "/" .. jf)
+        set_err(nil)
+      else
+        set_err(_("Invalid file name. Expected *.json without slashes."))
+      end
+      redirect_here("xray"); return m
     end
 
     -- selector box
@@ -264,7 +274,7 @@ local function render(ctx)
   <div class="inline-row" style="margin:.3rem 0;">
     <span>%s:</span>
     <input type="text" name="new_json_name" placeholder="01_example.json" style="width:200px">
-    <button class="cbi-button cbi-button-apply" name="_json_create" value="1">%s</button>
+    <button class="cbi-button cbi-button-apply" name="_json_create" value="1" onclick="return window.__xray_guard?window.__xray_guard():true">%s</button>
   </div>
   <div style="color:#6b7280;margin-top:.2rem">%s <code>*.json</code>, %s.</div>
   <hr style="border:none;border-top:1px solid #e5e7eb;margin:.5rem 0"/>]],
@@ -305,7 +315,7 @@ local function render(ctx)
 </script>]]
       buf[#buf+1] = string.format([[
 <button class="cbi-button cbi-button-remove" name="_json_delete" value="1"
-  onclick="return confirm('%s')">%s</button>]],
+  onclick="return (window.__xray_guard?window.__xray_guard():true) && confirm('%s')">%s</button>]],
         pcdata(_("Delete selected file?")),
         pcdata(_("Delete"))
       )
@@ -385,7 +395,29 @@ local function render(ctx)
     });
   }
   function syncHighlight(){ if(!ta||!hi)return; hi.innerHTML=highlightJsonc(ta.value)+'\n'; hi.scrollTop=ta.scrollTop; hi.scrollLeft=ta.scrollLeft; }
-  function validate(){ if(!ta||!badge)return; try{ JSON.parse(stripJsonComments(ta.value)); badge.textContent=']] .. pcdata(_("JSONC is valid (comments allowed)")) .. [['; badge.style.color='#16a34a'; }catch(e){ badge.textContent=']] .. pcdata(_("JSON error: ")) .. [['+e.message; badge.style.color='#dc2626'; } }
+  function showJsonError(badge, ta, hi, prefix, message){
+    badge.textContent = '';
+    badge.style.color = '#dc2626';
+    badge.appendChild(document.createTextNode(prefix + message + ' '));
+    var m = String(message || '').match(/position (\d+)/);
+    if (!m) return;
+    var pos = parseInt(m[1], 10);
+    var jump = document.createElement('a');
+    jump.href = '#';
+    jump.textContent = ']] .. pcdata(_("jump to error")) .. [[';
+    jump.onclick = function(ev){
+      ev.preventDefault();
+      var p = Math.min(pos, ta.value.length);
+      ta.focus();
+      ta.setSelectionRange(p, Math.min(p + 1, ta.value.length));
+      var before = ta.value.slice(0, p), line = before.split('\n').length;
+      var lh = parseFloat(getComputedStyle(ta).lineHeight) || 18;
+      ta.scrollTop = Math.max(0, (line - 3) * lh);
+      if (hi) hi.scrollTop = ta.scrollTop;
+    };
+    badge.appendChild(jump);
+  }
+  function validate(){ if(!ta||!badge)return; try{ JSON.parse(stripJsonComments(ta.value)); badge.textContent=']] .. pcdata(_("JSONC is valid (comments allowed)")) .. [['; badge.style.color='#16a34a'; }catch(e){ showJsonError(badge, ta, hi, ']] .. pcdata(_("JSON error: ")) .. [[', e.message); } }
   var validateDebounced = debounce(validate,250);
   if(ta){ ta.addEventListener('input', function(){ syncHighlight(); validateDebounced(); }); ta.addEventListener('scroll', syncHighlight); syncHighlight(); validate();
 

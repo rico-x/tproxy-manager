@@ -5,6 +5,12 @@ local _ = require "luci.model.cbi.tproxy_manager.i18n"
 
 local M = {}
 
+-- utils.lua is required by almost every CBI module before the first use of
+-- math.random() for temp file names (atomic_write here, and
+-- validate_*_text in mihomo.lua/singbox.lua) — seed the PRNG in one place
+-- instead of relying on some other module having seeded it first.
+math.randomseed(os.time() + math.floor(os.clock() * 1000000))
+
 function M.trim(value)
   return tostring(value or ""):gsub("\r", ""):gsub("^%s+", ""):gsub("%s+$", "")
 end
@@ -173,7 +179,14 @@ end
 
 function M.is_abs_path(path)
   path = tostring(path or "")
-  return path:match("^/[%w%._%-%+/@:]*$") ~= nil
+  if path:match("^/[%w%._%-%+/@:]*$") == nil then return false end
+  -- separately reject any ".." path segment, so directory traversal
+  -- (e.g. "/etc/x/../../etc/passwd") cannot slip through even though
+  -- every individual character is allowed by the class above.
+  for segment in (path .. "/"):gmatch("([^/]*)/") do
+    if segment == ".." then return false end
+  end
+  return true
 end
 
 function M.is_iface_name(name)

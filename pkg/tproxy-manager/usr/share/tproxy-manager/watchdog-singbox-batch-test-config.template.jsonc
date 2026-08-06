@@ -1,0 +1,11 @@
+{
+  "log": {
+    "level": "warn"
+  },
+  "inbounds": "__BATCH_INBOUNDS__",
+  "outbounds": "__BATCH_OUTBOUNDS__",
+  "route": {
+    "rules": "__BATCH_RULES__",
+    "final": "direct"
+  }
+}

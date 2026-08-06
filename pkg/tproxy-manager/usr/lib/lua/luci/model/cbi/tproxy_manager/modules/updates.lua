@@ -58,7 +58,37 @@ local function log_sys(msg)
   sys.exec(string.format("logger -t %s %s", SYSLOG_TAG, shellescape(msg or "")))
 end
 
+-- is_safe_geo_url: only allow http(s), reject schemes like file://
+-- (otherwise fetch_to could be made to copy an arbitrary local file —
+-- SSRF/LFI via curl/wget). Also reject whitespace/quotes/shell special
+-- characters as defense-in-depth (shellescape() already makes this safe,
+-- this is just a second line of defense).
+local function is_safe_geo_url(url)
+  url = tostring(url or "")
+  return url:match("^https?://[^%s\"'`$]+$") ~= nil
+end
+
+-- is_safe_geo_dest: an absolute path without directory traversal ("..").
+local function is_safe_geo_dest(dest)
+  return utils.is_abs_path(dest)
+end
+
+-- dq_escape: escaping for substitution inside DOUBLE quotes in the
+-- generated shell script (used only for log message text — the actual
+-- command arguments go through shellescape()/single quotes).
+local function dq_escape(s)
+  return (tostring(s or ""):gsub('([\\"$`])', '\\%1'))
+end
+
 local function fetch_to(url, dest)
+  if not is_safe_geo_url(url) then
+    log_sys(string.format("FAIL: unsafe url rejected: %s", url or ""))
+    return false
+  end
+  if not is_safe_geo_dest(dest) then
+    log_sys(string.format("FAIL: unsafe dest rejected: %s", dest or ""))
+    return false
+  end
   local tmp = dest .. ".tmp"
   local cmd = string.format("(command -v curl >/dev/null && curl -L --fail --silent --show-error -o %s %s) " ..
                             "|| (command -v wget >/dev/null && wget -O %s %s)",
@@ -268,26 +298,40 @@ local function write_geo_script(rows)
   }
   for _, r in ipairs(rows or {}) do
     if r.url and r.url ~= "" and r.dest and r.dest ~= "" then
-      local esc_url  = (r.url:gsub('"','\\"'))
-      local esc_dest = (r.dest:gsub('"','\\"'))
-      local esc_name = ((r.name or ""):gsub('"','\\"'))
-      lines[#lines+1] = string.format([[
-# %s
+      -- Skip entries with an invalid url/dest (in case they ended up in
+      -- geo-sources.conf bypassing UI validation, e.g. via the "raw JSON"
+      -- editor) — never embed them into the executable script at all.
+      if not is_safe_geo_url(r.url) then
+        log_sys(string.format("SKIP (write_geo_script): unsafe url: %s", r.url))
+      elseif not is_safe_geo_dest(r.dest) then
+        log_sys(string.format("SKIP (write_geo_script): unsafe dest: %s", r.dest))
+      else
+        -- shellescape() wraps the value in single quotes and correctly
+        -- escapes embedded single quotes/backticks/$()/newlines — unlike the
+        -- previous manual gsub('"','\\"'), which did not protect against
+        -- command substitution inside double quotes.
+        local q_url   = shellescape(r.url)
+        local q_dest  = shellescape(r.dest)
+        local q_name  = shellescape(r.name or "")
+        local dq_url  = dq_escape(r.url)
+        local dq_dest = dq_escape(r.dest)
+        lines[#lines+1] = string.format([[
+: %s
 if command -v curl >/dev/null; then
-  tmp="%s.tmp"
-  mkdir -p "$(dirname "%s")"
-  if curl -L --fail --silent --show-error -o "$tmp" "%s"; then
-    mv "$tmp" "%s"
+  tmp=%s.tmp
+  mkdir -p "$(dirname %s)"
+  if curl -L --fail --silent --show-error -o "$tmp" %s; then
+    mv "$tmp" %s
     logger -t %s "OK: %s -> %s"
   else
     rm -f "$tmp"
     logger -t %s "FAIL: %s"
   fi
 elif command -v wget >/dev/null; then
-  tmp="%s.tmp"
-  mkdir -p "$(dirname "%s")"
-  if wget -q -O "$tmp" "%s"; then
-    mv "$tmp" "%s"
+  tmp=%s.tmp
+  mkdir -p "$(dirname %s)"
+  if wget -q -O "$tmp" %s; then
+    mv "$tmp" %s
     logger -t %s "OK: %s -> %s"
   else
     rm -f "$tmp"
@@ -296,12 +340,13 @@ elif command -v wget >/dev/null; then
 else
   logger -t %s "FAIL: no curl/wget"
 fi
-]], esc_name,
-      esc_dest, esc_dest, esc_url, esc_dest, SYSLOG_TAG, esc_url, esc_dest,
-      SYSLOG_TAG, esc_url,
-      esc_dest, esc_dest, esc_url, esc_dest, SYSLOG_TAG, esc_url, esc_dest,
-      SYSLOG_TAG, esc_url,
-      SYSLOG_TAG)
+]], q_name,
+        q_dest, q_dest, q_url, q_dest, SYSLOG_TAG, dq_url, dq_dest,
+        SYSLOG_TAG, dq_url,
+        q_dest, q_dest, q_url, q_dest, SYSLOG_TAG, dq_url, dq_dest,
+        SYSLOG_TAG, dq_url,
+        SYSLOG_TAG)
+      end
     end
   end
   write_file(GEO_SCRIPT, table.concat(lines, "\n") .. "\n")
@@ -522,13 +567,17 @@ table.geo-table.geo-upd th:first-child, table.geo-table.geo-upd td:first-child{ 
       local name = (http.formvalue("add_name") or ""):gsub("^%s+",""):gsub("%s+$","")
       local url  = (http.formvalue("add_url")  or ""):gsub("^%s+",""):gsub("%s+$","")
       local dest = (http.formvalue("add_dest") or ""):gsub("^%s+",""):gsub("%s+$","")
-      if dest ~= "" then
+      if dest == "" then
+        set_err(_("Destination path (dest) is required.")); set_info(nil)
+      elseif not is_safe_geo_dest(dest) then
+        set_err(_("Destination path (dest) must be an absolute path without \"..\".")); set_info(nil)
+      elseif url ~= "" and not is_safe_geo_url(url) then
+        set_err(_("Source URL must start with http:// or https://.")); set_info(nil)
+      else
         rows[#rows+1] = { name = name, url = url, dest = dest }
         save_geo_cfg(rows)
         write_geo_script(rows)
         set_err(nil); set_info(_("Source added: ")..(name ~= "" and name or dest))
-      else
-        set_err(_("Destination path (dest) is required.")); set_info(nil)
       end
       redirect_here("updates"); return m
     end
@@ -575,13 +624,22 @@ table.geo-table.geo-upd th:first-child, table.geo-table.geo-upd td:first-child{ 
       end
       if idx and rows[idx] then
         local dest = (http.formvalue("edit_dest") or ""):gsub("^%s+",""):gsub("%s+$","")
+        local url  = (http.formvalue("edit_url") or ""):gsub("^%s+",""):gsub("%s+$","")
+        local edit_err = nil
         if dest == "" then
-          set_err(_("Destination path (dest) is required.")); set_info(nil)
+          edit_err = _("Destination path (dest) is required.")
+        elseif not is_safe_geo_dest(dest) then
+          edit_err = _("Destination path (dest) must be an absolute path without \"..\".")
+        elseif url ~= "" and not is_safe_geo_url(url) then
+          edit_err = _("Source URL must start with http:// or https://.")
+        end
+        if edit_err then
+          set_err(edit_err); set_info(nil)
           http.redirect(disp.build_url("admin","network","tproxy_manager") .. "?tab=updates&_geo_edit_idx=" .. tostring(idx))
           return m
         end
         rows[idx].name = (http.formvalue("edit_name") or "")
-        rows[idx].url  = (http.formvalue("edit_url")  or "")
+        rows[idx].url  = url
         rows[idx].dest = dest
         save_geo_cfg(rows)
         write_geo_script(rows)
@@ -662,18 +720,17 @@ table.geo-table.geo-upd th:first-child, table.geo-table.geo-upd td:first-child{ 
       redirect_here("updates"); return m
     end
 
-    local sec = m:section(SimpleSection)
-    local dv = sec:option(DummyValue, "_geo_msgs"); dv.rawhtml = true; dv.title = ""
-    function dv.cfgvalue()
-      local e = get_err(); local i = get_info()
-      local out = {}
-      if cfg_err and cfg_err ~= "" then
-        out[#out+1] = "<div class='msg err'>" .. _("Invalid JSON/JSONC in ") .. pcdata(GEO_CFG) .. ": " .. pcdata(cfg_err) .. "</div>"
+    -- The shared err/info banner is already rendered by manage.lua at the
+    -- bottom of the page (single render point for all tabs) — here we only
+    -- show the GEO-tab-specific geo-sources.conf parse error, without
+    -- re-rendering get_err()/get_info(), which used to duplicate the same
+    -- message twice on screen.
+    if cfg_err and cfg_err ~= "" then
+      local sec = m:section(SimpleSection)
+      local dv = sec:option(DummyValue, "_geo_cfg_err"); dv.rawhtml = true; dv.title = ""
+      function dv.cfgvalue()
+        return "<div class='msg err'>" .. _("Invalid JSON/JSONC in ") .. pcdata(GEO_CFG) .. ": " .. pcdata(cfg_err) .. "</div>"
       end
-      if e ~= "" then out[#out+1] = "<div class='msg err'>"..pcdata(e).."</div>" end
-      if i ~= "" then out[#out+1] = "<div class='msg info'>"..pcdata(i).."</div>" end
-      if i ~= "" then set_info(nil) end
-      return table.concat(out)
     end
   end
 end

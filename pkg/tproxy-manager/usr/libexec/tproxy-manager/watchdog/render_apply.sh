@@ -87,7 +87,10 @@ first_outbound_tag() {
     printf '%s\n' "$tag"
 }
 
-write_wrapped_outbounds() {
+# render_wrapped_outbounds: только рендерит в tmp-файл рядом с target_file,
+# НЕ подменяет живой файл — вызывающий код решает, промоутить ли его
+# (после валидации), см. apply_generated_outbounds().
+render_wrapped_outbounds() {
     rendered_file="$1"
     target_file="$2"
     tmp_file="${target_file}.tmp.$$"
@@ -102,7 +105,26 @@ write_wrapped_outbounds() {
             printf '\n}\n'
         } > "$tmp_file"
     fi
-    mv "$tmp_file" "$target_file"
+    printf '%s\n' "$tmp_file"
+}
+
+# write_wrapped_outbounds: как раньше — рендерит и сразу промоутит в
+# target_file. Оставлена для обратной совместимости (не используется в этом
+# файле после добавления pre-flight валидации, см. apply_generated_outbounds).
+write_wrapped_outbounds() {
+    tmp_file="$(render_wrapped_outbounds "$1" "$2")"
+    mv "$tmp_file" "$2"
+}
+
+# find_xray_bin: те же пути, что и get_xray_bin() в xray.lua.
+find_xray_bin() {
+    if command -v xray >/dev/null 2>&1; then
+        command -v xray
+    elif [ -x "/usr/bin/xray" ]; then
+        printf '%s\n' "/usr/bin/xray"
+    elif [ -x "/usr/sbin/xray" ]; then
+        printf '%s\n' "/usr/sbin/xray"
+    fi
 }
 
 render_test_config() {
@@ -148,7 +170,115 @@ apply_generated_outbounds() {
         log_msg "ошибка: каталог для outbounds не найден: $outdir"
         return 1
     fi
-    write_wrapped_outbounds "$rendered_file" "$OUTBOUND_FILE" || return 1
+
+    outbound_tmp="$(render_wrapped_outbounds "$rendered_file" "$OUTBOUND_FILE")"
+
+    # Pre-flight валидация (как у mihomo/sing-box, apply_mihomo_generated/
+    # apply_singbox_generated ниже): проверяем итоговый merge конфигурации
+    # Xray ДО того, как заменить живой outbounds-файл. Xray собирает конфиг
+    # из ВСЕХ *.json в --confdir, поэтому проверяем на теневой копии каталога,
+    # не трогая реальный $outdir, пока не убедимся, что всё валидно.
+    xray_bin="$(find_xray_bin)"
+    if [ -n "$xray_bin" ]; then
+        shadow_dir="$(mktemp -d)"
+        cp -a "$outdir"/. "$shadow_dir"/ 2>/dev/null
+        cp "$outbound_tmp" "$shadow_dir/$(basename "$OUTBOUND_FILE")"
+        if ! "$xray_bin" -test -format json -confdir "$shadow_dir" >>"$LOG_FILE" 2>&1; then
+            rm -rf "$shadow_dir"
+            rm -f "$outbound_tmp"
+            log_msg "ошибка: generated Xray config (outbounds) не прошёл проверку -test"
+            return 1
+        fi
+        rm -rf "$shadow_dir"
+    fi
+
+    mv "$outbound_tmp" "$OUTBOUND_FILE" || {
+        log_msg "ошибка: не удалось применить сгенерированный outbounds-файл"
+        return 1
+    }
+
+    if [ ! -x "$SERVICE_PATH" ]; then
+        log_msg "ошибка: сервис не найден или не исполняем: $SERVICE_PATH"
+        return 1
+    fi
+    if "$SERVICE_PATH" "$RESTART_CMD"; then
+        return 0
+    fi
+    log_msg "ошибка: команда рестарта завершилась неуспешно: $SERVICE_PATH $RESTART_CMD"
+    return 1
+}
+
+apply_mihomo_generated() {
+    single_links_file="$1"
+    provider_file="${MIHOMO_PROVIDER_FILE:-$OUTBOUND_FILE}"
+    config_file="${MIHOMO_CONFIG_FILE:-/etc/mihomo/tproxy-manager.yaml}"
+    if [ ! -x "$PROXY2MIHOMO" ]; then
+        log_msg "ошибка: не найден исполняемый конвертер $PROXY2MIHOMO"
+        return 1
+    fi
+    provider_dir="$(dirname "$provider_file")"
+    config_dir="$(dirname "$config_file")"
+    mkdir -p "$provider_dir" "$config_dir" 2>/dev/null || {
+        log_msg "ошибка: не удалось создать каталог managed-конфига Mihomo"
+        return 1
+    }
+    provider_tmp="${provider_file}.tmp.$$"
+    config_tmp="${config_file}.tmp.$$"
+    if "$PROXY2MIHOMO" -r "$single_links_file" --provider > "$provider_tmp" \
+        && "$PROXY2MIHOMO" -r "$single_links_file" --runtime --tproxy-port "$TPROXY_PORT" > "$config_tmp"; then
+        mihomo_bin="$(command -v mihomo 2>/dev/null || true)"
+        if [ -n "$mihomo_bin" ] && ! "$mihomo_bin" -t -f "$config_tmp" >> "$LOG_FILE" 2>&1; then
+            rm -f "$provider_tmp" "$config_tmp"
+            log_msg "ошибка: generated Mihomo config не прошёл проверку"
+            return 1
+        fi
+        mv "$provider_tmp" "$provider_file" && mv "$config_tmp" "$config_file" || return 1
+    else
+        rm -f "$provider_tmp" "$config_tmp"
+        log_msg "ошибка: не удалось сгенерировать managed-конфиг Mihomo"
+        return 1
+    fi
+    if [ ! -x "$SERVICE_PATH" ]; then
+        log_msg "ошибка: сервис не найден или не исполняем: $SERVICE_PATH"
+        return 1
+    fi
+    if "$SERVICE_PATH" "$RESTART_CMD"; then
+        return 0
+    fi
+    log_msg "ошибка: команда рестарта завершилась неуспешно: $SERVICE_PATH $RESTART_CMD"
+    return 1
+}
+
+apply_singbox_generated() {
+    single_links_file="$1"
+    outbounds_file="${SINGBOX_OUTBOUNDS_FILE:-$OUTBOUND_FILE}"
+    config_file="${SINGBOX_CONFIG_FILE:-/etc/sing-box/tproxy-manager.json}"
+    if [ ! -x "$PROXY2SINGBOX" ]; then
+        log_msg "ошибка: не найден исполняемый конвертер $PROXY2SINGBOX"
+        return 1
+    fi
+    outbounds_dir="$(dirname "$outbounds_file")"
+    config_dir="$(dirname "$config_file")"
+    mkdir -p "$outbounds_dir" "$config_dir" 2>/dev/null || {
+        log_msg "ошибка: не удалось создать каталог managed-конфига sing-box"
+        return 1
+    }
+    outbounds_tmp="${outbounds_file}.tmp.$$"
+    config_tmp="${config_file}.tmp.$$"
+    if "$PROXY2SINGBOX" -r "$single_links_file" --outbounds > "$outbounds_tmp" \
+        && "$PROXY2SINGBOX" -r "$single_links_file" --runtime --tproxy-port "$TPROXY_PORT" > "$config_tmp"; then
+        singbox_bin="$(command -v sing-box 2>/dev/null || true)"
+        if [ -n "$singbox_bin" ] && ! "$singbox_bin" check -c "$config_tmp" >> "$LOG_FILE" 2>&1; then
+            rm -f "$outbounds_tmp" "$config_tmp"
+            log_msg "ошибка: generated sing-box config не прошёл проверку"
+            return 1
+        fi
+        mv "$outbounds_tmp" "$outbounds_file" && mv "$config_tmp" "$config_file" || return 1
+    else
+        rm -f "$outbounds_tmp" "$config_tmp"
+        log_msg "ошибка: не удалось сгенерировать managed-конфиг sing-box"
+        return 1
+    fi
     if [ ! -x "$SERVICE_PATH" ]; then
         log_msg "ошибка: сервис не найден или не исполняем: $SERVICE_PATH"
         return 1
@@ -168,6 +298,22 @@ apply_link_runtime() {
         log_msg "ссылка $hash не прошла тест, применение отменено"
         return 1
     }
+
+    single_links_file="$TEST_DIR/one-link.txt"
+    case "$PROXY_ENGINE" in
+        mihomo)
+            apply_mihomo_generated "$single_links_file" || return 1
+            set_last_success_hash "$hash"
+            set_last_applied_hash "$hash"
+            return 0
+            ;;
+        singbox)
+            apply_singbox_generated "$single_links_file" || return 1
+            set_last_success_hash "$hash"
+            set_last_applied_hash "$hash"
+            return 0
+            ;;
+    esac
 
     rendered_file="$TEST_DIR/rendered.json"
     [ -f "$rendered_file" ] || return 1

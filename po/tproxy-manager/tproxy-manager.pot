@@ -1258,3 +1258,162 @@ msgstr ""
 
 msgid "Choose a VLESS or Hysteria 2 template, edit it and save it back to its own file. The active path is also stored in UCI settings."
 msgstr ""
+
+msgid "Active proxy engine"
+msgstr ""
+
+msgid "Activate"
+msgstr ""
+
+msgid "installed"
+msgstr ""
+
+msgid "not installed"
+msgstr ""
+
+msgid "Selected proxy engine binary is not installed."
+msgstr ""
+
+msgid "Proxy engine activated: %s"
+msgstr ""
+
+msgid "Mihomo version"
+msgstr ""
+
+msgid "Mihomo version information refreshed."
+msgstr ""
+
+msgid "Failed to refresh Mihomo version information."
+msgstr ""
+
+msgid "Latest Mihomo version is not available."
+msgstr ""
+
+msgid "Mihomo updated."
+msgstr ""
+
+msgid "Mihomo update failed."
+msgstr ""
+
+msgid "Select Mihomo version to install."
+msgstr ""
+
+msgid "Mihomo version installed."
+msgstr ""
+
+msgid "Mihomo install failed."
+msgstr ""
+
+msgid "Mihomo rollback completed."
+msgstr ""
+
+msgid "Mihomo rollback failed."
+msgstr ""
+
+msgid "Update Mihomo to latest stable version?"
+msgstr ""
+
+msgid "Rollback Mihomo to previous binary?"
+msgstr ""
+
+msgid "Install selected Mihomo version?"
+msgstr ""
+
+msgid "Generate managed Mihomo config from Watchdog links"
+msgstr ""
+
+msgid "Mihomo managed config generated: "
+msgstr ""
+
+msgid "Mihomo converter"
+msgstr ""
+
+msgid "Mihomo test template"
+msgstr ""
+
+msgid "Mihomo batch test template"
+msgstr ""
+
+msgid "sing-box service status and controls"
+msgstr ""
+
+msgid "sing-box version"
+msgstr ""
+
+msgid "sing-box version information refreshed."
+msgstr ""
+
+msgid "Failed to refresh sing-box version information."
+msgstr ""
+
+msgid "Latest sing-box version is not available."
+msgstr ""
+
+msgid "sing-box updated."
+msgstr ""
+
+msgid "sing-box update failed."
+msgstr ""
+
+msgid "Select sing-box version to install."
+msgstr ""
+
+msgid "sing-box version installed."
+msgstr ""
+
+msgid "sing-box install failed."
+msgstr ""
+
+msgid "sing-box rollback completed."
+msgstr ""
+
+msgid "sing-box rollback failed."
+msgstr ""
+
+msgid "Update sing-box to latest stable version?"
+msgstr ""
+
+msgid "Rollback sing-box to previous binary?"
+msgstr ""
+
+msgid "Install selected sing-box version?"
+msgstr ""
+
+msgid "sing-box (JSON files in /etc/sing-box)"
+msgstr ""
+
+msgid "Invalid sing-box configuration. File was not saved."
+msgstr ""
+
+msgid "sing-box config saved: "
+msgstr ""
+
+msgid "sing-box converter"
+msgstr ""
+
+msgid "sing-box test template"
+msgstr ""
+
+msgid "sing-box batch test template"
+msgstr ""
+
+msgid "Destination path (dest) must be an absolute path without \"..\"."
+msgstr ""
+
+msgid "Source URL must start with http:// or https://."
+msgstr ""
+
+msgid "Invalid list_file: not one of the configured list paths."
+msgstr ""
+
+msgid "Template file path must be absolute."
+msgstr ""
+
+msgid "Test template file path must be absolute."
+msgstr ""
+
+msgid "LINKS_FILE path must be absolute."
+msgstr ""
+
+msgid "jump to error"
+msgstr ""

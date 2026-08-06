@@ -135,7 +135,11 @@ local function replace_placeholders(node, placeholders)
     for key, value in pairs(placeholders) do
       local sv = scalar_to_string(value)
       if sv ~= nil then
-        rendered = rendered:gsub(key, sv)
+        -- sv приходит из данных подписки (host/sni/path/пароль и т.п.) и может
+        -- содержать "%". string.gsub трактует "%" в строке замены как escape-
+        -- символ, поэтому одиночный "%" без экранирования роняет скрипт
+        -- (invalid use of '%' in replacement string). Экранируем перед подстановкой.
+        rendered = rendered:gsub(key, (sv:gsub("%%", "%%%%")))
       end
     end
     return rendered

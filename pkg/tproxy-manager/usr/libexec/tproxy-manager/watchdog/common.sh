@@ -9,6 +9,7 @@ SCAN_LOCK_DIR="/tmp/tproxy-manager-watchdog-scan.lock"
 LOG_FILE="/tmp/tproxy-manager-watchdog.log"
 LOG_TAG_DEFAULT="tproxy-manager-watchdog"
 
+PROXY_ENGINE_DEFAULT="xray"
 CHECK_URL_DEFAULT="https://ifconfig.me/ip"
 PROXY_URL_DEFAULT="socks5h://127.0.0.1:10808"
 INTERVAL_DEFAULT="60"
@@ -24,9 +25,16 @@ HYSTERIA_TEST_TEMPLATE_FILE_DEFAULT="/etc/tproxy-manager/watchdog-hysteria-test-
 HYSTERIA_BATCH_TEST_TEMPLATE_FILE_DEFAULT="/etc/tproxy-manager/watchdog-hysteria-batch-test-config.template.jsonc"
 OUTBOUND_FILE_DEFAULT="/etc/xray/04_outbounds.json"
 VLESS2JSON_DEFAULT="/usr/bin/vless2json.sh"
+PROXY2MIHOMO_DEFAULT="/usr/bin/proxy2mihomo.lua"
+PROXY2SINGBOX_DEFAULT="/usr/bin/proxy2singbox.lua"
 SERVICE_PATH_DEFAULT="/etc/init.d/xray"
 RESTART_CMD_DEFAULT="restart"
 TEST_COMMAND_DEFAULT="/usr/bin/xray -c {config}"
+TPROXY_PORT_DEFAULT="61219"
+MIHOMO_CONFIG_FILE_DEFAULT="/etc/mihomo/tproxy-manager.yaml"
+MIHOMO_PROVIDER_FILE_DEFAULT="/etc/mihomo/tproxy-manager-proxies.yaml"
+SINGBOX_CONFIG_FILE_DEFAULT="/etc/sing-box/tproxy-manager.json"
+SINGBOX_OUTBOUNDS_FILE_DEFAULT="/etc/sing-box/tproxy-manager-outbounds.json"
 SELECTION_MODE_DEFAULT="random"
 EXCLUDE_DEAD_DEFAULT="0"
 COOLDOWN_HOURS_DEFAULT="0"
@@ -121,6 +129,7 @@ uci_get() {
 }
 
 load_config() {
+    PROXY_ENGINE="$(uci_get proxy_engine)"
     CHECK_URL="$(uci_get watchdog_check_url)"
     PROXY_URL="$(uci_get watchdog_proxy_url)"
     INTERVAL="$(uci_get watchdog_interval)"
@@ -136,9 +145,16 @@ load_config() {
     HYSTERIA_BATCH_TEST_TEMPLATE_FILE="$(uci_get watchdog_hysteria_batch_test_template_file)"
     OUTBOUND_FILE="$(uci_get watchdog_outbound_file)"
     VLESS2JSON="$(uci_get watchdog_vless2json)"
+    PROXY2MIHOMO="$(uci_get watchdog_proxy2mihomo)"
+    PROXY2SINGBOX="$(uci_get watchdog_proxy2singbox)"
     SERVICE_PATH="$(uci_get watchdog_service_path)"
     RESTART_CMD="$(uci_get watchdog_restart_cmd)"
     TEST_COMMAND="$(uci_get watchdog_test_command)"
+    TPROXY_PORT="$(uci_get tproxy_port)"
+    MIHOMO_CONFIG_FILE="$(uci_get mihomo_profile_config_file)"
+    MIHOMO_PROVIDER_FILE="$(uci_get mihomo_profile_managed_provider_file)"
+    SINGBOX_CONFIG_FILE="$(uci_get singbox_profile_config_file)"
+    SINGBOX_OUTBOUNDS_FILE="$(uci_get singbox_profile_managed_outbounds_file)"
     SELECTION_MODE="$(uci_get watchdog_selection_mode)"
     if [ -n "${WATCHDOG_SELECTION_MODE:-}" ]; then
         SELECTION_MODE="$WATCHDOG_SELECTION_MODE"
@@ -156,6 +172,12 @@ load_config() {
     BATCH_CHECK_FALLBACK="$(uci_get watchdog_batch_check_fallback)"
     LOG_TAG="$(uci_get watchdog_log_tag)"
 
+    [ -n "$PROXY_ENGINE" ] || PROXY_ENGINE="$PROXY_ENGINE_DEFAULT"
+    case "$PROXY_ENGINE" in
+        xray|mihomo|singbox) : ;;
+        sing-box|sing_box) PROXY_ENGINE="singbox" ;;
+        *) PROXY_ENGINE="$PROXY_ENGINE_DEFAULT" ;;
+    esac
     [ -n "$CHECK_URL" ] || CHECK_URL="$CHECK_URL_DEFAULT"
     [ -n "$PROXY_URL" ] || PROXY_URL="$PROXY_URL_DEFAULT"
     [ -n "$LINKS_FILE" ] || LINKS_FILE="$LINKS_FILE_DEFAULT"
@@ -167,15 +189,22 @@ load_config() {
     [ -n "$HYSTERIA_BATCH_TEST_TEMPLATE_FILE" ] || HYSTERIA_BATCH_TEST_TEMPLATE_FILE="$HYSTERIA_BATCH_TEST_TEMPLATE_FILE_DEFAULT"
     [ -n "$OUTBOUND_FILE" ] || OUTBOUND_FILE="$OUTBOUND_FILE_DEFAULT"
     [ -n "$VLESS2JSON" ] || VLESS2JSON="$VLESS2JSON_DEFAULT"
+    [ -n "$PROXY2MIHOMO" ] || PROXY2MIHOMO="$PROXY2MIHOMO_DEFAULT"
+    [ -n "$PROXY2SINGBOX" ] || PROXY2SINGBOX="$PROXY2SINGBOX_DEFAULT"
     [ -n "$SERVICE_PATH" ] || SERVICE_PATH="$SERVICE_PATH_DEFAULT"
     [ -n "$RESTART_CMD" ] || RESTART_CMD="$RESTART_CMD_DEFAULT"
     [ -n "$TEST_COMMAND" ] || TEST_COMMAND="$TEST_COMMAND_DEFAULT"
+    [ -n "$MIHOMO_CONFIG_FILE" ] || MIHOMO_CONFIG_FILE="$MIHOMO_CONFIG_FILE_DEFAULT"
+    [ -n "$MIHOMO_PROVIDER_FILE" ] || MIHOMO_PROVIDER_FILE="$MIHOMO_PROVIDER_FILE_DEFAULT"
+    [ -n "$SINGBOX_CONFIG_FILE" ] || SINGBOX_CONFIG_FILE="$SINGBOX_CONFIG_FILE_DEFAULT"
+    [ -n "$SINGBOX_OUTBOUNDS_FILE" ] || SINGBOX_OUTBOUNDS_FILE="$SINGBOX_OUTBOUNDS_FILE_DEFAULT"
     [ -n "$LOG_TAG" ] || LOG_TAG="$LOG_TAG_DEFAULT"
 
     INTERVAL="$(require_number_or_default "$INTERVAL" "$INTERVAL_DEFAULT")"
     FAIL_THRESHOLD="$(require_number_or_default "$FAIL_THRESHOLD" "$FAIL_THRESHOLD_DEFAULT")"
     CONNECT_TIMEOUT="$(require_number_or_default "$CONNECT_TIMEOUT" "$CONNECT_TIMEOUT_DEFAULT")"
     MAX_TIME="$(require_number_or_default "$MAX_TIME" "$MAX_TIME_DEFAULT")"
+    TPROXY_PORT="$(require_number_or_default "$TPROXY_PORT" "$TPROXY_PORT_DEFAULT")"
     COOLDOWN_HOURS="$(require_number_or_default "$COOLDOWN_HOURS" "$COOLDOWN_HOURS_DEFAULT")"
     COOLDOWN_MINUTES="$(require_number_or_default "$COOLDOWN_MINUTES" "$COOLDOWN_MINUTES_DEFAULT")"
     TEST_PORT="$(require_number_or_default "$TEST_PORT" "$TEST_PORT_DEFAULT")"
@@ -189,6 +218,7 @@ load_config() {
     [ "$CONNECT_TIMEOUT" -ge 1 ] || CONNECT_TIMEOUT="$CONNECT_TIMEOUT_DEFAULT"
     [ "$MAX_TIME" -ge "$CONNECT_TIMEOUT" ] || MAX_TIME="$MAX_TIME_DEFAULT"
     [ "$MAX_TIME" -ge "$CONNECT_TIMEOUT" ] || MAX_TIME="$CONNECT_TIMEOUT"
+    [ "$TPROXY_PORT" -ge 1 ] && [ "$TPROXY_PORT" -le 65535 ] || TPROXY_PORT="$TPROXY_PORT_DEFAULT"
     [ "$TEST_PORT" -ge 1 ] && [ "$TEST_PORT" -le 65535 ] || TEST_PORT="$TEST_PORT_DEFAULT"
     [ "$BACKGROUND_CHECK_INTERVAL" -ge 1 ] || BACKGROUND_CHECK_INTERVAL="$BACKGROUND_CHECK_INTERVAL_DEFAULT"
     [ "$BATCH_CHECK_PORT_START" -ge 1 ] && [ "$BATCH_CHECK_PORT_START" -le 65535 ] || BATCH_CHECK_PORT_START="$BATCH_CHECK_PORT_START_DEFAULT"
@@ -428,16 +458,17 @@ acquire_lock_dir() {
         printf '%s\n' "$$" > "$lock_dir/pid" 2>/dev/null || true
         return 0
     fi
+    holder_pid=""
     if [ -f "$lock_dir/pid" ]; then
         holder_pid="$(cat "$lock_dir/pid" 2>/dev/null)"
-        if ! validate_number "$holder_pid" || ! kill -0 "$holder_pid" 2>/dev/null; then
-            rm -f "$lock_dir/pid" 2>/dev/null || true
-            rmdir "$lock_dir" 2>/dev/null || true
-            if mkdir "$lock_dir" 2>/dev/null; then
-                printf '%s\n' "$$" > "$lock_dir/pid" 2>/dev/null || true
-                log_msg "обнаружен stale lock, выполнено восстановление"
-                return 0
-            fi
+    fi
+    if ! validate_number "$holder_pid" || ! kill -0 "$holder_pid" 2>/dev/null; then
+        rm -f "$lock_dir/pid" 2>/dev/null || true
+        rmdir "$lock_dir" 2>/dev/null || true
+        if mkdir "$lock_dir" 2>/dev/null; then
+            printf '%s\n' "$$" > "$lock_dir/pid" 2>/dev/null || true
+            log_msg "обнаружен stale lock, выполнено восстановление"
+            return 0
         fi
     fi
     [ -n "$busy_msg" ] && log_msg "$busy_msg"

@@ -53,10 +53,52 @@ probe_link_runtime() {
 
     printf '%s\n' "$link" > "$single_links_file"
 
-    generate_rendered_config "$single_links_file" "$rendered_file" "$link" || return 1
-    extract_outbounds_array "$rendered_file" "$array_file" || return 1
-    render_test_config "$array_file" "$config_file" "$TEST_PORT" "$link" || return 1
-    start_test_instance "$config_file" "$log_file" || return 1
+    case "$PROXY_ENGINE" in
+        mihomo)
+            if [ ! -x "$PROXY2MIHOMO" ]; then
+                log_msg "ошибка: не найден исполняемый конвертер $PROXY2MIHOMO"
+                return 1
+            fi
+            config_file="$TEST_DIR/test-config.yaml"
+            log_file="$TEST_DIR/mihomo-test.log"
+            "$PROXY2MIHOMO" -r "$single_links_file" --test --port "$TEST_PORT" > "$config_file" 2>>"$LOG_FILE" || {
+                mark_link_dead "$hash" "000" "0" "render error"
+                log_msg "ошибка: не удалось сгенерировать тестовый конфиг Mihomo"
+                return 1
+            }
+            ;;
+        singbox)
+            if [ ! -x "$PROXY2SINGBOX" ]; then
+                log_msg "ошибка: не найден исполняемый конвертер $PROXY2SINGBOX"
+                return 1
+            fi
+            config_file="$TEST_DIR/test-config.json"
+            log_file="$TEST_DIR/singbox-test.log"
+            "$PROXY2SINGBOX" -r "$single_links_file" --test --port "$TEST_PORT" > "$config_file" 2>>"$LOG_FILE" || {
+                mark_link_dead "$hash" "000" "0" "render error"
+                log_msg "ошибка: не удалось сгенерировать тестовый конфиг sing-box"
+                return 1
+            }
+            ;;
+        *)
+            generate_rendered_config "$single_links_file" "$rendered_file" "$link" || {
+                mark_link_dead "$hash" "000" "0" "render error"
+                return 1
+            }
+            extract_outbounds_array "$rendered_file" "$array_file" || {
+                mark_link_dead "$hash" "000" "0" "render error"
+                return 1
+            }
+            render_test_config "$array_file" "$config_file" "$TEST_PORT" "$link" || {
+                mark_link_dead "$hash" "000" "0" "render error"
+                return 1
+            }
+            ;;
+    esac
+    start_test_instance "$config_file" "$log_file" || {
+        mark_link_dead "$hash" "000" "0" "test start error"
+        return 1
+    }
 
     probe_result="$(probe_proxy_url_with_time "socks5h://127.0.0.1:$TEST_PORT")"
     code="$(printf '%s\n' "$probe_result" | awk -F '\t' '{print $1}')"

@@ -33,18 +33,37 @@ local function ensure_dir(path)
   end
 end
 
+-- Модуль работает с RSA-ключами/расшифрованными данными подписки во
+-- временных файлах в /tmp, поэтому сидируем math.random сами при загрузке
+-- модуля — раньше это было неявным контрактом вызывающего кода
+-- (tproxy-manager-subscriptions.lua/watchdog.lua сидировали PRNG сами, но
+-- happ_decrypt.lua от этого не защищён при вызове из другого места).
+math.randomseed(os.time() + math.floor(os.clock() * 1000000))
+
 local function write_file(path, data)
   local dir, base = tostring(path):match("^(.*)/([^/]+)$")
   if dir and dir ~= "" then ensure_dir(dir) end
-  local tmp = string.format("%s/.%s.%d.%d.tmp", dir or ".", base or "tmp", os.time(), math.random(1, 1000000))
+  local tmp = string.format("%s/.%s.%d.%d.%d.tmp", dir or ".", base or "tmp", os.time(), math.random(1, 10^9), math.random(1, 10^9))
   local fh = assert(io.open(tmp, "wb"))
   fh:write(data or "")
   fh:close()
+  os.execute("chmod 600 " .. shellescape(tmp) .. " >/dev/null 2>&1")
   assert(os.rename(tmp, path))
 end
 
+-- touch_600: заранее создаёт файл с правами 0600 до того, как openssl
+-- запишет в него через "-out"/stderr-редирект — иначе итоговые права зависят
+-- от umask процесса, а out_path здесь может содержать расшифрованный
+-- subscription URL.
+local function touch_600(path)
+  exec_ok(": > " .. shellescape(path) .. " && chmod 600 " .. shellescape(path) .. " >/dev/null 2>&1")
+end
+
 local function tmp_path(name)
-  return string.format("/tmp/tproxy-manager-%s.%d.%d", name, os.time(), math.random(1, 1000000))
+  -- Два независимых math.random()-вызова вместо одного повышают энтропию
+  -- имени и усложняют угадывание пути для локальной symlink-атаки; полноценно
+  -- убрать риск может только O_EXCL/mktemp, которых нет в чистом io.open().
+  return string.format("/tmp/tproxy-manager-%s.%d.%d.%d", name, os.time(), math.random(1, 10^9), math.random(1, 10^9))
 end
 
 local b64_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
@@ -239,6 +258,8 @@ local function rsa_decrypt_b64_key(key_b64, cipher)
   local err_path = tmp_path("rsa.err")
   write_file(key_path, key_der)
   write_file(in_path, cipher)
+  touch_600(out_path)
+  touch_600(err_path)
   local cmd = table.concat({
     "openssl pkeyutl -decrypt",
     "-inkey", shellescape(key_path),

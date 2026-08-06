@@ -11,6 +11,8 @@ local function render(ctx)
   local is_iface_name, is_nft_table_name, is_fwmark = ctx.is_iface_name, ctx.is_nft_table_name, ctx.is_fwmark
   local combined_log = ctx.combined_log
   local netm_init = ctx.netm_init
+  local engines = ctx.engines
+  local proxy_engine = ctx.proxy_engine or "xray"
   local _ = ctx._ or function(s) return s end
   local PKG = ctx.PKG
   local defaults = {
@@ -48,11 +50,75 @@ local function render(ctx)
     sys.call("/etc/init.d/log restart >/dev/null 2>&1")
     set_err(nil); redirect_here("tproxy"); return m
   end
+  if http.formvalue("_activate_proxy_engine") == "1" and engines then
+    local target = engines.normalize(http.formvalue("proxy_engine_choice") or proxy_engine)
+    local ok, msg = engines.activate(uci, PKG, target)
+    if ok then
+      set_err(nil)
+      set_info(string.format(_("Proxy engine activated: %s"), msg or target))
+      http.redirect(self_url({ tab = engines.def(target).tab }))
+    else
+      set_info(nil)
+      set_err(_(msg or "Proxy engine activation failed."))
+      redirect_here("tproxy")
+    end
+    return m
+  end
 
   -- TPROXY service
   do
     local ss = m:section(SimpleSection, _("TPROXY service status and controls"))
     service_block(ss, "tproxy-manager", "TPROXY", "tproxy")
+  end
+
+  -- Active proxy engine selector.
+  if engines then
+    local sec = m:section(SimpleSection)
+    local dv = sec:option(DummyValue, "_active_proxy_engine")
+    dv.rawhtml = true
+    function dv.cfgvalue()
+      local rows = {}
+      rows[#rows + 1] = "<div class='box editor-wrap'>"
+      rows[#rows + 1] = "<div class='inline-row' style='gap:.5rem;flex-wrap:wrap'>"
+      rows[#rows + 1] = "<strong>" .. pcdata(_("Active proxy engine")) .. "</strong>"
+      rows[#rows + 1] = "<select name='proxy_engine_choice'>"
+      for __, id in ipairs(engines.ORDER) do
+        local def = engines.def(id)
+        local sel = (id == proxy_engine) and " selected" or ""
+        rows[#rows + 1] = string.format("<option value='%s'%s>%s</option>", pcdata(id), sel, pcdata(def.label))
+      end
+      rows[#rows + 1] = "</select>"
+      rows[#rows + 1] = "<button class='cbi-button cbi-button-apply' name='_activate_proxy_engine' value='1'>" .. pcdata(_("Activate")) .. "</button>"
+      rows[#rows + 1] = "</div>"
+      rows[#rows + 1] = "<div style='display:grid;grid-template-columns:8rem 1fr;gap:.25rem .7rem;margin-top:.55rem'>"
+      for __, id in ipairs(engines.ORDER) do
+        local st = engines.status(uci, PKG, id)
+        local def = engines.def(id)
+        local active = (id == proxy_engine)
+        local badge = active and (" <span class='svc-badge ok'>ACTIVE</span>") or ""
+        local installed = st.installed and _("installed") or _("not installed")
+        local running = st.running and _("running") or _("stopped")
+        local enabled = st.enabled and _("enabled") or _("disabled")
+        local installed_cls = st.installed and "ok" or "err"
+        local running_cls = st.running and "ok" or "err"
+        local enabled_cls = st.enabled and "ok" or "err"
+        rows[#rows + 1] = string.format(
+          "<div><strong>%s</strong>%s</div><div><span class='svc-badge %s'>%s</span> · <span class='svc-badge %s'>%s</span> · <span class='svc-badge %s'>%s</span> · <code>%s</code></div>",
+          pcdata(def.label), badge,
+          installed_cls, pcdata(installed),
+          running_cls, pcdata(running),
+          enabled_cls, pcdata(enabled),
+          pcdata(st.service_path or "")
+        )
+      end
+      rows[#rows + 1] = "</div>"
+      local active_status = engines.status(uci, PKG, proxy_engine)
+      if not active_status.installed then
+        rows[#rows + 1] = "<div style='margin-top:.55rem;color:#b45309'>" .. pcdata(_("Selected proxy engine binary is not installed.")) .. "</div>"
+      end
+      rows[#rows + 1] = "</div>"
+      return table.concat(rows)
+    end
   end
 
   -- Restart button saves UCI/list file and restarts the service.
@@ -534,8 +600,8 @@ local function render(ctx)
           sel[#sel+1] = string.format(
             "<tr><td><code>%s</code></td><td>%s</td><td><code>%s</code></td>" ..
             "<td>" ..
-            "<button class='cbi-button cbi-button-apply small-btn' name='_dhcp_add_only' value='%s'>+ only</button> " ..
-            "<button class='cbi-button cbi-button-action small-btn' name='_dhcp_add_bypass' value='%s'>+ bypass</button>" ..
+            "<button class='cbi-button cbi-button-apply small-btn' name='_dhcp_add_only' value='%s' onclick='return window.__xray_guard?window.__xray_guard():true'>+ only</button> " ..
+            "<button class='cbi-button cbi-button-action small-btn' name='_dhcp_add_bypass' value='%s' onclick='return window.__xray_guard?window.__xray_guard():true'>+ bypass</button>" ..
             "</td></tr>",
             pcdata(r.ip), pcdata(r.host or ""), pcdata(r.mac or ""), pcdata(r.ip), pcdata(r.ip)
           )
@@ -580,22 +646,22 @@ local function render(ctx)
           <label>rttab_tcp</label><input type="text" name="tpx_rttab_tcp" value="%s">
           <label>rttab_udp</label><input type="text" name="tpx_rttab_udp" value="%s">
 
-          <label>ports_file</label><input type="text" name="tpx_ports_file" value="%s">
-          <label>bypass_v4_file</label><input type="text" name="tpx_bypass_v4_file" value="%s">
-          <label>bypass_v6_file</label><input type="text" name="tpx_bypass_v6_file" value="%s">
+          <label>ports_file</label><input type="text" name="tpx_ports_file" value="%s" title="%s">
+          <label>bypass_v4_file</label><input type="text" name="tpx_bypass_v4_file" value="%s" title="%s">
+          <label>bypass_v6_file</label><input type="text" name="tpx_bypass_v6_file" value="%s" title="%s">
 
-          <label>src_only_v4_file</label><input type="text" name="tpx_src_only_v4_file" value="%s">
-          <label>src_only_v6_file</label><input type="text" name="tpx_src_only_v6_file" value="%s">
-          <label>src_bypass_v4_file</label><input type="text" name="tpx_src_bypass_v4_file" value="%s">
-          <label>src_bypass_v6_file</label><input type="text" name="tpx_src_bypass_v6_file" value="%s">
+          <label>src_only_v4_file</label><input type="text" name="tpx_src_only_v4_file" value="%s" title="%s">
+          <label>src_only_v6_file</label><input type="text" name="tpx_src_only_v6_file" value="%s" title="%s">
+          <label>src_bypass_v4_file</label><input type="text" name="tpx_src_bypass_v4_file" value="%s" title="%s">
+          <label>src_bypass_v6_file</label><input type="text" name="tpx_src_bypass_v6_file" value="%s" title="%s">
         </div>
       </details></div]]):format(
         pcdata(_("Expand/collapse advanced parameters")),
         pcdata(_("Logging")),
         (loge=="1") and "checked" or "",
         pcdata(nft), pcdata(fwt), pcdata(fwu), pcdata(rtt), pcdata(rtu),
-        pcdata(ports_file), pcdata(bypass_v4), pcdata(bypass_v6),
-        pcdata(src_o4), pcdata(src_o6), pcdata(src_b4), pcdata(src_b6)
+        pcdata(ports_file), pcdata(ports_file), pcdata(bypass_v4), pcdata(bypass_v4), pcdata(bypass_v6), pcdata(bypass_v6),
+        pcdata(src_o4), pcdata(src_o4), pcdata(src_o6), pcdata(src_o6), pcdata(src_b4), pcdata(src_b4), pcdata(src_b6), pcdata(src_b6)
       )
     end
   end
@@ -737,6 +803,9 @@ local function render(ctx)
       S("src_only_v6_file", path_fields.src_only_v6_file)
       S("src_bypass_v4_file", path_fields.src_bypass_v4_file)
       S("src_bypass_v6_file", path_fields.src_bypass_v6_file)
+      if engines then
+        engines.save_legacy_to_profile(uci, PKG, proxy_engine)
+      end
 
       uci:commit(PKG)
       set_info(_("TPROXY settings saved"))
@@ -744,11 +813,32 @@ local function render(ctx)
 
     if want_file then
       local path = http.formvalue("list_file") or fval_last("list_file")
+      -- Only allow saving to one of the paths that are actually configured
+      -- in UCI for this module (the same set shown in the editor's dropdown)
+      -- — otherwise a direct POST request with an arbitrary list_file could
+      -- write to any file on the router.
+      local allowed_list_files = {
+        getu("ports_file"),
+        getu("bypass_v4_file"),
+        getu("bypass_v6_file"),
+        getu("src_only_v4_file"),
+        getu("src_only_v6_file"),
+        getu("src_bypass_v4_file"),
+        getu("src_bypass_v6_file"),
+      }
+      local is_allowed = false
       if path and path ~= "" then
+        for _, p in ipairs(allowed_list_files) do
+          if p ~= "" and p == path then is_allowed = true; break end
+        end
+      end
+      if is_allowed then
         local text = http.formvalue("uniedit_text") or ""
         write_file(path, text)
         set_info(_("List file saved: ") .. path)
         set_err(nil)
+      elseif path and path ~= "" then
+        set_err(_("Invalid list_file: not one of the configured list paths."))
       end
     end
 
@@ -786,18 +876,10 @@ local function render(ctx)
     end
   end
 
-  -- Messages
-  do
-    local msg = m:section(SimpleSection); local dv = msg:option(DummyValue, "_tpx_msgs"); dv.rawhtml = true
-    function dv.cfgvalue()
-      local e = get_err(); local i = get_info()
-      local out = {}
-      if e ~= "" then out[#out+1] = "<div class='msg err'>"..pcdata(e).."</div>" end
-      if i ~= "" then out[#out+1] = "<div class='msg info'>"..pcdata(i).."</div>" end
-      if i ~= "" then set_info(nil) end
-      return table.concat(out)
-    end
-  end
+  -- The shared err/info banner is already rendered by manage.lua at the
+  -- bottom of the page (single render point for all tabs, see "Messages are
+  -- rendered at the bottom to keep module layout stable") — rendering it
+  -- again here only duplicated the same message twice on screen.
 end
 
 return { render = render }
