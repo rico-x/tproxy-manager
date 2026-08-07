@@ -16,7 +16,8 @@ M.DEFS = {
     test_command = "/usr/bin/xray -c {config}",
     outbound_file = "/etc/xray/04_outbounds.json",
     tproxy_port = "61219",
-    proxy_url = "socks5h://127.0.0.1:10808"
+    proxy_url = "socks5h://127.0.0.1:10808",
+    version_script = "/usr/bin/tproxy-manager-xray-version.lua"
   },
   mihomo = {
     id = "mihomo",
@@ -34,7 +35,8 @@ M.DEFS = {
     managed_provider_file = "/etc/mihomo/tproxy-manager-proxies.yaml",
     controller = "http://127.0.0.1:9090",
     tproxy_port = "61219",
-    proxy_url = "socks5h://127.0.0.1:10808"
+    proxy_url = "socks5h://127.0.0.1:10808",
+    version_script = "/usr/bin/tproxy-manager-mihomo-version.lua"
   },
   singbox = {
     id = "singbox",
@@ -53,7 +55,8 @@ M.DEFS = {
     managed_outbounds_file = "/etc/sing-box/tproxy-manager-outbounds.json",
     controller = "http://127.0.0.1:9091",
     tproxy_port = "61219",
-    proxy_url = "socks5h://127.0.0.1:10808"
+    proxy_url = "socks5h://127.0.0.1:10808",
+    version_script = "/usr/bin/tproxy-manager-singbox-version.lua"
   }
 }
 
@@ -203,6 +206,59 @@ function M.stop_inactive_services(uci, pkg, active_id)
       service_op(def.native_service_path, "stop")
     end
   end
+end
+
+-- run_version_script: shells out to a version-manager helper (same helpers
+-- used by the per-engine "Update to latest"/"Install selected version"
+-- buttons, e.g. tproxy-manager-mihomo-version.lua) and captures rc+output,
+-- same convention as run_cmd_capture() in the xray/mihomo/singbox CBI modules.
+local function run_version_script(script, args)
+  script = trim(script)
+  if script == "" then return 1, "version manager script is not configured" end
+  local parts = { shellescape(script) }
+  for _, a in ipairs(args or {}) do
+    parts[#parts + 1] = shellescape(a)
+  end
+  local marker = "__TPM_ENGINE_RC__:"
+  local wrapped = string.format("(%s) 2>&1; printf '\\n%s%%s' \"$?\"", table.concat(parts, " "), marker)
+  local out = trim(sys.exec(wrapped) or "")
+  local rc = tonumber(out:match(marker .. "([%-%d]+)%s*$")) or 1
+  out = out:gsub("\n?" .. marker .. "[%-%d]+%s*$", "")
+  return rc, trim(out)
+end
+
+local function parse_kv(text)
+  local data = {}
+  for line in ((text or "") .. "\n"):gmatch("([^\n]*)\n") do
+    local k, v = line:match("^([A-Za-z0-9_]+)=(.*)$")
+    if k then data[k] = v end
+  end
+  return data
+end
+
+-- install_latest: resolve the engine's latest stable release tag via its
+-- version-manager script and install it — the exact same two-step sequence
+-- ("status --refresh" to learn LATEST_TAG, then "install <tag>") already used
+-- by each engine's own "Update to latest" button, just callable without
+-- needing to be on that engine's own tab.
+function M.install_latest(id)
+  id = M.normalize(id)
+  local def = M.def(id)
+  local script = def.version_script
+  if not script or trim(script) == "" then
+    return false, "No version manager configured for " .. tostring(def.label)
+  end
+  local rc, out = run_version_script(script, { "status", "--refresh" })
+  local status = parse_kv(out)
+  local tag = trim(status.LATEST_TAG or "")
+  if rc ~= 0 or tag == "" then
+    return false, (out ~= "" and out or ("Latest " .. tostring(def.label) .. " version is not available."))
+  end
+  local install_rc, install_out = run_version_script(script, { "install", tag })
+  if install_rc ~= 0 then
+    return false, (install_out ~= "" and install_out or (tostring(def.label) .. " install failed."))
+  end
+  return true, (install_out ~= "" and install_out or (tostring(def.label) .. " installed."))
 end
 
 function M.activate(uci, pkg, target_id)

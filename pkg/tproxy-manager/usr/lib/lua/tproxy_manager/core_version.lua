@@ -204,14 +204,34 @@ local function verify_digest(item, archive)
   return true
 end
 
+local function ends_with(s, suffix)
+  s, suffix = tostring(s or ""), tostring(suffix or "")
+  return #s >= #suffix and s:sub(#s - #suffix + 1) == suffix
+end
+
 local function unpack_archive(cfg, item, archive, work)
   local out_bin = work .. "/" .. cfg.binary
   local rc, out
   if item.name:match("%.tar%.gz$") then
-    rc, out = exec_capture("tar xzf " .. shellescape(archive) .. " -C " .. shellescape(work))
+    -- Release tarballs also bundle LICENSE/README (and, for some engines,
+    -- geo databases) that this installer never uses. List the archive and
+    -- extract ONLY the binary member instead of the whole archive, so that
+    -- extra content is never written to /tmp (which may be a small
+    -- RAM-backed tmpfs on constrained routers) just to be deleted a moment
+    -- later.
+    local listing = command_output("tar tzf " .. shellescape(archive))
+    local member = nil
+    for line in (listing .. "\n"):gmatch("([^\n]*)\n") do
+      if line ~= "" and (line == cfg.binary or ends_with(line, "/" .. cfg.binary)) then
+        member = line
+        break
+      end
+    end
+    if not member then return nil, "binary not found in archive" end
+    rc, out = exec_capture("tar xzf " .. shellescape(archive) .. " -C " .. shellescape(work) .. " " .. shellescape(member))
     if rc ~= 0 then return nil, out end
-    local found = command_output("find " .. shellescape(work) .. " -type f -name " .. shellescape(cfg.binary) .. " | head -n1")
-    if found == "" then return nil, "binary not found in archive" end
+    local found = work .. "/" .. member
+    if not file_exists(found) then return nil, "binary not found in archive" end
     return found
   elseif item.name:match("%.gz$") then
     rc, out = exec_capture("gzip -dc " .. shellescape(archive) .. " > " .. shellescape(out_bin) .. " && chmod 0755 " .. shellescape(out_bin))
@@ -253,6 +273,13 @@ local function replace_binary(cfg, bin, unpacked, old_version)
   end
 
   -- Avoid keeping two large binaries in overlay. The rollback copy is in /tmp.
+  -- Known trade-off: this makes the swap non-atomic — the old binary is gone
+  -- before the new one is fully in place, so a crash/power loss in this exact
+  -- window leaves the router with no engine binary at all (recoverable by
+  -- re-running install, or manually restoring backup_file if it survived).
+  -- We accept this risk deliberately to keep flash usage low on routers with
+  -- very little free overlay space; do not "fix" it by holding both copies
+  -- on the main partition at once.
   if have_old then remove_path(bin) end
 
   local rc, out = exec_capture("cp " .. shellescape(unpacked) .. " " .. shellescape(bin) ..

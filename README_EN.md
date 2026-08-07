@@ -21,6 +21,8 @@ Main features:
 - Configurable `geoip.dat` and `geosite.dat` download sources.
 - Cron-based GEO database updates.
 - Built-in converters for generating Xray, Mihomo, and sing-box configs from VLESS and Hysteria 2 links.
+- One-click Mihomo/sing-box engine install straight from the `TPROXY` tab, no manual binary download needed.
+- One-click backup export and restore, with a per-module diff preview before anything is applied.
 - Watchdog for subscriptions, batch link checks, dead-link exclusion, and automatic rotation.
 - Router-side subscription sharing for v2RayTun, Happ, Shadowrocket, v2Box, and V2rayNG clients.
 - Happ subscriptions with regular `https://` URLs, encrypted `happ://crypt*` URLs, and Xray-like JSON responses.
@@ -191,7 +193,34 @@ Main list files:
 
 The embedded editor can modify these files directly from LuCI. Source lists also support quick IP insertion from active DHCP leases.
 
-The `Active proxy engine` block shows the state of all three daemons: installed/not installed, running/stopped, and autostart enabled/disabled. Activating an engine saves the current engine profile, applies the selected profile to TPROXY and Watchdog, stops the two inactive proxy daemons, starts the selected daemon if its binary exists, and restarts `tproxy-manager` / `tproxy-manager-watchdog`.
+The `Active proxy engine` block shows the state of all three daemons: installed/not installed, running/stopped, and autostart enabled/disabled. If an engine (Mihomo or sing-box) is not installed yet, an `Install` button appears next to its name; it downloads the latest GitHub release and installs the binary without leaving the tab. The release is downloaded and extracted in a temporary `/tmp` directory - only the binary itself is copied to the router's disk, the rest of the archive (GEO databases, licenses, etc.) is discarded. Activating an engine saves the current engine profile, applies the selected profile to TPROXY and Watchdog, stops the two inactive proxy daemons, starts the selected daemon if its binary exists, and restarts `tproxy-manager` / `tproxy-manager-watchdog`.
+
+## Backup / Restore
+
+The collapsible `Backup / Restore` panel lives on the `TPROXY` tab, right below the `Additional settings` block.
+
+### Export
+
+The `Export backup` button downloads a single `.tar.gz` archive containing:
+
+- the full package UCI config (`/etc/config/tproxy-manager`);
+- all 7 TPROXY list files (ports, bypass v4/v6, src only/bypass v4/v6);
+- the active engines' configs: `/etc/xray/*.json`, `/etc/mihomo/*.yaml`, `/etc/sing-box/*.json`;
+- the Watchdog subscription database, `watchdog.links`, and the sharing profile;
+- GEO source definitions and the GEO update cron line.
+
+The archive is built in `/tmp` and removed from the router right after it is streamed to the browser.
+
+### Restore
+
+1. Click `Import backup...` - a standalone upload page opens.
+2. Choose the `.tar.gz` produced by the export button and click `Upload and show changes`.
+3. You return to the `TPROXY` tab, where a change list appears under the buttons, grouped by module (`TPROXY`, `Xray`, `Mihomo`, `sing-box`, `Watchdog`, `GEO`): UCI settings that would change (old -> new) and a line-level diff for changed files.
+4. Click `Apply` to restore the backup, or `Cancel` to discard it without changing anything.
+
+Only the services actually affected by the restored changes are restarted - for example, a backup that only touches Watchdog data does not restart Xray or TPROXY.
+
+An uploaded-but-not-yet-applied backup is kept in `/tmp` for at most 20 minutes and is then removed automatically. Like the rest of TPROXY Manager, these actions require an authenticated LuCI session.
 
 ## XRAY
 
@@ -206,6 +235,7 @@ The `XRAY` tab provides basic Xray maintenance:
 - JSONC validation before saving.
 - Full configuration validation through `xray -test -format json -confdir /etc/xray`.
 - Xray version view with the current binary version, latest stable GitHub release, router architecture asset, one-click update, and rollback.
+- The release is downloaded and extracted in `/tmp`; only the `xray` binary is copied to disk, the rest of the archive is discarded.
 
 ## MIHOMO
 
@@ -219,7 +249,7 @@ It provides:
 - YAML editor.
 - File creation and deletion.
 - Syntax validation through the existing `mihomo` binary before saving.
-- Mihomo version manager through GitHub Releases `MetaCubeX/mihomo`.
+- Mihomo version manager through GitHub Releases `MetaCubeX/mihomo`; the release is downloaded and extracted in `/tmp`, only the binary is copied to disk.
 - Managed config generation from the shared Watchdog link list.
 
 ## SING-BOX
@@ -235,7 +265,7 @@ It provides:
 - `*.json` editor for `/etc/sing-box`.
 - File creation and deletion.
 - JSONC editor validation and server-side validation through `sing-box check -c <tempfile>` before saving.
-- sing-box version manager through GitHub Releases `SagerNet/sing-box`.
+- sing-box version manager through GitHub Releases `SagerNet/sing-box`; the release is downloaded and extracted in `/tmp`, only the binary is copied to disk.
 - Managed runtime config `/etc/sing-box/tproxy-manager.json`.
 - Managed outbounds fragment `/etc/sing-box/tproxy-manager-outbounds.json`.
 

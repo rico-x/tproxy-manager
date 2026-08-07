@@ -506,6 +506,9 @@ msgstr "Ошибка: нет данных для расшифровки"
 msgid "Happ capture enabled. Copy the link from the subscriptions block and open it from the phone."
 msgstr "Happ capture включён. Скопируйте ссылку из блока подписок и откройте её с телефона."
 
+msgid "Capture log path must be absolute."
+msgstr "Путь к файлу лога захвата должен быть абсолютным."
+
 msgid "Failed to start Happ capture."
 msgstr "Не удалось запустить Happ capture."
 
@@ -1420,3 +1423,81 @@ msgstr "Путь LINKS_FILE должен быть абсолютным."
 
 msgid "jump to error"
 msgstr "перейти к ошибке"
+
+msgid "Install"
+msgstr "Установить"
+
+msgid "Install the latest %s now?"
+msgstr "Установить последнюю версию %s?"
+
+msgid "%s installed: %s"
+msgstr "%s установлен: %s"
+
+msgid "Engine install failed."
+msgstr "Не удалось установить ядро."
+
+msgid "Backup / Restore"
+msgstr "Резервная копия / восстановление"
+
+msgid "Export a full backup of TPROXY, engine configs, GEO sources and Watchdog data, or restore one after reviewing exactly what would change."
+msgstr "Экспортируйте полную резервную копию TPROXY, конфигов ядра, источников GEO и данных Watchdog, либо восстановите её, предварительно проверив, что именно изменится."
+
+msgid "Export backup"
+msgstr "Экспортировать бэкап"
+
+msgid "Import backup..."
+msgstr "Импортировать бэкап…"
+
+msgid "No differences found - current settings already match this backup."
+msgstr "Различий не найдено — текущие настройки уже совпадают с этим бэкапом."
+
+msgid "Close"
+msgstr "Закрыть"
+
+msgid "%d change(s) will be applied:"
+msgstr "Будет применено изменений: %d"
+
+msgid "Apply this backup? Current settings shown above will be overwritten."
+msgstr "Применить этот бэкап? Текущие настройки, показанные выше, будут перезаписаны."
+
+msgid "new"
+msgstr "новое"
+
+msgid "not in backup, kept as-is"
+msgstr "нет в бэкапе, останется как есть"
+
+msgid "new file, will be created"
+msgstr "новый файл, будет создан"
+
+msgid "not part of this backup, will be left untouched"
+msgstr "не входит в этот бэкап, останется без изменений"
+
+msgid "changed (%d -> %d lines, too large to show inline)"
+msgstr "изменён (%d -> %d строк, слишком большой для показа построчно)"
+
+msgid "Backup restored. Restarted: %s"
+msgstr "Бэкап восстановлен. Перезапущено: %s"
+
+msgid "nothing (no service-affecting changes)"
+msgstr "ничего (нет изменений, влияющих на сервисы)"
+
+msgid "Failed to restore backup."
+msgstr "Не удалось восстановить бэкап."
+
+msgid "Backup restore cancelled."
+msgstr "Восстановление бэкапа отменено."
+
+msgid "Restore tproxy-manager backup"
+msgstr "Восстановление бэкапа tproxy-manager"
+
+msgid "Upload and show changes"
+msgstr "Загрузить и показать изменения"
+
+msgid "Please choose a backup file to upload."
+msgstr "Выберите файл бэкапа для загрузки."
+
+msgid "Failed to process the uploaded backup."
+msgstr "Не удалось обработать загруженный бэкап."
+
+msgid "Pending import not found or expired."
+msgstr "Ожидающий импорт не найден или истёк по времени."

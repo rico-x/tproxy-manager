@@ -1,5 +1,17 @@
 local cbi = require "luci.cbi"
+local backup = require "tproxy_manager.backup"
 local SimpleSection, DummyValue, Button = cbi.SimpleSection, cbi.DummyValue, cbi.Button
+
+local BACKUP_MODULE_LABELS = {
+  core = "TPROXY", xray = "Xray", mihomo = "Mihomo", singbox = "sing-box",
+  watchdog = "Watchdog", geo = "GEO",
+}
+
+local function backup_diff_line_class(tag)
+  if tag == "add" then return "bkdiff-add" end
+  if tag == "del" then return "bkdiff-del" end
+  return "bkdiff-same"
+end
 
 local function render(ctx)
   local m, uci, http, sys, fs, disp = ctx.m, ctx.uci, ctx.http, ctx.sys, ctx.fs, ctx.disp
@@ -49,6 +61,19 @@ local function render(ctx)
   if http.formvalue("_clearlog_tproxy") then
     sys.call("/etc/init.d/log restart >/dev/null 2>&1")
     set_err(nil); redirect_here("tproxy"); return m
+  end
+  if http.formvalue("_install_engine") and engines then
+    local target = engines.normalize(http.formvalue("_install_engine"))
+    local ok, msg = engines.install_latest(target)
+    if ok then
+      set_err(nil)
+      set_info(string.format(_("%s installed: %s"), engines.def(target).label, msg or ""))
+    else
+      set_info(nil)
+      set_err(msg or _("Engine install failed."))
+    end
+    redirect_here("tproxy")
+    return m
   end
   if http.formvalue("_activate_proxy_engine") == "1" and engines then
     local target = engines.normalize(http.formvalue("proxy_engine_choice") or proxy_engine)
@@ -102,9 +127,19 @@ local function render(ctx)
         local installed_cls = st.installed and "ok" or "err"
         local running_cls = st.running and "ok" or "err"
         local enabled_cls = st.enabled and "ok" or "err"
+        local install_btn = ""
+        if not st.installed then
+          install_btn = string.format(
+            " <button class='cbi-button cbi-button-apply small-btn' name='_install_engine' value='%s'" ..
+            " onclick=\"return (window.__xray_guard?window.__xray_guard():true) && confirm('%s')\">%s</button>",
+            pcdata(id),
+            pcdata(string.format(_("Install the latest %s now?"), def.label)),
+            pcdata(_("Install"))
+          )
+        end
         rows[#rows + 1] = string.format(
-          "<div><strong>%s</strong>%s</div><div><span class='svc-badge %s'>%s</span> · <span class='svc-badge %s'>%s</span> · <span class='svc-badge %s'>%s</span> · <code>%s</code></div>",
-          pcdata(def.label), badge,
+          "<div><strong>%s</strong>%s%s</div><div><span class='svc-badge %s'>%s</span> · <span class='svc-badge %s'>%s</span> · <span class='svc-badge %s'>%s</span> · <code>%s</code></div>",
+          pcdata(def.label), badge, install_btn,
           installed_cls, pcdata(installed),
           running_cls, pcdata(running),
           enabled_cls, pcdata(enabled),
@@ -662,6 +697,204 @@ local function render(ctx)
         pcdata(nft), pcdata(fwt), pcdata(fwu), pcdata(rtt), pcdata(rtu),
         pcdata(ports_file), pcdata(ports_file), pcdata(bypass_v4), pcdata(bypass_v4), pcdata(bypass_v6), pcdata(bypass_v6),
         pcdata(src_o4), pcdata(src_o4), pcdata(src_o6), pcdata(src_o6), pcdata(src_b4), pcdata(src_b4), pcdata(src_b6), pcdata(src_b6)
+      )
+    end
+  end
+
+  -- Backup / Restore handlers (apply/cancel act on an already-uploaded
+  -- pending import; the upload itself happens on a separate controller
+  -- action - see luci/controller/tproxy_manager.lua - because it needs to
+  -- register its own setfilehandler before this page's very first
+  -- http.formvalue() call, which already happens in manage.lua before this
+  -- module even runs.)
+  if http.formvalue("_backup_apply") == "1" then
+    local token = trim(http.formvalue("backup_token") or "")
+    local ok, touched_or_err = backup.apply(token)
+    if ok then
+      local restarted = {}
+      if touched_or_err.core then
+        sys.call("/etc/init.d/tproxy-manager restart >/dev/null 2>&1")
+        restarted[#restarted + 1] = "TPROXY"
+      end
+      if touched_or_err.watchdog then
+        sys.call("[ -x /etc/init.d/tproxy-manager-watchdog ] && /etc/init.d/tproxy-manager-watchdog restart >/dev/null 2>&1")
+        restarted[#restarted + 1] = "Watchdog"
+      end
+      if touched_or_err.xray then
+        sys.call("[ -x /etc/init.d/xray ] && /etc/init.d/xray restart >/dev/null 2>&1")
+        restarted[#restarted + 1] = "Xray"
+      end
+      if touched_or_err.mihomo then
+        sys.call("[ -x /etc/init.d/tproxy-manager-mihomo ] && /etc/init.d/tproxy-manager-mihomo restart >/dev/null 2>&1")
+        restarted[#restarted + 1] = "Mihomo"
+      end
+      if touched_or_err.singbox then
+        sys.call("[ -x /etc/init.d/tproxy-manager-sing-box ] && /etc/init.d/tproxy-manager-sing-box restart >/dev/null 2>&1")
+        restarted[#restarted + 1] = "sing-box"
+      end
+      if touched_or_err.geo then
+        sys.call("/etc/init.d/cron restart >/dev/null 2>&1")
+      end
+      set_err(nil)
+      set_info(string.format(
+        _("Backup restored. Restarted: %s"),
+        #restarted > 0 and table.concat(restarted, ", ") or _("nothing (no service-affecting changes)")
+      ))
+    else
+      set_info(nil)
+      set_err(touched_or_err or _("Failed to restore backup."))
+    end
+    redirect_here("tproxy")
+    return m
+  end
+  if http.formvalue("_backup_cancel") == "1" then
+    backup.cancel(trim(http.formvalue("backup_token") or ""))
+    set_err(nil)
+    set_info(_("Backup restore cancelled."))
+    redirect_here("tproxy")
+    return m
+  end
+
+  -- Backup / Restore UI
+  do
+    local function render_uci_diff(u)
+      local rows = {}
+      for _, e in ipairs(u.changed) do
+        rows[#rows + 1] = string.format(
+          "<div class='bkdiff-kv'><code>%s</code>: <span class='bkdiff-del'>%s</span> &rarr; <span class='bkdiff-add'>%s</span></div>",
+          pcdata(e.key), pcdata(e.old), pcdata(e.new))
+      end
+      for _, e in ipairs(u.added) do
+        rows[#rows + 1] = string.format(
+          "<div class='bkdiff-kv'><code>%s</code>: <span class='bkdiff-add'>%s</span> (%s)</div>",
+          pcdata(e.key), pcdata(e.new), pcdata(_("new")))
+      end
+      for _, e in ipairs(u.removed) do
+        rows[#rows + 1] = string.format(
+          "<div class='bkdiff-kv'><code>%s</code>: %s (%s)</div>",
+          pcdata(e.key), pcdata(e.old), pcdata(_("not in backup, kept as-is")))
+      end
+      return table.concat(rows)
+    end
+
+    local function render_file_diff(f)
+      if f.status == "added" then
+        return "<div class='bkdiff-file'><code>" .. pcdata(f.path) .. "</code> &mdash; " ..
+          pcdata(_("new file, will be created")) .. "</div>"
+      end
+      if f.status == "removed" then
+        return "<div class='bkdiff-file'><code>" .. pcdata(f.path) .. "</code> &mdash; " ..
+          pcdata(_("not part of this backup, will be left untouched")) .. "</div>"
+      end
+      if not f.diff then
+        return "<div class='bkdiff-file'><code>" .. pcdata(f.path) .. "</code> &mdash; " ..
+          pcdata(string.format(_("changed (%d -> %d lines, too large to show inline)"), f.old_lines or 0, f.new_lines or 0)) ..
+          "</div>"
+      end
+      local rows = {}
+      for _, tok in ipairs(f.diff) do
+        if tok.tag ~= "same" then
+          rows[#rows + 1] = "<div class='" .. backup_diff_line_class(tok.tag) .. "'>" ..
+            (tok.tag == "add" and "+ " or "- ") .. pcdata(tok.text) .. "</div>"
+        end
+      end
+      if #rows == 0 then return "" end
+      return "<div class='bkdiff-file'><code>" .. pcdata(f.path) .. "</code><div class='bkdiff-lines'>" ..
+        table.concat(rows) .. "</div></div>"
+    end
+
+    local function render_backup_diff(diff, token)
+      local total = 0
+      local sections = {}
+      for _, id in ipairs(diff.order) do
+        local mod = diff.modules[id]
+        local uci_html = render_uci_diff(mod.uci)
+        local file_parts = {}
+        for _, f in ipairs(mod.files) do
+          local html = render_file_diff(f)
+          if html ~= "" then file_parts[#file_parts + 1] = html end
+        end
+        local n = #mod.uci.changed + #mod.uci.added + #mod.uci.removed + #file_parts
+        if n > 0 then
+          total = total + n
+          sections[#sections + 1] = string.format(
+            "<details class='bkdiff-mod' open><summary>%s (%d)</summary>%s%s</details>",
+            pcdata(BACKUP_MODULE_LABELS[id] or id), n, uci_html, table.concat(file_parts)
+          )
+        end
+      end
+
+      local hidden_token = string.format("<input type='hidden' name='backup_token' value='%s'>", pcdata(token))
+
+      if total == 0 then
+        return string.format(
+          "<div class='msg info' style='margin-top:.5rem'>%s<div style='margin-top:.4rem'>%s" ..
+          "<button class='cbi-button' name='_backup_cancel' value='1'>%s</button></div></div>",
+          pcdata(_("No differences found - current settings already match this backup.")),
+          hidden_token, pcdata(_("Close"))
+        )
+      end
+
+      return string.format([[<div class='box editor-wrap' style='margin-top:.5rem'>
+        <p><strong>%s</strong></p>
+        %s
+        <div style="margin-top:.6rem">
+          %s
+          <button class="cbi-button cbi-button-apply" name="_backup_apply" value="1"
+            onclick="return confirm('%s')">%s</button>
+          <button class="cbi-button cbi-button-reset" name="_backup_cancel" value="1">%s</button>
+        </div>
+      </div>]],
+        pcdata(string.format(_("%d change(s) will be applied:"), total)),
+        table.concat(sections),
+        hidden_token,
+        pcdata(_("Apply this backup? Current settings shown above will be overwritten.")),
+        pcdata(_("Apply")),
+        pcdata(_("Cancel"))
+      )
+    end
+
+    local sec = m:section(SimpleSection)
+    local dv = sec:option(DummyValue, "_backup"); dv.rawhtml = true
+    function dv.cfgvalue()
+      backup.cleanup_stale()
+      local token = trim(fval("backup_token") or "")
+      local export_url = disp.build_url("admin", "network", "tproxy_manager_backup_export")
+      local upload_url = disp.build_url("admin", "network", "tproxy_manager_backup_upload")
+
+      local diff_html = ""
+      if token ~= "" then
+        local diff, err = backup.diff(token)
+        diff_html = diff and render_backup_diff(diff, token)
+          or ("<div class='msg err' style='margin-top:.5rem'>" ..
+              pcdata(err or _("Pending import not found or expired.")) .. "</div>")
+      end
+
+      return string.format([[<div id="backup-wrap"><details>
+        <summary><strong>%s</strong></summary>
+        <style>
+          .bkdiff-mod{margin:.3rem 0;padding:.2rem .6rem;border:1px solid #e5e7eb;border-radius:.4rem}
+          .bkdiff-mod summary{cursor:pointer;font-weight:600}
+          .bkdiff-kv{font-family:monospace;font-size:.85em;margin:.15rem 0}
+          .bkdiff-file{margin:.4rem 0}
+          .bkdiff-file code{font-size:.85em}
+          .bkdiff-lines{font-family:monospace;font-size:.82em;white-space:pre-wrap;background:#f9fafb;border-radius:.3rem;padding:.3rem .5rem;margin-top:.2rem}
+          .bkdiff-add{color:#166534;background:#f0fdf4}
+          .bkdiff-del{color:#b91c1c;background:#fef2f2}
+        </style>
+        <div style="padding:.4rem 0">
+          <p class="cbi-value-description">%s</p>
+          <a class="cbi-button cbi-button-action" href="%s">%s</a>
+          <a class="cbi-button cbi-button-action" href="%s"
+             onclick="return (window.__xray_guard?window.__xray_guard():true)">%s</a>
+          %s
+        </div>
+      </details></div>]],
+        pcdata(_("Backup / Restore")),
+        pcdata(_("Export a full backup of TPROXY, engine configs, GEO sources and Watchdog data, or restore one after reviewing exactly what would change.")),
+        pcdata(export_url), pcdata(_("Export backup")),
+        pcdata(upload_url), pcdata(_("Import backup...")),
+        diff_html
       )
     end
   end

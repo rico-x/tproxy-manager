@@ -322,6 +322,13 @@ local function replace_xray_binary(bin, unpacked, old_version)
 
   -- Keep archives, extracted binary and rollback backup in /tmp. Overlay receives
   -- only the final active binary, avoiding a second full-size copy in /usr/bin.
+  -- Known trade-off: this makes the swap non-atomic — the old binary is gone
+  -- before the new one is fully in place, so a crash/power loss in this exact
+  -- window leaves the router with no xray binary at all (recoverable by
+  -- re-running install, or manually restoring BACKUP_FILE if it survived).
+  -- We accept this risk deliberately to keep flash usage low on routers with
+  -- very little free overlay space; do not "fix" it by holding both copies
+  -- on the main partition at once.
   if have_old then remove_path(bin) end
 
   local rc, out = exec_capture("cp " .. shellescape(unpacked) .. " " .. shellescape(bin) ..
@@ -376,7 +383,13 @@ local function install_release(tag)
     return false, "SHA2-256 verification failed"
   end
 
-  local rc, unzip_out = exec_capture("unzip -o " .. shellescape(archive) .. " -d " .. shellescape(work))
+  -- The official Xray release zip also bundles geoip.dat/geosite.dat,
+  -- README.md and LICENSE (several MB combined) that this installer never
+  -- uses — GEO databases are managed separately by the "GEO обновления" tab.
+  -- Extract only the "xray" member instead of the whole archive, so those
+  -- files are never written to /tmp (which may be a small RAM-backed tmpfs
+  -- on constrained routers) just to be deleted a moment later.
+  local rc, unzip_out = exec_capture("unzip -o " .. shellescape(archive) .. " xray -d " .. shellescape(work))
   if rc ~= 0 or not file_exists(work .. "/xray") then
     exec_ok("rm -rf " .. shellescape(work))
     return false, unzip_out ~= "" and unzip_out or "unable to unpack xray archive"

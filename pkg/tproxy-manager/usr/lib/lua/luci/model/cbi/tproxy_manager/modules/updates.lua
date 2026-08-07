@@ -98,8 +98,17 @@ local function fetch_to(url, dest)
   if ok then
     local dir = dest:match("^(.*)/[^/]+$")
     if dir and not fs.access(dir) then sys.call("mkdir -p '"..dir:gsub("'", "'\\''").."'") end
-    fs.rename(tmp, dest)
-    log_sys(string.format("OK: %s -> %s", url or "", dest or ""))
+    -- utils.promote_file() falls back to copy+remove if a bare rename fails
+    -- (observed: ESTALE from nixio.fs.rename on some flash filesystems) —
+    -- without it, the download succeeds but only the ".tmp" file is left
+    -- behind while this still reported "OK".
+    ok = utils.promote_file(tmp, dest)
+    if ok then
+      log_sys(string.format("OK: %s -> %s", url or "", dest or ""))
+    else
+      fs.remove(tmp)
+      log_sys(string.format("FAIL: unable to move downloaded file into place: %s", dest or ""))
+    end
   else
     fs.remove(tmp)
     log_sys(string.format("FAIL: %s", url or ""))

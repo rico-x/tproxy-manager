@@ -385,7 +385,6 @@ do
     local out = {}
     if e ~= "" then out[#out+1] = "<div class='msg err'>"..pcdata(e).."</div>" end
     if i ~= "" then out[#out+1] = "<div class='msg info'>"..pcdata(i).."</div>" end
-    if i ~= "" then set_info(nil) end
     return table.concat(out)
   end
 end

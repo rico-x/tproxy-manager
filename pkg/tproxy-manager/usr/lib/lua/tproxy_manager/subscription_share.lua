@@ -2,6 +2,7 @@ local fs = require "nixio.fs"
 local sys = require "luci.sys"
 local jsonc = require "luci.jsonc"
 local proxy_links = require "tproxy_manager.proxy_links"
+local utils = require "luci.model.cbi.tproxy_manager.utils"
 
 local M = {}
 
@@ -43,8 +44,13 @@ local function atomic_write(path, data)
   local tmpdir = (dir and dir ~= "") and dir or "/tmp"
   local tmp = string.format("%s/.%s.%d.tmp", tmpdir, base or "share", math.random(1, 10^9))
   fs.writefile(tmp, tostring(data or ""):gsub("\r\n", "\n"))
-  fs.rename(tmp, path)
-  return true
+  -- Use the shared sync+retry+mv fallback: a bare rename() can fail with a
+  -- transient ESTALE on this router's flash filesystem under space pressure,
+  -- and silently swallowing that failure (returning true regardless) used to
+  -- leave watchdog-share.json stale with no indication anything went wrong.
+  local ok = utils.promote_file(tmp, path)
+  if not ok then fs.remove(tmp) end
+  return ok
 end
 
 local function parse_link_line(line)

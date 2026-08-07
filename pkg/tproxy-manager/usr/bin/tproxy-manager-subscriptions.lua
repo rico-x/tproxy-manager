@@ -55,7 +55,21 @@ local function write_file(path, data)
   local fh = assert(io.open(tmp, "wb"))
   fh:write(data or "")
   fh:close()
-  assert(os.rename(tmp, path))
+  -- Plain os.rename() can fail with a stale-handle error (ESTALE) on some
+  -- flash filesystems (observed: UBIFS/overlay) even for a same-directory
+  -- rename, when the kernel's cached view has drifted from the underlying
+  -- filesystem's actual state. A `sync` reconciles that; retry once before
+  -- falling back to `mv` (not `cp` — mv leaves both files untouched if it
+  -- also fails, so a failed promote can't destroy an existing good file).
+  -- Unlike the earlier bare assert(), this no longer aborts this cron-driven
+  -- sync run outright on a single transient ESTALE.
+  if not os.rename(tmp, path) then
+    os.execute("sync")
+    if not os.rename(tmp, path) then
+      assert(exec_ok("mv -f " .. shellescape(tmp) .. " " .. shellescape(path) .. " >/dev/null 2>&1"),
+        "unable to move " .. tmp .. " into place at " .. path)
+    end
+  end
 end
 
 local function uci_get(key, fallback)

@@ -503,6 +503,9 @@ msgstr ""
 msgid "Happ capture enabled. Copy the link from the subscriptions block and open it from the phone."
 msgstr ""
 
+msgid "Capture log path must be absolute."
+msgstr ""
+
 msgid "Failed to start Happ capture."
 msgstr ""
 
@@ -1416,4 +1419,82 @@ msgid "LINKS_FILE path must be absolute."
 msgstr ""
 
 msgid "jump to error"
+msgstr ""
+
+msgid "Install"
+msgstr ""
+
+msgid "Install the latest %s now?"
+msgstr ""
+
+msgid "%s installed: %s"
+msgstr ""
+
+msgid "Engine install failed."
+msgstr ""
+
+msgid "Backup / Restore"
+msgstr ""
+
+msgid "Export a full backup of TPROXY, engine configs, GEO sources and Watchdog data, or restore one after reviewing exactly what would change."
+msgstr ""
+
+msgid "Export backup"
+msgstr ""
+
+msgid "Import backup..."
+msgstr ""
+
+msgid "No differences found - current settings already match this backup."
+msgstr ""
+
+msgid "Close"
+msgstr ""
+
+msgid "%d change(s) will be applied:"
+msgstr ""
+
+msgid "Apply this backup? Current settings shown above will be overwritten."
+msgstr ""
+
+msgid "new"
+msgstr ""
+
+msgid "not in backup, kept as-is"
+msgstr ""
+
+msgid "new file, will be created"
+msgstr ""
+
+msgid "not part of this backup, will be left untouched"
+msgstr ""
+
+msgid "changed (%d -> %d lines, too large to show inline)"
+msgstr ""
+
+msgid "Backup restored. Restarted: %s"
+msgstr ""
+
+msgid "nothing (no service-affecting changes)"
+msgstr ""
+
+msgid "Failed to restore backup."
+msgstr ""
+
+msgid "Backup restore cancelled."
+msgstr ""
+
+msgid "Restore tproxy-manager backup"
+msgstr ""
+
+msgid "Upload and show changes"
+msgstr ""
+
+msgid "Please choose a backup file to upload."
+msgstr ""
+
+msgid "Failed to process the uploaded backup."
+msgstr ""
+
+msgid "Pending import not found or expired."
 msgstr ""

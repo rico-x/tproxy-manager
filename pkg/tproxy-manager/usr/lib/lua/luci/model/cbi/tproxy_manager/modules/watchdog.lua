@@ -646,7 +646,14 @@ local function render(ctx)
     local port = parse_int(http.formvalue("happ_capture_start_port"), parse_int(getu("watchdog_happ_capture_port", "18088"), 18088))
     if port < 1 or port > 65535 then port = 18088 end
     local form_capture_log = trim(http.formvalue("happ_capture_start_log"))
-    if form_capture_log ~= "" then capture_log = form_capture_log end
+    if form_capture_log ~= "" then
+      if not utils.is_abs_path(form_capture_log) then
+        set_err(_("Capture log path must be absolute."))
+        helpers.redirect_watchdog()
+        return m
+      end
+      capture_log = form_capture_log
+    end
     local rc, out = run_subscription_command({ "capture-start", tostring(ttl), tostring(port), capture_log })
     if rc == 0 then
       set_err(nil)

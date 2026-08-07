@@ -411,6 +411,12 @@ local function render(ctx)
         local cf = fval_last("mihomo_file_selected")
         if cf == "" then cf = fval_last("mihomo_file") end
         if cf == "" then cf = chosen end
+        if not is_known_yaml_file(cf) then
+          set_err(_("Invalid file name. Expected *.yaml without slashes."))
+          set_info(nil)
+          http.redirect(self_url({ tab = "mihomo" }))
+          return
+        end
         if not validate_mihomo_text(new) then
           set_err(_("Invalid Mihomo configuration. File was not saved."))
           set_info(nil)

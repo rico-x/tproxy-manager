@@ -23,6 +23,28 @@ function M.ensure_dir(path)
   return sys.call("mkdir -p " .. M.shellescape(dir) .. " >/dev/null 2>&1") == 0
 end
 
+-- promote_file: rename tmp -> path, with a sync+retry if the bare rename(2)
+-- fails. Observed in the field on some flash filesystems (UBIFS/overlay)
+-- under heavy write pressure: rename(2) — and even a plain unlink(2) — can
+-- fail with a stale-handle error (ESTALE) even though tmp and path are on
+-- the same filesystem and both paths are perfectly valid; the kernel's
+-- cached view has simply drifted from the underlying filesystem's actual
+-- state. A `sync` reliably reconciles that and lets a retried rename
+-- succeed — confirmed by hand on an affected router. `mv` is used as the
+-- last-resort fallback (not `cp`) because it does not touch the existing
+-- destination at all when it fails, so a failed promote never risks losing
+-- the previous, still-good file — it only leaves both tmp and path in
+-- place for a later retry.
+function M.promote_file(tmp, path)
+  if fs.rename(tmp, path) then return true end
+  sys.call("sync")
+  if fs.rename(tmp, path) then return true end
+  if sys.call("mv -f " .. M.shellescape(tmp) .. " " .. M.shellescape(path) .. " >/dev/null 2>&1") == 0 then
+    return true
+  end
+  return false
+end
+
 function M.atomic_write(path, data)
   path = tostring(path or "")
   if path == "" then return false end
@@ -34,8 +56,9 @@ function M.atomic_write(path, data)
   end
   local tmp = string.format("%s/.%s.%d.tmp", tmpdir, base or "tmp", math.random(1, 10^9))
   fs.writefile(tmp, data)
-  fs.rename(tmp, path)
-  return true
+  local ok = M.promote_file(tmp, path)
+  if not ok then fs.remove(tmp) end
+  return ok
 end
 
 function M.read_file(path)
@@ -133,24 +156,32 @@ function M.make_temp_message_store(err_file, info_file, err_ttl)
     end
   end
 
-  local function get_err()
-    local st = fs.stat(err_file)
-    if st and st.mtime and ttl > 0 and (os.time() - st.mtime) > ttl then
-      fs.remove(err_file)
-      return ""
+  -- Both err and info use the same TTL-based staleness check rather than a
+  -- "read once, then delete" one-shot: the LuCI CBI framework calls a
+  -- DummyValue's cfgvalue() more than once per request even when a redirect
+  -- was issued (its own render pass never reaches the client, but it still
+  -- runs). A one-shot clear-on-read would then already consume the message
+  -- during that first, discarded pass, so the real page the user actually
+  -- sees on the next request finds nothing left to show. TTL expiry has no
+  -- such race: the message just reads back correctly however many times
+  -- cfgvalue() happens to run, and disappears on its own after err_ttl
+  -- seconds instead of relying on being "seen" exactly once.
+  local function make_getter(path)
+    return function()
+      local st = fs.stat(path)
+      if st and st.mtime and ttl > 0 and (os.time() - st.mtime) > ttl then
+        fs.remove(path)
+        return ""
+      end
+      return M.read_file(path)
     end
-    return M.read_file(err_file)
-  end
-
-  local function get_info()
-    return M.read_file(info_file)
   end
 
   return {
     set_err = function(text) set_file(err_file, text) end,
-    get_err = get_err,
+    get_err = make_getter(err_file),
     set_info = function(text) set_file(info_file, text) end,
-    get_info = get_info,
+    get_info = make_getter(info_file),
   }
 end
 
