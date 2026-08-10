@@ -71,6 +71,28 @@ while IFS= read -r -d '' file; do
 done < <(find "$PKG_DIR" -type f -print0)
 printf 'ok\n'
 
+section "Test suites"
+# The suites under tests/ exercise the rollback subsystem with injected faults
+# (unreadable source, unwritable MANIFEST/KEEP/STAGE, failing chmod, rollback,
+# and a process killed between two live writes). They need nixio and the LuCI
+# Lua tree, so they cannot execute here — this checks they stay syntactically
+# valid and runnable, and names the runner that executes them on a router.
+test -d "$ROOT/tests"
+suite_count=0
+while IFS= read -r -d '' file; do
+  case "$file" in
+    *.lua) luac -p "$file" ;;
+    *.sh)  sh -n "$file"; test -x "$file" || { echo "test suite must be executable: $file" >&2; exit 1; } ;;
+  esac
+  suite_count=$((suite_count + 1))
+done < <(find "$ROOT/tests" \( -name '*.lua' -o -name '*.sh' \) -type f -print0)
+if [ "$suite_count" -eq 0 ]; then
+  echo "no test suites found under tests/" >&2
+  exit 1
+fi
+test -x "$ROOT/scripts/test-on-device.sh"
+printf 'ok (%d suite(s); run on a router: scripts/test-on-device.sh root@<host>)\n' "$suite_count"
+
 section "Shell syntax"
 while IFS= read -r -d '' file; do
   if is_shell_file "$file"; then

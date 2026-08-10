@@ -4,13 +4,29 @@ local jsonc = require "luci.jsonc"
 local ok_nixio, nixio = pcall(require, "nixio")
 local happ_decrypt = require "tproxy_manager.happ_decrypt"
 local proxy_links = require "tproxy_manager.proxy_links"
+-- The shared rollback store. Soft-required: this script also runs from cron and
+-- from the init scripts, and a broken luci tree must not stop it from loading.
+-- The two-file transaction below refuses to run without it rather than doing the
+-- work unsafely.
+local ok_utils, utils = pcall(require, "luci.model.cbi.tproxy_manager.utils")
 
 local PKG = "tproxy-manager"
 local DEFAULT_DB = "/etc/tproxy-manager/watchdog-subscriptions.json"
 local DEFAULT_LINKS = "/etc/tproxy-manager/watchdog.links"
-local LOCK_DIR = "/tmp/tproxy-manager-watchdog.lock"
-local CAPTURE_PID = "/tmp/tproxy-manager-happ-capture.pid"
-local CAPTURE_OUT = "/tmp/tproxy-manager-happ-capture.out"
+-- Locks live inside a root-only 0700 directory rather than directly in
+-- world-writable /tmp (or /var/lock, which is 1777 too): otherwise any
+-- local user could pre-create the lock path and permanently deny the
+-- service its lock.
+local LOCK_ROOT = "/var/lock/tproxy-manager"
+local LOCK_DIR = LOCK_ROOT .. "/watchdog.lock"
+-- The capture bookkeeping lives inside the root-only 0700 lock root, not
+-- directly in world-writable /tmp. At fixed /tmp paths any local user could
+-- pre-create them as symlinks and have this root process write through them,
+-- or plant a PID for capture_stop() to kill. LOCK_ROOT is created and validated
+-- by secure_lock_root() before either path is used.
+local CAPTURE_DIR = LOCK_ROOT .. "/happ-capture"
+local CAPTURE_PID = CAPTURE_DIR .. "/pid"
+local CAPTURE_OUT = CAPTURE_DIR .. "/out"
 
 local function trim(value)
   return tostring(value or ""):gsub("\r", ""):gsub("^%s+", ""):gsub("%s+$", "")
@@ -42,6 +58,32 @@ local function read_file(path)
   return data
 end
 
+-- Reads at most `limit` bytes. Used for untrusted subscription responses so
+-- an oversized body is never fully materialised as a Lua string just to be
+-- rejected by a length check afterwards.
+local function read_file_limited(path, limit)
+  local fh = io.open(path, "rb")
+  if not fh then return "" end
+  local data = fh:read(limit) or ""
+  fh:close()
+  return data
+end
+
+-- Size of a file on disk, or nil. Uses nixio when available (it is on
+-- OpenWrt) and falls back to a seek-to-end so this script keeps working
+-- standalone without nixio, same defensive style as current_pid() above.
+local function nixio_stat(path)
+  if ok_nixio and nixio and nixio.fs and nixio.fs.stat then
+    local st = nixio.fs.stat(path)
+    return st and st.size or nil
+  end
+  local fh = io.open(path, "rb")
+  if not fh then return nil end
+  local size = fh:seek("end")
+  fh:close()
+  return size
+end
+
 local function ensure_dir(path)
   if path and path ~= "" then
     exec_ok("mkdir -p " .. shellescape(path) .. " >/dev/null 2>&1")
@@ -51,25 +93,81 @@ end
 local function write_file(path, data)
   local dir, base = tostring(path):match("^(.*)/([^/]+)$")
   if dir and dir ~= "" then ensure_dir(dir) end
-  local tmp = string.format("%s/.%s.%d.%d.tmp", dir or ".", base or "tmp", os.time(), math.random(1, 1000000))
-  local fh = assert(io.open(tmp, "wb"))
-  fh:write(data or "")
-  fh:close()
+  data = data or ""
+
+  -- Temp file lives in an exclusively-created 0700 directory on the target's
+  -- own filesystem: exclusive creation alone would still leave the path
+  -- swappable between close() and rename in a shared directory.
+  local workdir
+  for _ = 1, 8 do
+    local cand = string.format("%s/.tpm-w.%d.%d", dir or ".", math.random(1, 10 ^ 9), math.random(1, 10 ^ 9))
+    if exec_ok("mkdir -m 0700 " .. shellescape(cand) .. " >/dev/null 2>&1") then workdir = cand; break end
+  end
+  assert(workdir, "could not create a private temp directory for " .. tostring(path))
+  local tmp = workdir .. "/" .. (base or "tmp")
+
+  local function drop_workdir()
+    exec_ok("rm -rf " .. shellescape(workdir) .. " >/dev/null 2>&1")
+  end
+
+  if ok_nixio and nixio and nixio.open_flags then
+    local fd = nixio.open(tmp, nixio.open_flags("wronly", "creat", "excl"), "600")
+    if not fd then drop_workdir(); error("could not create temp file exclusively: " .. tmp) end
+    -- write() may be short; compare against the full payload length instead
+    -- of only asserting truthiness, otherwise a truncated file could be
+    -- promoted over a good one.
+    local n = fd:write(data)
+    local closed = fd:close()
+    if n ~= #data or not closed then
+      drop_workdir()
+      error("short write while saving " .. tostring(path))
+    end
+  else
+    local fh = io.open(tmp, "wb")
+    if not fh then drop_workdir(); error("could not open temp file: " .. tmp) end
+    fh:write(data)
+    fh:close()
+    exec_ok("chmod 0600 " .. shellescape(tmp) .. " >/dev/null 2>&1")
+    local check = io.open(tmp, "rb")
+    local wrote = check and #(check:read("*a") or "") or -1
+    if check then check:close() end
+    if wrote ~= #data then drop_workdir(); error("short write while saving " .. tostring(path)) end
+  end
+
   -- Plain os.rename() can fail with a stale-handle error (ESTALE) on some
-  -- flash filesystems (observed: UBIFS/overlay) even for a same-directory
-  -- rename, when the kernel's cached view has drifted from the underlying
-  -- filesystem's actual state. A `sync` reconciles that; retry once before
-  -- falling back to `mv` (not `cp` — mv leaves both files untouched if it
-  -- also fails, so a failed promote can't destroy an existing good file).
-  -- Unlike the earlier bare assert(), this no longer aborts this cron-driven
-  -- sync run outright on a single transient ESTALE.
-  if not os.rename(tmp, path) then
+  -- flash filesystems (observed: UBIFS/overlay); a `sync` reconciles that.
+  -- `mv` is the last resort because it leaves both files intact on failure.
+  -- Every branch verifies the RESULT, not the return code. If the target path
+  -- has been replaced by a directory, `mv -f file dir` succeeds by moving the
+  -- file INSIDE it and exits 0; the old code then chmod'ed the DIRECTORY to
+  -- 0600 and reported the save as done. rename(2) refuses that case, the mv
+  -- fallback does not, so the check has to cover both.
+  local function landed()
+    if ok_nixio and nixio and nixio.fs and nixio.fs.stat then
+      local st = nixio.fs.stat(path)
+      return st ~= nil and st.type == "reg"
+    end
+    return exec_ok("[ -f " .. shellescape(path) .. " ] >/dev/null 2>&1")
+  end
+
+  local moved = os.rename(tmp, path) and landed()
+  if not moved then
     os.execute("sync")
-    if not os.rename(tmp, path) then
-      assert(exec_ok("mv -f " .. shellescape(tmp) .. " " .. shellescape(path) .. " >/dev/null 2>&1"),
-        "unable to move " .. tmp .. " into place at " .. path)
+    moved = os.rename(tmp, path) and landed()
+    if not moved then
+      if exec_ok("mv -f " .. shellescape(tmp) .. " " .. shellescape(path) .. " >/dev/null 2>&1") then
+        moved = landed()
+        if not moved then
+          -- mv "succeeded" into a directory: remove what it dropped in there so
+          -- the failed save leaves nothing behind.
+          exec_ok("rm -f " .. shellescape(path .. "/" .. (base or "tmp")) .. " >/dev/null 2>&1")
+        end
+      end
     end
   end
+  drop_workdir()
+  assert(moved, "unable to move the new " .. tostring(path) .. " into place")
+  exec_ok("chmod 0600 " .. shellescape(path) .. " >/dev/null 2>&1")
 end
 
 local function uci_get(key, fallback)
@@ -88,6 +186,13 @@ end
 
 local function uci_commit()
   return exec_ok("uci commit " .. shellescape(PKG) .. " >/dev/null 2>&1")
+end
+
+-- uci_revert: drop staged-but-uncommitted changes. Without it a partial stage
+-- was left pending and the next unrelated `uci commit` from anywhere would
+-- persist it.
+local function uci_revert()
+  return exec_ok("uci revert " .. shellescape(PKG) .. " >/dev/null 2>&1")
 end
 
 local function md5(value)
@@ -460,37 +565,156 @@ local function header_list(sub)
   return headers
 end
 
+-- A subscription server is an untrusted third party by definition (it's
+-- whatever URL the user configured, and it can be redirected by whoever
+-- controls that URL at fetch time) - bound both the raw download and the
+-- decompressed payload so a malicious/compromised endpoint can't fill the
+-- router's tmpfs with an oversized or gzip-bomb response.
+local MAX_SUBSCRIPTION_DOWNLOAD_BYTES = 4 * 1024 * 1024
+local MAX_SUBSCRIPTION_DECODED_BYTES  = 8 * 1024 * 1024
+
 local function fetch_url(sub, resolved_url)
-  local body = string.format("/tmp/tproxy-manager-subscription.%d.%d.body", os.time(), math.random(1, 1000000))
-  local err = body .. ".err"
+  -- Both files live inside an exclusively-created 0700 directory. curl has
+  -- to (re)open them by path, so an exclusive create alone would still leave
+  -- a window in world-writable /tmp where the path could be swapped; inside
+  -- a private directory no other user can even resolve the names.
+  local workdir
+  for _ = 1, 8 do
+    local cand = string.format("/tmp/.tpm-sub.%d.%d", math.random(1, 10 ^ 9), math.random(1, 10 ^ 9))
+    if exec_ok("mkdir -m 0700 " .. shellescape(cand) .. " >/dev/null 2>&1") then workdir = cand; break end
+  end
+  if not workdir then
+    return "000", "", "could not create a private working directory for the download"
+  end
+  local body = workdir .. "/body"
+  local err  = workdir .. "/err"
+  local decoded_path = workdir .. "/decoded"
+  -- Create both files EXCLUSIVELY (O_CREAT|O_EXCL, mode 0600) before curl
+  -- writes into them. Plain io.open() would follow a pre-planted symlink and
+  -- let this root process clobber the link target; O_EXCL fails with EEXIST
+  -- on a symlink whether or not its target exists.
+  if ok_nixio and nixio and nixio.open_flags then
+    local flags = nixio.open_flags("wronly", "creat", "excl")
+    for _, path in ipairs({ body, err }) do
+      local fd = nixio.open(path, flags, "600")
+      if not fd then
+        return "000", "", "could not create a private temp file for the download"
+      end
+      fd:close()
+    end
+  else
+    for _, path in ipairs({ body, err }) do
+      local fh = io.open(path, "wb")
+      if fh then fh:close() end
+      exec_ok("chmod 0600 " .. shellescape(path) .. " >/dev/null 2>&1")
+    end
+  end
   local parts = {
     "curl -L -sS",
     "-o", shellescape(body),
     "-w", shellescape("%{http_code}"),
     "--connect-timeout", "15",
     "--max-time", tostring(tonumber(sub.timeout) or 30),
+    "--max-filesize", tostring(MAX_SUBSCRIPTION_DOWNLOAD_BYTES),
+    -- The URL itself is already checked for http(s):// before we get here
+    -- (see resolve_subscription_url); --proto-redir stops a redirect from
+    -- jumping to a different scheme (file://, etc.) that -L would
+    -- otherwise happily follow.
+    "--proto", "=http,https",
+    "--proto-redir", "=http,https",
   }
   for _, header in ipairs(header_list(sub)) do
     parts[#parts + 1] = "--header"
     parts[#parts + 1] = shellescape(header)
   end
   parts[#parts + 1] = shellescape(resolved_url or sub.url or "")
-  local cmd = table.concat(parts, " ") .. " 2>" .. shellescape(err)
+  -- Append curl's own exit status on its own line after the -w http_code so
+  -- a transport-level failure (--max-filesize tripped, blocked protocol,
+  -- TLS error) is distinguishable from a successful fetch: without it,
+  -- io.popen's exit status is not reliably surfaced and a truncated or
+  -- refused download would be parsed as if it were a valid response body.
+  local cmd = "{ " .. table.concat(parts, " ") .. "; printf '\\n%s' \"$?\"; } 2>" .. shellescape(err)
+
+  local function cleanup()
+    exec_ok("rm -rf " .. shellescape(workdir) .. " >/dev/null 2>&1")
+  end
+
   local p = io.popen(cmd)
-  local code = p and trim(p:read("*a") or "") or "000"
+  local raw = p and (p:read("*a") or "") or ""
   if p then p:close() end
-  local response = read_file(body)
-  if response:byte(1) == 31 and response:byte(2) == 139 then
-    local pz = io.popen("gzip -dc " .. shellescape(body) .. " 2>/dev/null")
-    if pz then
-      local decoded = pz:read("*a") or ""
-      pz:close()
-      if decoded ~= "" then response = decoded end
+  local code, curl_rc = raw:match("^(%S*)%s*\n(%d+)%s*$")
+  code = trim(code or "")
+  curl_rc = tonumber(curl_rc)
+  if code == "" then code = "000" end
+
+  if curl_rc ~= nil and curl_rc ~= 0 then
+    local detail = trim(read_file(err))
+    cleanup()
+    if curl_rc == 63 then
+      return "000", "", "subscription response exceeds the download size limit"
     end
+    return "000", "", detail ~= "" and detail or ("curl failed with exit code " .. tostring(curl_rc))
+  end
+
+  -- --max-filesize only applies when the server declares Content-Length;
+  -- a chunked response is not capped by it at all, so check what actually
+  -- landed on disk before reading any of it into memory.
+  local body_st = nixio_stat(body)
+  if body_st and body_st > MAX_SUBSCRIPTION_DOWNLOAD_BYTES then
+    cleanup()
+    return "000", "", "subscription response exceeds the download size limit"
+  end
+
+  local response = read_file_limited(body, MAX_SUBSCRIPTION_DECODED_BYTES + 1)
+  if #response > MAX_SUBSCRIPTION_DECODED_BYTES then
+    cleanup()
+    return "000", "", "subscription response exceeds the size limit"
+  end
+  if response:byte(1) == 31 and response:byte(2) == 139 then
+    -- `gzip -t` used to run first, to tell a corrupt stream from a valid one.
+    -- The problem is that it decompresses the WHOLE stream with no consumer:
+    -- measured on the target, a 2 MB body expanding to 2 GiB burned 20 seconds
+    -- of CPU before a single byte had been length-checked. A bomb costs the
+    -- attacker nothing to offer, so that is a remote CPU-exhaustion primitive.
+    --
+    -- The fix is to decompress exactly ONCE, streaming, with the byte cap as
+    -- the bound: `head -c LIMIT+1` closes the pipe the moment the cap is
+    -- passed, gzip dies of SIGPIPE, and the expansion stops there. That bounds
+    -- the work by construction - the same 2 GiB bomb now finishes in under a
+    -- second, having produced 8 MiB. (No wall-clock timer: `timeout` is not
+    -- part of this busybox build, and with output capped it would have nothing
+    -- left to protect against.)
+    --
+    -- Integrity is judged by gzip's own exit status, which the shell writes to
+    -- a side file so it survives the pipeline:
+    --   0   - clean stream
+    --   141 - killed by SIGPIPE, i.e. the cap was hit (reported as too large)
+    --   else- the stream itself is broken
+    local rcfile = workdir .. "/gzrc"
+    local ok_run = exec_ok(string.format(
+      "sh -c %s >%s 2>/dev/null",
+      shellescape(string.format("{ gzip -dc %s; echo $? >%s; } | head -c %d",
+        shellescape(body), shellescape(rcfile), MAX_SUBSCRIPTION_DECODED_BYTES + 1)),
+      shellescape(decoded_path)))
+    local decoded = read_file_limited(decoded_path, MAX_SUBSCRIPTION_DECODED_BYTES + 1)
+    local gz_rc = tonumber(trim(read_file(rcfile)))
+
+    if #decoded > MAX_SUBSCRIPTION_DECODED_BYTES then
+      cleanup()
+      return "000", "", "decompressed subscription response exceeds the size limit"
+    end
+    if not ok_run and #decoded == 0 then
+      cleanup()
+      return "000", "", "subscription response could not be decompressed"
+    end
+    if gz_rc == nil or (gz_rc ~= 0 and gz_rc ~= 141) then
+      cleanup()
+      return "000", "", "subscription response is not a valid gzip stream"
+    end
+    if decoded ~= "" then response = decoded end
   end
   local error_text = trim(read_file(err))
-  os.remove(body)
-  os.remove(err)
+  cleanup()
   return code, response, error_text
 end
 
@@ -587,6 +811,60 @@ local function sync_links_file(db)
   write_file(links_path(), table.concat(out, "\n") .. (#out > 0 and "\n" or ""))
 end
 
+-- save_db_and_links: the database and the links file are ONE unit. The links
+-- file is generated from the database, so a saved database with a stale links
+-- file leaves the watchdog probing links the database no longer knows about --
+-- which is exactly what two independent writes with no way back produced.
+--
+-- `sync` false means only the database is written; that is a single atomic write
+-- and needs no rollback.
+local function save_db_and_links(db, sync)
+  if not sync then
+    save_db(db)
+    return
+  end
+  if not ok_utils or not utils or not utils.snapshot_begin then
+    error("rollback support is unavailable; refusing to write the database and the link list without it")
+  end
+
+  local store, serr = utils.snapshot_begin("subs-sync")
+  if store then
+    for _, path in ipairs({ db_path(), links_path() }) do
+      if not store then break end
+      local ok_s, aerr = utils.snapshot_add(store, path)
+      if not ok_s then serr = aerr; utils.snapshot_discard(store); store = nil end
+    end
+  end
+  if not store then
+    error("could not create a rollback snapshot: " .. tostring(serr))
+  end
+  local armed, aerr = utils.snapshot_arm(store)
+  if not armed then
+    utils.snapshot_discard(store)
+    error("could not arm the rollback snapshot: " .. tostring(aerr))
+  end
+
+  local ok, err = pcall(function()
+    save_db(db)
+    sync_links_file(db)
+  end)
+  if ok then
+    utils.snapshot_discard(store)
+    return
+  end
+
+  local failed = utils.snapshot_restore(store)
+  if #failed > 0 then
+    local names = {}
+    for _, f in ipairs(failed) do names[#names + 1] = f.path end
+    local kept = utils.snapshot_keep(store) or store.dir
+    error(string.format("%s - ROLLBACK INCOMPLETE for %s; originals kept in %s",
+      tostring(err), table.concat(names, ", "), kept))
+  end
+  utils.snapshot_discard(store)
+  error(tostring(err))
+end
+
 local function fetch_subscription(db, sub)
   if not sub then return false, "подписка не найдена" end
   if sub.type == "json" then
@@ -649,17 +927,81 @@ local function fetch_subscription(db, sub)
   return true, tostring(#links)
 end
 
-local function acquire_lock()
-  if exec_ok("mkdir " .. shellescape(LOCK_DIR) .. " >/dev/null 2>&1") then
-    write_file(LOCK_DIR .. "/pid", current_pid() .. "\n")
+local LOCK_OWNERLESS_GRACE = 300  -- seconds
+
+local function lock_write_pid()
+  -- Written directly, not through write_file(): that helper creates a temp
+  -- directory next to the target and would recurse into the very locking
+  -- logic we are setting up here.
+  local fh = io.open(LOCK_DIR .. "/pid", "w")
+  if not fh then return false end
+  local pid = current_pid() .. "\n"
+  local okw = fh:write(pid)
+  local okc = fh:close()
+  return okw ~= nil and okc ~= nil and okc ~= false
+end
+
+-- Same validation as the LuCI side: /var/lock is 1777, so the path can be
+-- pre-created by any local user. mkdir is atomic and proves we made it; an
+-- existing path is accepted only if lstat shows a real root-owned 0700
+-- directory (never a symlink or someone else's).
+local function secure_lock_root()
+  if exec_ok("mkdir -m 0700 " .. shellescape(LOCK_ROOT) .. " >/dev/null 2>&1") then
     return true
   end
+  if not (ok_nixio and nixio and nixio.fs and nixio.fs.lstat) then
+    return exec_ok("[ -d " .. shellescape(LOCK_ROOT) .. " ]")
+  end
+  local st = nixio.fs.lstat(LOCK_ROOT)
+  if not st then return false end
+  if st.type ~= "dir" and st.type ~= "directory" then return false end
+  if (st.uid or -1) ~= 0 then return false end
+  if (st.modedec or 0) ~= 700 then
+    exec_ok("chmod 0700 " .. shellescape(LOCK_ROOT) .. " >/dev/null 2>&1")
+    local again = nixio.fs.lstat(LOCK_ROOT)
+    if not again or (again.modedec or 0) ~= 700 then return false end
+  end
+  return true
+end
+
+local function acquire_lock()
+  if not secure_lock_root() then
+    io.stderr:write("refusing to run: unsafe lock directory " .. LOCK_ROOT .. "\n")
+    return false
+  end
+
+  if exec_ok("mkdir " .. shellescape(LOCK_DIR) .. " >/dev/null 2>&1") then
+    -- If the owner PID cannot be recorded, release the lock immediately
+    -- rather than leaving an ownerless one that nobody can attribute.
+    if not lock_write_pid() then
+      exec_ok("rm -rf " .. shellescape(LOCK_DIR) .. " >/dev/null 2>&1")
+      return false
+    end
+    return true
+  end
+
   local pid = trim(read_file(LOCK_DIR .. "/pid"))
-  if pid:match("^%d+$") and not exec_ok("kill -0 " .. shellescape(pid) .. " >/dev/null 2>&1") then
-    os.remove(LOCK_DIR .. "/pid")
-    exec_ok("rmdir " .. shellescape(LOCK_DIR) .. " >/dev/null 2>&1")
+  local stale = false
+  if pid:match("^%d+$") then
+    -- Owner known: stale only if that process is gone.
+    stale = not exec_ok("kill -0 " .. shellescape(pid) .. " >/dev/null 2>&1")
+  else
+    -- Ownerless: either another process is between its mkdir and its pid
+    -- write (a moment ago), or it died in that window and the lock would
+    -- otherwise survive until reboot. A short grace period separates the
+    -- two without stealing a lock that is being acquired right now.
+    local st = ok_nixio and nixio and nixio.fs and nixio.fs.stat(LOCK_DIR) or nil
+    local age = st and st.mtime and (os.time() - st.mtime) or 0
+    stale = age > LOCK_OWNERLESS_GRACE
+  end
+
+  if stale then
+    exec_ok("rm -rf " .. shellescape(LOCK_DIR) .. " >/dev/null 2>&1")
     if exec_ok("mkdir " .. shellescape(LOCK_DIR) .. " >/dev/null 2>&1") then
-      write_file(LOCK_DIR .. "/pid", current_pid() .. "\n")
+      if not lock_write_pid() then
+        exec_ok("rm -rf " .. shellescape(LOCK_DIR) .. " >/dev/null 2>&1")
+        return false
+      end
       return true
     end
   end
@@ -671,7 +1013,30 @@ local function release_lock()
   exec_ok("rmdir " .. shellescape(LOCK_DIR) .. " >/dev/null 2>&1")
 end
 
+-- caller_holds_lock: the LuCI side runs read-modify-sync as ONE transaction
+-- and has to hold this same lock across all of it. Without a way to say so,
+-- the sync-links it invokes would deadlock against its caller.
+--
+-- The claim is verified, not trusted: the pid in the lock directory must
+-- match what the caller passed. Only root can write there (0700 root-owned,
+-- checked by secure_lock_root), and only our own parent can set the
+-- environment variable, so a forged claim would already require root.
+local function caller_holds_lock()
+  local claimed = trim(os.getenv("TPM_SUBS_LOCK_PID") or "")
+  if not claimed:match("^%d+$") then return false end
+  if trim(read_file(LOCK_DIR .. "/pid")) ~= claimed then return false end
+  -- The owner must still be alive; a stale pid file must not grant entry.
+  return exec_ok("kill -0 " .. shellescape(claimed) .. " >/dev/null 2>&1")
+end
+
 local function with_lock(fn)
+  if caller_holds_lock() then
+    -- Neither acquired nor released here: the caller owns the lock for the
+    -- whole transaction, including its rollback.
+    local ok, a, b = pcall(fn)
+    if not ok then return false, tostring(a) end
+    return a, b
+  end
   if not acquire_lock() then
     return false, "watchdog занят другой операцией"
   end
@@ -701,8 +1066,7 @@ local function command_fetch(id)
     local db = load_db()
     local sub = find_subscription(db, id)
     local ok, detail = fetch_subscription(db, sub)
-    save_db(db)
-    if ok then sync_links_file(db) end
+    save_db_and_links(db, ok)
     return ok, detail
   end)
 end
@@ -718,8 +1082,7 @@ local function command_fetch_all()
         if ok then ok_count = ok_count + 1 else err_count = err_count + 1 end
       end
     end
-    save_db(db)
-    if total > 0 then sync_links_file(db) end
+    save_db_and_links(db, total > 0)
     return err_count == 0, string.format("updated=%d ok=%d error=%d", total, ok_count, err_count)
   end)
 end
@@ -739,8 +1102,7 @@ local function command_fetch_due()
       end
     end
     if total > 0 then
-      save_db(db)
-      sync_links_file(db)
+      save_db_and_links(db, true)
       return err_count == 0, string.format("subscriptions due updated=%d ok=%d error=%d", total, ok_count, err_count)
     end
     return true, ""
@@ -766,8 +1128,7 @@ local function command_exclude_link(hash)
       db.excluded[skey .. "|" .. hash] = now()
     end
     db.removed[hash] = nil
-    save_db(db)
-    sync_links_file(db)
+    save_db_and_links(db, true)
     return true, "link excluded"
   end)
 end
@@ -788,19 +1149,60 @@ local function command_include_link(hash)
       end
     end
     db.removed[hash] = nil
-    save_db(db)
-    sync_links_file(db)
+    save_db_and_links(db, true)
     return true, changed and "link included" or "link already included"
   end)
 end
 
+-- This token is the ONLY authorization on the capture endpoint, which is
+-- reachable without a LuCI login. The previous construction hashed
+-- time+math.random+pid: all three are low-entropy and partly known to an
+-- attacker, making the token brute-forceable despite looking like a random
+-- MD5. Read 32 bytes from the kernel CSPRNG instead, and refuse to start
+-- the endpoint at all if that is not possible - a weak token would be
+-- indistinguishable from a strong one in the UI.
 local function capture_token()
-  return md5(tostring(now()) .. ":" .. tostring(math.random(1, 1000000000)) .. ":" .. current_pid())
+  local fh = io.open("/dev/urandom", "rb")
+  if not fh then return nil end
+  local raw = fh:read(32)
+  fh:close()
+  if not raw or #raw ~= 32 then return nil end
+  return (raw:gsub(".", function(c) return string.format("%02x", c:byte()) end))
+end
+
+-- capture_pid_is_ours: only ever signal a process that is actually one of our
+-- capture servers. A planted or recycled PID would otherwise let this kill an
+-- unrelated process as root.
+local function capture_pid_is_ours(pid)
+  if not pid:match("^%d+$") then return false end
+  local cmdline = read_file("/proc/" .. pid .. "/cmdline")
+  if cmdline == "" then return false end
+  cmdline = cmdline:gsub("%z", " ")
+  return cmdline:find("tproxy-manager-subscriptions.lua", 1, true) ~= nil
+    and cmdline:find("capture-serve", 1, true) ~= nil
+end
+
+-- capture_disable: clear the enabled flag and REPORT whether it stuck. The
+-- endpoint gates on this flag, so "stopped" while it is still 1 means the URL
+-- keeps answering after the user was told the capture is over.
+local function capture_disable()
+  if not uci_set("watchdog_happ_capture_enabled", "0") then
+    uci_revert()
+    return false, "could not stage the capture shutdown"
+  end
+  if not uci_commit() then
+    uci_revert()
+    return false, "could not save the capture shutdown"
+  end
+  if trim(uci_get("watchdog_happ_capture_enabled", "")) ~= "0" then
+    return false, "the capture is still marked enabled"
+  end
+  return true
 end
 
 local function capture_stop()
   local pid = trim(read_file(CAPTURE_PID))
-  if pid:match("^%d+$") then
+  if capture_pid_is_ours(pid) then
     exec_ok("kill " .. shellescape(pid) .. " >/dev/null 2>&1")
   end
   os.remove(CAPTURE_PID)
@@ -850,8 +1252,23 @@ local function capture_serve(token, until_ts, port, log_path)
     return false
   end
   server:listen(5)
+  -- The accept() below used to block with no deadline: after the TTL expired the
+  -- process kept listening until someone connected, and that late connection was
+  -- then served — verified on the target, an expired token got HTTP 200 three
+  -- seconds after a TTL of one. Two independent bounds fix it:
+  --
+  --   * a receive timeout on the LISTENING socket, so accept() itself returns
+  --     periodically and the loop can re-evaluate the deadline;
+  --   * a re-check of the deadline after accept() returns, so a connection that
+  --     arrives in the last instant is refused rather than served.
+  pcall(function() server:setsockopt("socket", "rcvtimeo", 1) end)
   while now() <= until_ts do
     local client = server:accept()
+    if client and now() > until_ts then
+      -- Arrived after expiry: close without looking at the request at all.
+      pcall(function() client:close() end)
+      client = nil
+    end
     if client then
       pcall(function() client:setsockopt("socket", "rcvtimeo", 5) end)
       local chunks = {}
@@ -863,7 +1280,9 @@ local function capture_serve(token, until_ts, port, log_path)
       local got_token = trim(path_token or query_token or "")
       local status = "403 Forbidden"
       local body = "capture endpoint is disabled or token expired\n"
-      if got_token == token then
+      -- Expiry is re-checked here too: parsing the request takes time, and the
+      -- TTL must hold at the moment the capture is actually written.
+      if got_token == token and got_token ~= "" and now() <= until_ts then
         write_file(log_path, parse_raw_http_request(raw))
         status = "200 OK"
         body = "OK\n"
@@ -885,14 +1304,45 @@ local function command_capture_start(ttl, port, log_path)
   if port < 1 or port > 65535 then port = 18088 end
   capture_stop()
   local token = capture_token()
+  if not token then
+    io.stderr:write("unable to read enough randomness for a secure capture token\n")
+    os.exit(1)
+  end
   local until_ts = now() + ttl
-  uci_set("watchdog_happ_capture_enabled", "1")
-  uci_set("watchdog_happ_capture_token", token)
-  uci_set("watchdog_happ_capture_until", tostring(until_ts))
-  uci_set("watchdog_happ_capture_ttl", tostring(ttl))
-  uci_set("watchdog_happ_capture_port", tostring(port))
-  uci_set("watchdog_happ_capture_log", log_path)
-  uci_commit()
+
+  -- Everything that can refuse is checked BEFORE a single UCI value is staged.
+  -- The old order committed enabled=1 first and only then validated the
+  -- directories: a failure there left the capture marked active in the config
+  -- with no server behind it, and the UI offered a URL that answered nothing.
+  if not secure_lock_root() then
+    io.stderr:write("refusing to start capture: unsafe lock directory " .. LOCK_ROOT .. "\n")
+    os.exit(1)
+  end
+  exec_ok("mkdir -m 0700 " .. shellescape(CAPTURE_DIR) .. " >/dev/null 2>&1")
+  if not exec_ok("[ -d " .. shellescape(CAPTURE_DIR) .. " ]") then
+    io.stderr:write("refusing to start capture: could not prepare " .. CAPTURE_DIR .. "\n")
+    os.exit(1)
+  end
+
+  -- Every result is checked, and a partial stage is reverted rather than left
+  -- pending for someone else's commit to pick up.
+  -- enabled=1 is deliberately NOT part of this stage; it is committed after the
+  -- server is confirmed running (see below).
+  local staged = uci_set("watchdog_happ_capture_token", token)
+    and uci_set("watchdog_happ_capture_until", tostring(until_ts))
+    and uci_set("watchdog_happ_capture_ttl", tostring(ttl))
+    and uci_set("watchdog_happ_capture_port", tostring(port))
+    and uci_set("watchdog_happ_capture_log", log_path)
+  if not staged then
+    uci_revert()
+    io.stderr:write("could not stage the capture settings\n")
+    os.exit(1)
+  end
+  if not uci_commit() then
+    uci_revert()
+    io.stderr:write("could not save the capture settings\n")
+    os.exit(1)
+  end
   local cmd = string.format("(%s capture-serve %s %s %s %s >%s 2>&1 </dev/null & echo $! >%s)",
     shellescape("/usr/bin/tproxy-manager-subscriptions.lua"),
     shellescape(token),
@@ -905,10 +1355,25 @@ local function command_capture_start(ttl, port, log_path)
   exec_ok("sleep 1")
   local pid = trim(read_file(CAPTURE_PID))
   if not pid:match("^%d+$") or not exec_ok("kill -0 " .. shellescape(pid) .. " >/dev/null 2>&1") then
-    uci_set("watchdog_happ_capture_enabled", "0")
-    uci_commit()
     local out = trim(read_file(CAPTURE_OUT))
-    return false, out ~= "" and out or "capture service did not start"
+    local reason = out ~= "" and out or "capture service did not start"
+    -- The flag was never set to 1 above (see the ordering comment there), but
+    -- clear it explicitly in case an earlier run left it on, and say so if that
+    -- fails: reporting only "did not start" would hide a live endpoint.
+    local cleared, cerr = capture_disable()
+    if not cleared then
+      return false, reason .. "; " .. tostring(cerr)
+    end
+    return false, reason
+  end
+
+  -- enabled=1 is committed ONLY now, once the server is confirmed listening.
+  -- Committing it before the spawn left a window in which the endpoint was
+  -- active with nothing behind it.
+  if not uci_set("watchdog_happ_capture_enabled", "1") or not uci_commit() then
+    uci_revert()
+    capture_stop()
+    return false, "capture started but the enabled flag could not be saved"
   end
   print("TOKEN=" .. token)
   print("PORT=" .. tostring(port))
@@ -970,9 +1435,14 @@ elseif mode == "capture-start" then
   ok, detail = command_capture_start(arg[2], arg[3], arg[4])
 elseif mode == "capture-stop" then
   capture_stop()
-  uci_set("watchdog_happ_capture_enabled", "0")
-  uci_commit()
-  ok, detail = true, "capture stopped"
+  local cleared, cerr = capture_disable()
+  if cleared then
+    ok, detail = true, "capture stopped"
+  else
+    -- The server is down but the endpoint is still marked enabled: saying
+    -- "stopped" here is exactly the false success this reports on.
+    ok, detail = false, tostring(cerr)
+  end
 elseif mode == "capture-status" then
   command_capture_status()
   os.exit(0)

@@ -71,11 +71,62 @@ local function touch_600(path)
   exec_ok(": > " .. shellescape(path) .. " && chmod 600 " .. shellescape(path) .. " >/dev/null 2>&1")
 end
 
+-- Все временные файлы этого модуля живут в ОДНОМ приватном каталоге 0700, а не
+-- по отдельным путям в /tmp. Прежняя схема опиралась на энтропию имени от
+-- math.random, засеянного часами: имя угадываемо, /tmp имеет режим 1777, и
+-- заранее созданный симлинк заставлял root писать расшифрованные данные
+-- подписки и RSA-ключи в чужой файл. Каталог создаётся ЭКСКЛЮЗИВНО (`mkdir`
+-- без -p падает, если имя уже занято) и проверяется по владельцу и режиму;
+-- внутрь него посторонний заглянуть не может, поэтому имена файлов внутри
+-- уже не обязаны быть случайными.
+local TMP_DIR = nil
+
+local function rand_hex(bytes)
+  local fh = io.open("/dev/urandom", "rb")
+  if fh then
+    local raw = fh:read(bytes)
+    fh:close()
+    if raw and #raw == bytes then
+      return (raw:gsub(".", function(c) return string.format("%02x", c:byte()) end))
+    end
+  end
+  -- Последний резерв: случайность здесь нужна только против занятия имени,
+  -- а не как секрет — эксклюзивный mkdir остаётся защитой в любом случае.
+  return string.format("%d.%d", os.time(), math.random(1, 10 ^ 9))
+end
+
+local function tmp_dir()
+  if TMP_DIR then return TMP_DIR end
+  for _ = 1, 8 do
+    local cand = string.format("/tmp/.tpm-happ.%s", rand_hex(8))
+    if exec_ok("mkdir -m 0700 " .. shellescape(cand) .. " >/dev/null 2>&1") then
+      local check = io.popen("ls -ldn " .. shellescape(cand) .. " 2>/dev/null")
+      local line = check and trim(check:read("*a") or "") or ""
+      if check then check:close() end
+      if line:match("^drwx%-%-%-%-%-%-%s+%d+%s+0%s") then
+        TMP_DIR = cand
+        return TMP_DIR
+      end
+      exec_ok("rm -rf " .. shellescape(cand) .. " >/dev/null 2>&1")
+      return nil
+    end
+  end
+  return nil
+end
+
 local function tmp_path(name)
-  -- Два независимых math.random()-вызова вместо одного повышают энтропию
-  -- имени и усложняют угадывание пути для локальной symlink-атаки; полноценно
-  -- убрать риск может только O_EXCL/mktemp, которых нет в чистом io.open().
-  return string.format("/tmp/tproxy-manager-%s.%d.%d.%d", name, os.time(), math.random(1, 10^9), math.random(1, 10^9))
+  local dir = tmp_dir()
+  if not dir then return nil end
+  return string.format("%s/%s", dir, tostring(name):gsub("[^%w%-_.]", ""))
+end
+
+-- cleanup_tmp: убрать каталог целиком. Вызывается на всех выходах из
+-- расшифровки, включая ошибочные.
+local function cleanup_tmp()
+  if TMP_DIR then
+    exec_ok("rm -rf " .. shellescape(TMP_DIR) .. " >/dev/null 2>&1")
+    TMP_DIR = nil
+  end
 end
 
 local b64_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
@@ -221,6 +272,9 @@ end
 local function poly1305_mac(one_time_key, ciphertext)
   local input = ciphertext .. pad16(ciphertext) .. le64(0) .. le64(#ciphertext)
   local in_path = tmp_path("poly1305.in")
+  -- No private directory means no safe place to put plaintext-adjacent data;
+  -- refusing is the only correct answer.
+  if not in_path then return nil, "could not create a private temp directory" end
   write_file(in_path, input)
   local cmd = table.concat({
     "openssl mac",
@@ -268,6 +322,11 @@ local function rsa_decrypt_b64_key(key_b64, cipher)
   local in_path = tmp_path("rsa.in")
   local out_path = tmp_path("rsa.out")
   local err_path = tmp_path("rsa.err")
+  -- The RSA private key is about to be written to disk: without a verified
+  -- private directory this must not proceed at all.
+  if not (key_path and in_path and out_path and err_path) then
+    return nil, "could not create a private temp directory"
+  end
   write_file(key_path, key_der)
   write_file(in_path, cipher)
   touch_600(out_path)
@@ -368,12 +427,21 @@ end
 function M.decrypt(link)
   local path = tostring(link or "")
   if path:match("^happ://") then path = path:sub(8) end
-  if path:match("^crypt5/") then return decrypt_crypt5(path:sub(8)) end
-  if path:match("^crypt4/") then return decrypt_crypt1to4(4, path:sub(8)) end
-  if path:match("^crypt3/") then return decrypt_crypt1to4(3, path:sub(8)) end
-  if path:match("^crypt2/") then return decrypt_crypt1to4(2, path:sub(8)) end
-  if path:match("^crypt/") then return decrypt_crypt1to4(1, path:sub(7)) end
-  return nil, "unknown Happ link format"
+
+  local value, err
+  if path:match("^crypt5/") then value, err = decrypt_crypt5(path:sub(8))
+  elseif path:match("^crypt4/") then value, err = decrypt_crypt1to4(4, path:sub(8))
+  elseif path:match("^crypt3/") then value, err = decrypt_crypt1to4(3, path:sub(8))
+  elseif path:match("^crypt2/") then value, err = decrypt_crypt1to4(2, path:sub(8))
+  elseif path:match("^crypt/") then value, err = decrypt_crypt1to4(1, path:sub(7))
+  else err = "unknown Happ link format" end
+
+  -- The private directory is removed on EVERY exit, including the error paths:
+  -- it holds the RSA key and decrypted subscription data, and leaving it behind
+  -- would keep them on disk for the rest of the boot.
+  cleanup_tmp()
+  if value then return value end
+  return nil, err
 end
 
 function M.resolve_subscription_url(url)

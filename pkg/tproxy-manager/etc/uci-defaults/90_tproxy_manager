@@ -252,6 +252,7 @@ set_default tproxy-manager main watchdog_singbox_batch_test_template_file '/etc/
 set_default tproxy-manager main watchdog_subscriptions_file '/etc/tproxy-manager/watchdog-subscriptions.json'
 set_default tproxy-manager main watchdog_share_enabled '0'
 set_default tproxy-manager main watchdog_share_file '/etc/tproxy-manager/watchdog-share.json'
+set_default tproxy-manager main watchdog_share_auth_mode 'token'
 set_default tproxy-manager main watchdog_happ_capture_enabled '0'
 set_default tproxy-manager main watchdog_happ_capture_token ''
 set_default tproxy-manager main watchdog_happ_capture_until '0'
@@ -280,6 +281,60 @@ set_default tproxy-manager main singbox_profile_managed_outbounds_file '/etc/sin
 set_default tproxy-manager main singbox_profile_controller 'http://127.0.0.1:9091'
 set_default tproxy-manager main singbox_profile_tproxy_port '61219'
 set_default tproxy-manager main singbox_profile_proxy_url 'socks5h://127.0.0.1:10808'
+# --- Миграция: расшаренная подписка не должна остаться публичной ---
+# Опция watchdog_share_auth_mode появилась позже самой функции, и endpoint
+# раньше требовал токен ТОЛЬКО при значении "token": конфиг без этой опции
+# отдавал весь список прокси любому, кто знает URL. Endpoint теперь
+# fail-closed, но у такого конфига может не быть и токена — тогда sharing
+# просто перестал бы работать молча. Поэтому здесь: токен генерируется, а
+# если получить энтропию не удалось — sharing выключается, но публичным не
+# остаётся.
+if [ "$(uci -q get tproxy-manager.main.watchdog_share_enabled)" = "1" ]; then
+  # `|| true`: под `set -e` подстановка с `uci -q get` отсутствующей или
+  # пустой опции завершается ненулевым кодом и обрывает всю миграцию на этой
+  # строке — ровно тот случай, который она и должна обслуживать.
+  _mode="$(uci -q get tproxy-manager.main.watchdog_share_auth_mode)" || _mode=""
+  if [ "$_mode" != "public" ]; then
+    uci -q set tproxy-manager.main.watchdog_share_auth_mode='token'
+    _tok="$(uci -q get tproxy-manager.main.watchdog_share_token)" || _tok=""
+    if [ -z "$_tok" ]; then
+      # 16 байт из /dev/urandom в hex. `od` есть не во всех сборках busybox
+      # (в частности, его нет на 24.10 Cudy), поэтому пробуем hexdump, затем
+      # md5sum от случайных байт. Каждая подстановка завершается `|| true`:
+      # скрипт выполняется под `set -e`, и отсутствующая утилита иначе
+      # обрывала бы всю миграцию на этой строке.
+      _tok=""
+      if command -v hexdump >/dev/null 2>&1; then
+        _tok="$(dd if=/dev/urandom bs=16 count=1 2>/dev/null | hexdump -v -e '1/1 "%02x"' 2>/dev/null)" || _tok=""
+      fi
+      if [ ${#_tok} -ne 32 ] && command -v md5sum >/dev/null 2>&1; then
+        _tok="$(dd if=/dev/urandom bs=16 count=1 2>/dev/null | md5sum 2>/dev/null | cut -d' ' -f1)" || _tok=""
+      fi
+      case "$_tok" in *[!0-9a-f]*) _tok="" ;; esac
+      if [ ${#_tok} -eq 32 ]; then
+        uci -q set tproxy-manager.main.watchdog_share_token="$_tok"
+        logger -t tproxy-manager "shared subscription: generated a token for a config that had none"
+      else
+        uci -q set tproxy-manager.main.watchdog_share_enabled='0'
+        logger -t tproxy-manager "shared subscription: disabled - no entropy to generate a token"
+      fi
+    fi
+  fi
+fi
+
 uci commit tproxy-manager
+
+# Файлы ниже содержат proxy-креденшелы, URL подписок и capture-токен в
+# открытом виде. Всё в пакете работает от root, поэтому 0600 ничего не
+# ломает функционально. Ставим права при установке/обновлении; дальше их
+# поддерживают сами write-хелперы пакета.
+for f in \
+  /etc/config/tproxy-manager \
+  /etc/tproxy-manager/watchdog.links \
+  /etc/tproxy-manager/watchdog-subscriptions.json \
+  /etc/tproxy-manager/watchdog-share.json
+do
+  [ -e "$f" ] && chmod 0600 "$f"
+done
 
 exit 0

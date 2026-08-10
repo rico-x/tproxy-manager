@@ -149,8 +149,14 @@ local function render(ctx)
   -- Toolbar handlers
   if http.formvalue("_refreshlog_mihomo") then set_err(nil); redirect_here("mihomo"); return m end
   if http.formvalue("_clearlog_mihomo") then
-    sys.call("/etc/init.d/log restart >/dev/null 2>&1")
-    set_err(nil); redirect_here("mihomo"); return m
+    -- Restarting `log` is what actually drops the ring buffer. Clearing
+    -- the banner regardless read as success even when it failed.
+    if sys.call("/etc/init.d/log restart >/dev/null 2>&1") == 0 then
+      set_err(nil)
+    else
+      set_info(nil); set_err(_("Failed to clear the log."))
+    end
+    redirect_here("mihomo"); return m
   end
   if http.formvalue("_test_mihomo") then
     local default_config = basename(ctx.uci:get(ctx.PKG, "main", "mihomo_profile_config_file"), "tproxy-manager.yaml")
@@ -168,7 +174,16 @@ local function render(ctx)
     set_err(nil); redirect_here("mihomo"); return m
   end
   if http.formvalue("_clearlog_mihomo_config") then
-    write_file(MIHOMO_TEST_LOG, ""); set_err(nil); redirect_here("mihomo"); return m
+    local ok, why = write_file(MIHOMO_TEST_LOG, "")
+    if ok then
+      set_err(nil)
+    elseif why == "permissions" then
+      set_info(nil)
+      set_err(_("Settings saved, but the configuration file permissions could not be secured."))
+    else
+      set_info(nil); set_err(_("Failed to clear the log."))
+    end
+    redirect_here("mihomo"); return m
   end
   if http.formvalue("_mihomo_version_refresh") == "1" then
     local rc, out = run_mihomo_version({ "status", "--refresh" })
@@ -204,7 +219,7 @@ local function render(ctx)
   end
   if http.formvalue("_mihomo_build_managed") == "1" then
     local ok, msg = build_managed_config(ctx)
-    if ok then set_err(nil); set_info(_("Mihomo managed config generated: ") .. msg) else set_info(nil); set_err(msg) end
+    if ok then set_err(nil); set_info(_("Mihomo managed config generated:").." " .. msg) else set_info(nil); set_err(msg) end
     redirect_here("mihomo"); return m
   end
 
@@ -314,7 +329,24 @@ local function render(ctx)
       local name = (http.formvalue("new_mihomo_name") or ""):gsub("^%s+",""):gsub("%s+$","")
       if name ~= "" and not name:find("[/\\]") and name:match("%.yaml$") then
         local path = MIHOMO_DIR .. "/" .. name
-        if not fs.access(path) then write_file(path, "# Mihomo configuration\n\n") end
+        if not fs.access(path) then
+          -- Creation is checked: redirecting to an editor for a file that
+          -- was never created (and clearing the error on the way) left the
+          -- user staring at an empty page with no indication of failure.
+          local made, mwhy = write_file(path, "# Mihomo configuration\n\n")
+          if not made and mwhy ~= "permissions" then
+            set_info(nil)
+            set_err(_("Failed to save settings."))
+            redirect_here("mihomo")
+            return m
+          end
+          if not made then
+            set_info(nil)
+            set_err(_("Settings saved, but the configuration file permissions could not be secured."))
+            redirect_here("mihomo")
+            return m
+          end
+        end
         set_err(nil)
         http.redirect(self_url({ tab="mihomo", mihomo_file=name }))
       else
@@ -423,8 +455,14 @@ local function render(ctx)
           http.redirect(self_url({ tab = "mihomo", mihomo_file = cf }))
           return
         end
-        write_file(MIHOMO_DIR .. "/" .. cf, new)
-        set_err(nil); set_info(_("Mihomo config saved: ")..cf)
+        local wrote, wwhy = write_file(MIHOMO_DIR .. "/" .. cf, new)
+        if wrote then
+          set_err(nil); set_info(_("Mihomo config saved:").." "..cf)
+        elseif wwhy == "permissions" then
+          set_info(nil); set_err(_("Settings saved, but the configuration file permissions could not be secured."))
+        else
+          set_info(nil); set_err(_("Failed to save settings."))
+        end
         http.redirect(self_url({ tab = "mihomo", mihomo_file = cf }))
       end
     end

@@ -25,8 +25,11 @@ local function read_file(path)
   return utils.read_file(path)
 end
 
+-- Returns the writer's result: callers now branch on it, and swallowing it
+-- here made every checked save report a false failure while the file was
+-- actually written.
 local function write_file(path, data)
-  utils.write_file(path, data or "")
+  return utils.write_file(path, data or "")
 end
 
 local function shellescape(s)
@@ -71,8 +74,15 @@ local function run_cmd_capture(cmd)
   return rc, trim(out)
 end
 
-local function run_subscription_command(args)
-  local parts = { shellescape(SUBSCRIPTIONS_SCRIPT) }
+-- lock_pid, when given, tells the script that this process already owns the
+-- shared subscription lock, so it runs inside our transaction instead of
+-- deadlocking while trying to take the same lock.
+local function run_subscription_command(args, lock_pid)
+  local parts = {}
+  if lock_pid then
+    parts[#parts + 1] = "TPM_SUBS_LOCK_PID=" .. shellescape(tostring(lock_pid))
+  end
+  parts[#parts + 1] = shellescape(SUBSCRIPTIONS_SCRIPT)
   for __, arg in ipairs(args or {}) do
     parts[#parts + 1] = shellescape(arg)
   end
@@ -109,8 +119,10 @@ local function read_subscription_db(path)
   return normalize_subscription_db(parsed)
 end
 
+-- Returns the writer's tri-state so callers can distinguish "not written"
+-- from "written but mode not set" instead of always claiming success.
 local function write_subscription_db(path, db)
-  write_file(path, jsonc.stringify(normalize_subscription_db(db), true) .. "\n")
+  return write_file(path, jsonc.stringify(normalize_subscription_db(db), true) .. "\n")
 end
 
 local function next_subscription_id(db)
@@ -692,9 +704,174 @@ local function render(ctx)
     show_capture_details = true
   end
 
+  -- A share token guards real proxy credentials, so it must come from a
+  -- CSPRNG. There is deliberately NO math.random fallback: a predictable
+  -- token would look identical to a strong one in the UI while being
+  -- brute-forceable, so failing to read 32 bytes from /dev/urandom aborts
+  -- the operation instead of silently downgrading the guarantee.
+  -- Returns nil on failure; every caller must handle that.
+  local function generate_share_token()
+    local fh = io.open("/dev/urandom", "rb")
+    if not fh then return nil end
+    local raw = fh:read(32)
+    fh:close()
+    if not raw or #raw ~= 32 then return nil end
+    return (raw:gsub(".", function(c) return string.format("%02x", c:byte()) end))
+  end
+
+  -- save_uci_and_file: one checked transaction for the "set a path in UCI +
+  -- write that file" pattern used by the template and links editors. All
+  -- three results (uci:set, file write, commit) used to be discarded and the
+  -- UI reported success unconditionally.
+  -- Returns true on success, or false plus a message.
+  local function save_uci_and_file(key, path, text, ok_message)
+    -- On-disk snapshot, like every other transaction here: the in-memory copy
+    -- this used to hold died with the request, so a CGI killed between the file
+    -- write and the commit left the previous template nowhere at all.
+    local store, serr = utils.snapshot_begin("tmpl")
+    if store then
+      local ok_s, aerr = utils.snapshot_add(store, path)
+      if not ok_s then serr = aerr; utils.snapshot_discard(store); store = nil end
+    end
+    if not store then
+      return false, _("Failed to save settings.") .. "\n" ..
+        string.format(_("Could not create a rollback snapshot: %s"), tostring(serr or "unknown error"))
+    end
+
+    if not utils.uci_stage(uci, PKG, "main", key, path) then
+      uci:revert(PKG)
+      utils.snapshot_discard(store)
+      return false, _("Failed to save settings.")
+    end
+
+    -- Armed before the first live write: from here on a crash must leave the
+    -- snapshot behind instead of having it swept as harmless.
+    local armed, aerr = utils.snapshot_arm(store)
+    if not armed then
+      uci:revert(PKG)
+      utils.snapshot_discard(store)
+      return false, _("Failed to save settings.") .. "\n" ..
+        string.format(_("Could not create a rollback snapshot: %s"), tostring(aerr or ""))
+    end
+
+    local wrote, wwhy = write_file(path, text)
+    if not wrote and wwhy ~= "permissions" then
+      -- The file was NOT replaced, so undoing the staged UCI is correct.
+      uci:revert(PKG)
+      utils.snapshot_discard(store)
+      return false, _("Failed to save settings.")
+    end
+
+    local ok_commit, why = utils.commit_uci(uci, PKG)
+    if not ok_commit and why == "commit" then
+      uci:revert(PKG)
+      -- Restoring the previous file is itself checked: silently failing here
+      -- would leave the new content on disk under the old configuration.
+      local failed = utils.snapshot_restore(store)
+      if #failed > 0 then
+        local msg = _("Failed to save settings, and the previous file could not be restored:").." " .. path
+        if failed[1].state == "permissions" then
+          msg = _("Failed to save settings; the previous file was restored but its permissions could not be secured:").." " .. path
+        else
+          local kept = utils.snapshot_keep(store)
+          if kept then
+            msg = msg .. "\n" .. string.format(_("The previous contents are kept here: %s"), kept)
+          end
+        end
+        if failed[1].state == "permissions" then utils.snapshot_discard(store) end
+        return false, msg
+      end
+      utils.snapshot_discard(store)
+      return false, _("Failed to save settings.")
+    end
+
+    utils.snapshot_discard(store)
+    if not wrote and wwhy == "permissions" then
+      return false, _("Settings saved, but the configuration file permissions could not be secured.")
+    end
+    if not ok_commit then
+      -- Committed, only the chmod failed: the save stands, report the
+      -- permissions problem rather than pretending nothing happened.
+      return false, _("Settings saved, but the configuration file permissions could not be secured.")
+    end
+    return true, ok_message
+  end
+
+  -- share_rollback: put the shared JSON back from its on-disk snapshot and
+  -- turn the outcome into a message. The snapshot directory is kept only when
+  -- the file could NOT be restored - it is then the only copy left.
+  local function share_rollback(store, path)
+    local failed = utils.snapshot_restore(store)
+    if #failed == 0 then
+      utils.snapshot_discard(store)
+      return _("Failed to save shared subscription settings.")
+    end
+    local f = failed[1]
+    if f.state == "permissions" then
+      utils.snapshot_discard(store)
+      return _("Failed to save shared subscription settings; the previous file was restored but its permissions could not be secured:").." " .. path
+    end
+    return _("Failed to save shared subscription settings, and the previous file could not be restored:").." " .. path ..
+      "\n" .. string.format(_("The previous contents are kept here: %s"), utils.snapshot_keep(store) or store.dir)
+  end
+
+  -- report_links_write: single place that turns write_links_file's tri-state
+  -- into a message. Every link mutation used to discard the result and show
+  -- "Link added/updated/deleted" even when nothing reached the disk.
+  local function report_links_write(wrote, wwhy, ok_message)
+    if wrote then
+      set_err(nil); set_info(ok_message)
+    elseif wwhy == "permissions" then
+      set_info(nil)
+      set_err(_("Settings saved, but the configuration file permissions could not be secured."))
+    else
+      set_info(nil)
+      set_err(_("Failed to save settings."))
+    end
+  end
+
+  if http.formvalue("_share_rotate_token") == "1" then
+    -- An old token is invalidated the moment a new one is saved, so any URL
+    -- shared before the rotation stops working immediately.
+    local new_token = generate_share_token()
+    if not new_token then
+      set_info(nil)
+      set_err(_("Could not read enough randomness to generate a secure token."))
+      helpers.redirect_watchdog()
+      return m
+    end
+    -- Checked: committing a set that never landed would persist a
+    -- half-formed configuration and report success.
+    if not uci:set(PKG, "main", "watchdog_share_token", new_token) then
+      uci:revert(PKG)
+      set_info(nil)
+      set_err(_("Failed to save the new token."))
+      helpers.redirect_watchdog()
+      return m
+    end
+    local committed, why = utils.commit_uci(uci, PKG)
+    if committed then
+      set_err(nil)
+      set_info(_("Shared subscription token rotated. Update it on any client using the old link."))
+    elseif why == "permissions" then
+      set_info(nil)
+      set_err(_("Settings saved, but the configuration file permissions could not be secured."))
+    else
+      set_info(nil)
+      set_err(_("Failed to save the new token."))
+    end
+    helpers.redirect_watchdog()
+    return m
+  end
+
   if http.formvalue("_share_save") == "1" then
     local mode = trim(http.formvalue("share_selection_mode"))
     local path = trim(http.formvalue("watchdog_share_file"))
+    -- Anything that is not an explicit "public" is treated as token auth, the
+    -- same way the endpoint decides. Defaulting the other way round is how an
+    -- unset value ended up serving the list to anyone.
+    local auth_mode = trim(http.formvalue("watchdog_share_auth_mode"))
+    if auth_mode ~= "public" then auth_mode = "token" end
     local current_cfg = share.read_config(path ~= "" and path or share_file)
     local selected = current_cfg.selected or {}
     if mode ~= "selected" then mode = "all" end
@@ -716,63 +893,331 @@ local function render(ctx)
           if allowed[hash] then selected[hash] = true end
         end
       end
-      local saved = share.write_config(path, {
+      -- Transactional: the JSON file and UCI must move together.
+      -- The token is generated FIRST: if entropy is unavailable we must
+      -- fail before the JSON is rewritten, otherwise disk would already
+      -- hold the new config while the operation reports failure.
+      local pending_token = nil
+      if auth_mode == "token" and trim(getu("watchdog_share_token", "")) == "" then
+        pending_token = generate_share_token()
+        if not pending_token then
+          set_info(nil)
+          set_err(_("Could not read enough randomness to generate a secure token."))
+          helpers.redirect_watchdog()
+          return m
+        end
+      end
+      -- Existence is captured with stat, not by content: an existing but
+      -- EMPTY file must be restored as an empty file rather than deleted on
+      -- rollback. The mode travels with it so a rollback cannot silently
+      -- loosen the permissions of a file holding proxy links.
+      local share_store, share_serr = utils.snapshot_begin("share")
+      if share_store then
+        local ok_s, aerr = utils.snapshot_add(share_store, path)
+        if not ok_s then share_serr = aerr; utils.snapshot_discard(share_store); share_store = nil end
+      end
+      if not share_store then
+        set_info(nil)
+        set_err(_("Failed to save shared subscription settings.") .. "\n" ..
+          string.format(_("Could not create a rollback snapshot: %s"), tostring(share_serr or "")))
+        helpers.redirect_watchdog()
+        return m
+      end
+      local share_armed, share_aerr = utils.snapshot_arm(share_store)
+      if not share_armed then
+        utils.snapshot_discard(share_store)
+        set_info(nil)
+        set_err(_("Failed to save shared subscription settings.") .. "\n" ..
+          string.format(_("Could not create a rollback snapshot: %s"), tostring(share_aerr or "")))
+        helpers.redirect_watchdog()
+        return m
+      end
+      local saved, save_why = share.write_config(path, {
         version = 1,
         selection_mode = mode,
         selected = selected,
       })
+      -- "permissions" means the JSON IS on disk - only chmod failed. Aborting
+      -- here used to leave the new file in place while reporting failure and
+      -- rolling nothing back, so UCI and disk drifted apart. The transaction
+      -- continues and the warning is carried to the final message.
+      local share_perm_warning = false
       if not saved then
-        set_err(_("Failed to save shared subscription settings."))
+        if save_why ~= "permissions" then
+          utils.snapshot_discard(share_store)
+          set_info(nil)
+          set_err(_("Failed to save shared subscription settings."))
+          helpers.redirect_watchdog()
+          return m
+        end
+        share_perm_warning = true
+      end
+      -- Every staged set is checked: a failure here must undo the JSON
+      -- write too, otherwise disk and UCI drift apart.
+      local staged =
+        utils.uci_stage(uci, PKG, "main", "watchdog_share_enabled", http.formvalue("watchdog_share_enabled") and "1" or "0")
+        and utils.uci_stage(uci, PKG, "main", "watchdog_share_file", path)
+        and utils.uci_stage(uci, PKG, "main", "watchdog_share_auth_mode", auth_mode)
+      if not staged then
+        uci:revert(PKG)
+        set_info(nil)
+        set_err(share_rollback(share_store, path))
+        helpers.redirect_watchdog()
         return m
       end
-      uci:set(PKG, "main", "watchdog_share_enabled", http.formvalue("watchdog_share_enabled") and "1" or "0")
-      uci:set(PKG, "main", "watchdog_share_file", path)
-      uci:commit(PKG)
-      set_err(nil)
-      set_info(_("Shared subscription settings saved."))
+      -- Switching into token mode with no token yet would otherwise leave
+      -- the feature silently non-functional (every URL 404s) until the
+      -- user notices and clicks "Generate / rotate token" separately.
+      -- Uses the token generated BEFORE the JSON was rewritten. Generating
+      -- it again here would defeat that ordering: a second /dev/urandom
+      -- read could fail after the file is already on disk, leaving the new
+      -- config committed to disk while the operation reports failure.
+      if pending_token then
+        if not utils.uci_stage(uci, PKG, "main", "watchdog_share_token", pending_token) then
+          uci:revert(PKG)
+          set_info(nil)
+          set_err(share_rollback(share_store, path))
+          helpers.redirect_watchdog()
+          return m
+        end
+      end
+      local committed, why = utils.commit_uci(uci, PKG)
+      if committed and not share_perm_warning then
+        utils.snapshot_discard(share_store)
+        set_err(nil)
+        set_info(_("Shared subscription settings saved."))
+      elseif committed or why == "permissions" then
+        -- UCI is already durable here: rolling the JSON back would be the
+        -- corrupting move, not the safe one. Report the real problem, and
+        -- name the shared file when it is the one left unsecured.
+        utils.snapshot_discard(share_store)
+        set_info(nil)
+        if share_perm_warning then
+          set_err(_("Shared subscription settings saved, but the file permissions could not be secured:").." " .. path)
+        else
+          set_err(_("Settings saved, but the configuration file permissions could not be secured."))
+        end
+      else
+        -- Not committed - roll the JSON back so file and UCI cannot drift
+        -- apart, and report if THAT failed too.
+        uci:revert(PKG)
+        set_info(nil)
+        set_err(share_rollback(share_store, path))
+      end
       helpers.redirect_watchdog()
       return m
     end
   end
 
+  -- rollback_incomplete_message: one wording for every transaction that could
+  -- not undo itself, and it always names the kept snapshot directory — that
+  -- directory is the only remaining copy of the previous state.
+  local function rollback_incomplete_message(head, failed, store)
+    local names = {}
+    for __, f in ipairs(failed) do
+      names[#names + 1] = f.path .. (f.state == "permissions" and " (mode)" or "")
+    end
+    local msg = head .. "\n" .. string.format(
+      _("ROLLBACK INCOMPLETE: the previous state of these files could not be restored: %s"),
+      table.concat(names, ", "))
+    local kept = utils.snapshot_keep(store)
+    if kept then
+      msg = msg .. "\n" .. string.format(_("The previous contents are kept here: %s"), kept)
+    end
+    return msg
+  end
+
+  -- The subscription database is also written by background fetch runs, which
+  -- take /var/lock/tproxy-manager/watchdog.lock. Editing it here without that
+  -- lock meant a fetch that finished mid-request had its results overwritten
+  -- by the copy this request had read before it started.
+  -- Returns (locked, result). The two are kept separate on purpose: a handler
+  -- body may legitimately return nil or false, so a single return value could
+  -- not tell "the lock was busy" from "the body ran and said no" - and the
+  -- caller would redirect a second time on top of the redirect issued here.
+  local function with_subscription_lock(fn)
+    local lock, lerr = utils.lock_acquire(utils.SUBSCRIPTIONS_LOCK)
+    if not lock then
+      set_info(nil)
+      if lerr == "busy" then
+        set_err(_("The subscription list is busy with another operation. Try again in a moment."))
+      else
+        set_err(_("Failed to save settings.") .. " " .. tostring(lerr))
+      end
+      helpers.redirect_watchdog()
+      return false
+    end
+    local ok, res = pcall(fn, lock)
+    -- Released on the error path too: an escaping error must not leave the
+    -- lock held until its owner pid disappears.
+    lock.release()
+    if not ok then error(res, 0) end
+    return true, res
+  end
+
   if http.formvalue("_sub_save") == "1" then
-    local db = read_subscription_db(subscriptions_path)
-    local id = tonumber(http.formvalue("sub_id"))
-    local existing = id and find_subscription(db, id) or nil
-    local sub = collect_subscription_form(existing)
-    if sub.url == "" then
+    -- Validation runs before the lock: a rejected form must not make a
+    -- concurrent fetch wait.
+    local probe = read_subscription_db(subscriptions_path)
+    local probe_id = tonumber(http.formvalue("sub_id"))
+    local probe_sub = collect_subscription_form(probe_id and find_subscription(probe, probe_id) or nil)
+    if probe_sub.url == "" then
       set_err(_("Subscription URL is required."))
-    elseif sub.timeout < 1 then
+    elseif probe_sub.timeout < 1 then
       set_err(_("Subscription timeout must be at least 1 second."))
-    elseif sub.refresh_interval < 1 then
+    elseif probe_sub.refresh_interval < 1 then
       set_err(_("Subscription refresh timer must be at least 1 second."))
     else
-      if existing then
-        sub.id = existing.id
-        local _unused, idx = find_subscription(db, existing.id)
-        db.subscriptions[idx] = sub
-      else
-        sub.id = next_subscription_id(db)
-        db.subscriptions[#db.subscriptions + 1] = sub
-      end
-      write_subscription_db(subscriptions_path, db)
-      set_err(nil)
-      set_info(_("Subscription saved."))
-      helpers.redirect_watchdog()
+      local locked = with_subscription_lock(function()
+        -- Re-read INSIDE the lock: the copy fetched for validation may
+        -- already be stale, and writing it back would drop whatever a fetch
+        -- committed in the meantime.
+        local db = read_subscription_db(subscriptions_path)
+        local id = tonumber(http.formvalue("sub_id"))
+        local existing = id and find_subscription(db, id) or nil
+        if id and not existing then
+          -- The entry disappeared between the form being rendered and this
+          -- save — a concurrent delete. Falling through would re-create it
+          -- under a fresh id, silently resurrecting what the other operation
+          -- removed.
+          set_info(nil); set_err(_("Subscription not found."))
+          return
+        end
+        local sub = collect_subscription_form(existing)
+        if existing then
+          sub.id = existing.id
+          local _unused, idx = find_subscription(db, existing.id)
+          db.subscriptions[idx] = sub
+        else
+          sub.id = next_subscription_id(db)
+          db.subscriptions[#db.subscriptions + 1] = sub
+        end
+
+        local store, serr = utils.snapshot_begin("sub-save")
+        if store then
+          local ok, aerr = utils.snapshot_add(store, subscriptions_path)
+          if not ok then serr = aerr; utils.snapshot_discard(store); store = nil end
+        end
+        if not store then
+          set_info(nil)
+          set_err(_("Failed to save settings.") .. "\n" ..
+            string.format(_("Could not create a rollback snapshot: %s"), tostring(serr or "unknown error")))
+          return
+        end
+
+        local armed, aerr = utils.snapshot_arm(store)
+        if not armed then
+          utils.snapshot_discard(store)
+          set_info(nil)
+          set_err(_("Failed to save settings.") .. "\n" ..
+            string.format(_("Could not create a rollback snapshot: %s"), tostring(aerr or "")))
+          return
+        end
+
+        local wrote, wwhy = write_subscription_db(subscriptions_path, db)
+        if not wrote and wwhy ~= "permissions" then
+          local failed = utils.snapshot_restore(store)
+          if #failed > 0 then
+            set_info(nil)
+            set_err(rollback_incomplete_message(_("Failed to save settings."), failed, store))
+            return
+          end
+          utils.snapshot_discard(store)
+          set_info(nil); set_err(_("Failed to save settings."))
+          return
+        end
+
+        utils.snapshot_discard(store)
+        if wrote then
+          set_err(nil); set_info(_("Subscription saved."))
+        else
+          set_info(nil); set_err(_("Settings saved, but the configuration file permissions could not be secured."))
+        end
+      end)
+      -- with_subscription_lock already redirected when the lock was busy;
+      -- redirecting again would emit a second Location header.
+      if locked then helpers.redirect_watchdog() end
       return m
     end
   end
 
   if http.formvalue("_sub_delete") then
-    local db = read_subscription_db(subscriptions_path)
-    local sub, idx = find_subscription(db, http.formvalue("_sub_delete"))
-    if sub and idx then
+    local locked, found = with_subscription_lock(function(lock)
+      -- Read inside the lock: a fetch that completed since the page was
+      -- rendered must be part of what we edit, not something we overwrite.
+      local db = read_subscription_db(subscriptions_path)
+      local sub, idx = find_subscription(db, http.formvalue("_sub_delete"))
+      if not (sub and idx) then return false end
+
+      -- Deleting a subscription touches TWO files: the database and the links
+      -- file that sync-links rewrites from it. Both are copied to a private
+      -- 0700 directory BEFORE anything changes, so the previous state exists
+      -- outside this process even if it dies mid-transaction.
+      local store, serr = utils.snapshot_begin("sub-delete")
+      if store then
+        for _, path in ipairs({ subscriptions_path, links_path }) do
+          if not store then break end
+          local ok, aerr = utils.snapshot_add(store, path)
+          if not ok then serr = aerr; utils.snapshot_discard(store); store = nil end
+        end
+      end
+      if not store then
+        set_info(nil)
+        set_err(_("Failed to delete the subscription.") .. "\n" ..
+          string.format(_("Could not create a rollback snapshot: %s"), tostring(serr or "unknown error")))
+        return true
+      end
+
+      local armed, aerr = utils.snapshot_arm(store)
+      if not armed then
+        utils.snapshot_discard(store)
+        set_info(nil)
+        set_err(_("Failed to delete the subscription.") .. "\n" ..
+          string.format(_("Could not create a rollback snapshot: %s"), tostring(aerr or "")))
+        return true
+      end
+
       remove_subscription_sources(db, sub)
       table.remove(db.subscriptions, idx)
-      write_subscription_db(subscriptions_path, db)
-      run_subscription_command({ "sync-links" })
-      set_err(nil)
-      set_info(_("Subscription deleted."))
+      local wrote, wwhy = write_subscription_db(subscriptions_path, db)
+      if not wrote and wwhy ~= "permissions" then
+        -- The database was not written: the subscription is still there, so
+        -- do not resync links or claim it was deleted.
+        utils.snapshot_discard(store)
+        set_info(nil); set_err(_("Failed to save settings."))
+        return true
+      end
+
+      -- The resync result decides whether the deletion actually completed;
+      -- it used to be discarded, so a failed sync-links still reported
+      -- "Subscription deleted" with the dead links left in place. It runs
+      -- under OUR lock - the pid is passed so the script joins this
+      -- transaction instead of blocking on the lock we already hold.
+      local sync_rc, sync_out = run_subscription_command({ "sync-links" }, lock.pid)
+      if sync_rc ~= 0 then
+        local failed = utils.snapshot_restore(store)
+        set_info(nil)
+        if #failed > 0 then
+          set_err(rollback_incomplete_message(_("Failed to delete the subscription."), failed, store) ..
+            (sync_out ~= "" and ("\n" .. sync_out) or ""))
+        else
+          utils.snapshot_discard(store)
+          set_err(_("Failed to delete the subscription: the link list could not be resynchronised; the previous state was restored.") ..
+            (sync_out ~= "" and ("\n" .. sync_out) or ""))
+        end
+        return true
+      end
+
+      utils.snapshot_discard(store)
+      if wrote then
+        set_err(nil); set_info(_("Subscription deleted."))
+      else
+        set_info(nil); set_err(_("Settings saved, but the configuration file permissions could not be secured."))
+      end
+      return true
+    end)
+    if not locked then return m end
+    if found then
       helpers.redirect_watchdog()
       return m
     end
@@ -782,7 +1227,7 @@ local function render(ctx)
   if http.formvalue("_sub_fetch") then
     local id = trim(http.formvalue("_sub_fetch"))
     local rc, out = run_subscription_command({ "fetch", id })
-    if rc == 0 then set_info(out ~= "" and out or (_("Subscription updated: ") .. id)) else set_err(out ~= "" and out or (_("Failed to update subscription: ") .. id)) end
+    if rc == 0 then set_info(out ~= "" and out or (_("Subscription updated:").." " .. id)) else set_err(out ~= "" and out or (_("Failed to update subscription:").." " .. id)) end
     helpers.redirect_watchdog()
     return m
   end
@@ -822,11 +1267,13 @@ local function render(ctx)
     elseif not helpers.validate_template_jsonc_text(text) then
       set_err(_("Invalid template JSON/JSONC."))
     else
-      uci:set(PKG, "main", choice.key, path)
-      uci:commit(PKG)
-      write_file(path, text)
-      set_err(nil)
-      set_info(_("Watchdog template saved: ") .. path)
+      -- Uses the same checked transaction as every other editor instead of
+      -- its own hand-rolled copy: the local version treated the writer's
+      -- "permissions" status as "not written" and rolled back a file that
+      -- had in fact already been replaced.
+      local okc, msg = save_uci_and_file(choice.key, path, text,
+        _("Watchdog template saved:").." " .. path)
+      if okc then set_err(nil); set_info(msg) else set_info(nil); set_err(msg) end
       helpers.redirect_watchdog("watchdog_template_kind=" .. http.urlencode(choice.id))
       return m
     end
@@ -843,11 +1290,8 @@ local function render(ctx)
     elseif not helpers.validate_template_jsonc_text(text) then
       set_err(_("Invalid template JSON/JSONC."))
     else
-      uci:set(PKG, "main", choice.key, path)
-      uci:commit(PKG)
-      write_file(path, text)
-      set_err(nil)
-      set_info(_("Test template saved: ") .. path)
+      local okc, msg = save_uci_and_file(choice.key, path, text, _("Test template saved:").." " .. path)
+      if okc then set_err(nil); set_info(msg) else set_info(nil); set_err(msg) end
       helpers.redirect_watchdog("watchdog_template_kind=" .. http.urlencode(choice.id))
       return m
     end
@@ -862,22 +1306,28 @@ local function render(ctx)
     elseif not utils.is_abs_path(path) then
       set_err(_("LINKS_FILE path must be absolute."))
     elseif not ok then
-      set_err(_("Invalid line in LINKS_FILE: ") .. tostring(bad_line))
+      set_err(_("Invalid line in LINKS_FILE:").." " .. tostring(bad_line))
     else
-      uci:set(PKG, "main", "watchdog_links_file", path)
-      uci:commit(PKG)
-      write_file(path, text ~= "" and (text:gsub("\n*$", "") .. "\n") or "")
-      set_err(nil)
-      set_info(_("LINKS_FILE saved: ") .. path)
+      local body = text ~= "" and (text:gsub("\n*$", "") .. "\n") or ""
+      local okc, msg = save_uci_and_file("watchdog_links_file", path, body, _("LINKS_FILE saved:").." " .. path)
+      if okc then set_err(nil); set_info(msg) else set_info(nil); set_err(msg) end
       helpers.redirect_watchdog()
       return m
     end
   end
 
   if http.formvalue("_watchdog_clear_log") == "1" then
-    helpers.clear_watchdog_log()
-    set_err(nil)
-    set_info(_("Watchdog log cleared."))
+    -- The writer's result decides what to report: clearing the banner and
+    -- redirecting regardless read as success even when nothing was written.
+    local cleared, cwhy = helpers.clear_watchdog_log()
+    if cleared then
+      set_err(nil); set_info(_("Watchdog log cleared."))
+    elseif cwhy == "permissions" then
+      set_info(nil)
+      set_err(_("Settings saved, but the configuration file permissions could not be secured."))
+    else
+      set_info(nil); set_err(_("Failed to clear the log."))
+    end
     helpers.redirect_watchdog()
     return m
   end
@@ -918,7 +1368,7 @@ local function render(ctx)
   if http.formvalue("_wd_apply") then
     local hash = trim(http.formvalue("_wd_apply"))
     local rc, out = helpers.run_watchdog_command({ "apply-link", hash })
-    if rc == 0 then set_info(out ~= "" and out or (_("Link applied: ") .. hash)) else set_err(out ~= "" and out or (_("Failed to apply link: ") .. hash)) end
+    if rc == 0 then set_info(out ~= "" and out or (_("Link applied:").." " .. hash)) else set_err(out ~= "" and out or (_("Failed to apply link:").." " .. hash)) end
     helpers.redirect_watchdog()
     return m
   end
@@ -926,7 +1376,7 @@ local function render(ctx)
   if http.formvalue("_wd_test") then
     local hash = trim(http.formvalue("_wd_test"))
     local rc, out = helpers.run_watchdog_command({ "test-link", hash })
-    if rc == 0 then set_info(out ~= "" and out or (_("Link checked: ") .. hash)) else set_err(out ~= "" and out or (_("Link check failed: ") .. hash)) end
+    if rc == 0 then set_info(out ~= "" and out or (_("Link checked:").." " .. hash)) else set_err(out ~= "" and out or (_("Link check failed:").." " .. hash)) end
     helpers.redirect_watchdog()
     return m
   end
@@ -958,76 +1408,94 @@ local function render(ctx)
     return m
   end
 
+  -- links_mutate: read-modify-write of the links file under the SAME lock the
+  -- background sync uses, re-reading inside it. Reading at render time and
+  -- writing later meant a sync-links that landed in between was silently
+  -- overwritten by a stale copy of the list.
+  --
+  -- `fn(entries, db)` returns the success message, or nil plus the message to
+  -- show instead of writing. write_links_file is a single atomic write, so a
+  -- failed write leaves the previous file untouched and there is nothing to
+  -- roll back — no snapshot is needed here.
+  local function links_mutate(fn)
+    local locked, done = with_subscription_lock(function()
+      local entries = helpers.parse_links_file(links_path)
+      local db = read_subscription_db(subscriptions_path)
+      local ok_message, err_message = fn(entries, db)
+      if not ok_message then
+        set_info(nil); set_err(err_message or _("Failed to save settings."))
+        return false
+      end
+      -- `true` means the request was valid but changes nothing: writing the
+      -- file unchanged and announcing a change would be a false success.
+      if ok_message == true then return true end
+      local wrote, wwhy = helpers.write_links_file(links_path, entries)
+      report_links_write(wrote, wwhy, ok_message)
+      return true
+    end)
+    if not locked then return nil end
+    return done
+  end
+
   if http.formvalue("_wd_add") == "1" then
-    local entries = helpers.parse_links_file(links_path)
-    local raw_link = trim(http.formvalue("wd_add_link"))
-    local parsed = helpers.parse_link_line(raw_link)
-    if not parsed then
-      set_err(_("Added line must start with vless://, hysteria2:// or hy2://"))
-    else
+    local done = links_mutate(function(entries)
+      local parsed = helpers.parse_link_line(trim(http.formvalue("wd_add_link")))
+      if not parsed then
+        return nil, _("Added line must start with vless://, hysteria2:// or hy2://")
+      end
       entries[#entries + 1] = { raw_link = parsed.raw_link }
-      helpers.write_links_file(links_path, entries)
-      set_err(nil)
-      set_info(_("Link added."))
-      helpers.redirect_watchdog()
-      return m
-    end
+      return _("Link added.")
+    end)
+    if done == nil then return m end
+    if done then helpers.redirect_watchdog(); return m end
   end
 
   if http.formvalue("_wd_edit_save") == "1" then
-    local entries = helpers.parse_links_file(links_path)
-    local hash = trim(http.formvalue("wd_edit_hash"))
-    local idx = helpers.find_entry_index(entries, hash)
-    local raw_link = trim(http.formvalue("wd_edit_link"))
-    local parsed = helpers.parse_link_line(raw_link)
-    local db = read_subscription_db(subscriptions_path)
-    if not idx then
-      set_err(_("Editable link not found."))
-    elseif is_subscription_link(db, hash) then
-      set_err(_("Subscription links cannot be edited directly. Exclude the link or edit the subscription."))
-    elseif not parsed then
-      set_err(_("Link must start with vless://, hysteria2:// or hy2://"))
-    else
+    local done = links_mutate(function(entries, db)
+      local hash = trim(http.formvalue("wd_edit_hash"))
+      local idx = helpers.find_entry_index(entries, hash)
+      local parsed = helpers.parse_link_line(trim(http.formvalue("wd_edit_link")))
+      if not idx then
+        return nil, _("Editable link not found.")
+      elseif is_subscription_link(db, hash) then
+        return nil, _("Subscription links cannot be edited directly. Exclude the link or edit the subscription.")
+      elseif not parsed then
+        return nil, _("Link must start with vless://, hysteria2:// or hy2://")
+      end
       entries[idx].raw_link = parsed.raw_link
-      helpers.write_links_file(links_path, entries)
-      set_err(nil)
-      set_info(_("Link updated."))
-      helpers.redirect_watchdog()
-      return m
-    end
+      return _("Link updated.")
+    end)
+    if done == nil then return m end
+    if done then helpers.redirect_watchdog(); return m end
   end
 
   if http.formvalue("_wd_delete") then
-    local entries = helpers.parse_links_file(links_path)
-    local hash = trim(http.formvalue("_wd_delete"))
-    local idx = helpers.find_entry_index(entries, hash)
-    if idx then
+    local done = links_mutate(function(entries)
+      local idx = helpers.find_entry_index(entries, trim(http.formvalue("_wd_delete")))
+      if not idx then return nil, _("Link to delete was not found.") end
       table.remove(entries, idx)
-      helpers.write_links_file(links_path, entries)
-      set_err(nil)
-      set_info(_("Link deleted."))
-      helpers.redirect_watchdog()
-      return m
-    end
-    set_err(_("Link to delete was not found."))
+      return _("Link deleted.")
+    end)
+    if done == nil then return m end
+    if done then helpers.redirect_watchdog(); return m end
   end
 
   if http.formvalue("_wd_move_up") or http.formvalue("_wd_move_down") then
-    local entries = helpers.parse_links_file(links_path)
-    local hash = trim(http.formvalue("_wd_move_up") or http.formvalue("_wd_move_down"))
-    local idx = helpers.find_entry_index(entries, hash)
-    if idx then
+    local done = links_mutate(function(entries)
+      local hash = trim(http.formvalue("_wd_move_up") or http.formvalue("_wd_move_down"))
+      local idx = helpers.find_entry_index(entries, hash)
+      if not idx then return nil, _("Link to reorder was not found.") end
       local swap_idx = http.formvalue("_wd_move_up") and (idx - 1) or (idx + 1)
-      if swap_idx >= 1 and swap_idx <= #entries then
-        entries[idx], entries[swap_idx] = entries[swap_idx], entries[idx]
-        helpers.write_links_file(links_path, entries)
-        set_err(nil)
-        set_info(_("Link order updated."))
+      if swap_idx < 1 or swap_idx > #entries then
+        -- Already at the end of the list: nothing to write, and reporting a
+        -- reorder that did not happen would be a false success.
+        return true
       end
-      helpers.redirect_watchdog()
-      return m
-    end
-    set_err(_("Link to reorder was not found."))
+      entries[idx], entries[swap_idx] = entries[swap_idx], entries[idx]
+      return _("Link order updated.")
+    end)
+    if done == nil then return m end
+    if done then helpers.redirect_watchdog(); return m end
   end
 
   local status_rc, status_out = helpers.run_watchdog_command({ "status" })
@@ -1039,6 +1507,12 @@ local function render(ctx)
   local links = helpers.parse_links_file(links_path)
   links = merge_excluded_subscription_links(links, sub_db)
   local share_enabled = getu("watchdog_share_enabled", "0") == "1"
+  -- Defaults to token auth so a config predating this option renders (and then
+  -- saves) the safe mode rather than the public one.
+  local share_auth_mode = getu("watchdog_share_auth_mode", "token")
+  if share_auth_mode ~= "public" then share_auth_mode = "token" end
+  if share_auth_mode ~= "token" then share_auth_mode = "public" end
+  local share_token = trim(getu("watchdog_share_token", ""))
   local share_cfg = share.read_config(share_file)
   local share_export_entries = share.selected_entries(share.parse_links_file(links_path), share_cfg)
   local active_entry, active_detected_by = find_active_entry(links, status)
@@ -1535,13 +2009,35 @@ local function render(ctx)
       local rows = {}
       local mode = share_cfg.selection_mode or "all"
       local current_entries = share.parse_links_file(links_path)
-      local plain_url = public_luci_url("tproxy-manager", "subscription", "plain")
-      local base64_url = public_luci_url("tproxy-manager", "subscription", "base64")
+      local plain_url, base64_url
+      if share_auth_mode == "token" and share_token ~= "" then
+        plain_url = public_luci_url("tproxy-manager", "subscription", "plain", share_token)
+        base64_url = public_luci_url("tproxy-manager", "subscription", "base64", share_token)
+      else
+        plain_url = public_luci_url("tproxy-manager", "subscription", "plain")
+        base64_url = public_luci_url("tproxy-manager", "subscription", "base64")
+      end
       rows[#rows + 1] = "<details class='wd-details'><summary>" .. _("Shared router subscription") .. "</summary><div class='box' style='margin-top:.5rem'>"
-      rows[#rows + 1] = "<div style='color:#b45309;margin-bottom:.6rem'>" .. _("These subscription URLs are public. Anyone who knows the URL can download the exported proxy list.") .. "</div>"
+      if share_auth_mode == "token" then
+        if share_token == "" then
+          rows[#rows + 1] = "<div style='color:#b45309;margin-bottom:.6rem'>" ..
+            _("Token mode is selected but no token has been generated yet - the URLs below will not work until you generate one.") .. "</div>"
+        else
+          rows[#rows + 1] = "<div style='color:#166534;margin-bottom:.6rem'>" ..
+            _("These URLs only work with the current token. Rotating the token immediately invalidates any link shared before.") .. "</div>"
+        end
+      else
+        rows[#rows + 1] = "<div style='color:#b45309;margin-bottom:.6rem'>" ..
+          _("These subscription URLs are public. Anyone who knows the URL can download the exported proxy list.") .. "</div>"
+      end
       rows[#rows + 1] = string.format([[
 <div class="wd-grid">
   <label>%s</label><input type="checkbox" name="watchdog_share_enabled" value="1" %s>
+  <label>%s</label>
+  <select name="watchdog_share_auth_mode">
+    <option value="public"%s>%s</option>
+    <option value="token"%s>%s</option>
+  </select>
   <label>%s</label>
   <select id="share_selection_mode" name="share_selection_mode">
     <option value="all"%s>%s</option>
@@ -1553,6 +2049,11 @@ local function render(ctx)
 </div>]],
         pcdata(_("Enable sharing")),
         share_enabled and "checked" or "",
+        pcdata(_("Access")),
+        share_auth_mode == "public" and " selected" or "",
+        pcdata(_("Public (no token)")),
+        share_auth_mode == "token" and " selected" or "",
+        pcdata(_("Token required")),
         pcdata(_("Link selection")),
         mode == "all" and " selected" or "",
         pcdata(_("All links")),
@@ -1564,6 +2065,18 @@ local function render(ctx)
         pcdata(tostring(#current_entries)),
         pcdata(_("Exported links")),
         pcdata(tostring(#share_export_entries)))
+
+      if share_auth_mode == "token" then
+        rows[#rows + 1] = string.format([[
+<div class="wd-grid" style="margin-top:.4rem">
+  <label>%s</label><div class="wd-share-url"><input type="text" readonly value="%s" onclick="this.select()">
+  <button type="submit" class="cbi-button cbi-button-action" name="_share_rotate_token" value="1" onclick="return confirm('%s')">%s</button></div>
+</div>]],
+          pcdata(_("Current token")),
+          pcdata(share_token ~= "" and share_token or _("(not generated yet)")),
+          pcdata(_("Rotate the token? Any link shared before this stops working immediately.")),
+          pcdata(_("Generate / rotate token")))
+      end
 
       rows[#rows + 1] = string.format([[
 <table class="wd-table" style="margin-top:.7rem">
@@ -1921,7 +2434,7 @@ local function render(ctx)
     } catch(e) {
       badge.textContent = '';
       badge.style.color = '#dc2626';
-      badge.appendChild(document.createTextNode(']] .. pcdata(_("JSONC error: ")) .. [[' + e.message + ' '));
+      badge.appendChild(document.createTextNode(']] .. pcdata(_("JSONC error:").." ") .. [[' + e.message + ' '));
       var m = String(e.message || '').match(/position (\d+)/);
       if (m) {
         var pos = parseInt(m[1], 10);

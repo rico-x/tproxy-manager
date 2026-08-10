@@ -106,9 +106,13 @@ function M.write_links_file(path, entries)
       out[#out + 1] = raw_link
     end
   end
-  utils.write_file(path, table.concat(out, "\n") .. (#out > 0 and "\n" or ""))
+  -- Result is returned to the caller: "permissions" still means the file
+  -- was written, only its mode could not be set. The caches are invalidated
+  -- first - returning before them would have left stale link state behind.
+  local wrote, wwhy = utils.write_file(path, table.concat(out, "\n") .. (#out > 0 and "\n" or ""))
   md5_cache = {}
   state_cache = {}
+  return wrote, wwhy
 end
 
 function M.validate_links_text(text)
@@ -167,7 +171,7 @@ function M.watchdog_log()
 end
 
 function M.clear_watchdog_log()
-  utils.write_file(WATCHDOG_LOG_FILE, "")
+  return utils.write_file(WATCHDOG_LOG_FILE, "")
 end
 
 function M.redirect_watchdog(extra)
@@ -247,19 +251,26 @@ function M.save_watchdog_settings(ctx)
   }
   for key, value in pairs(text_fields) do
     if value == "" then
-      set_err(_("Required field is empty: ") .. key .. ".")
+      set_err(_("Required field is empty:").." " .. key .. ".")
       return false
     end
     if key:match("_file$") or key == "watchdog_vless2json" or key == "watchdog_proxy2mihomo" or key == "watchdog_proxy2singbox" or key == "watchdog_happ_capture_log" then
       if not utils.is_abs_path(value) then
-        set_err(_("Invalid absolute path for ") .. key .. ".")
+        set_err(_("Invalid absolute path for").." " .. key .. ".")
         return false
       end
     end
   end
 
+  -- Every staged change is recorded. Roughly thirty options are written here;
+  -- discarding the results meant a failure part-way through was committed as
+  -- a half-formed watchdog configuration and still reported as saved.
+  -- utils.uci_stage() decides set-vs-delete in one place and judges a delete
+  -- by whether the option is gone, not by uci:delete's return code (which is
+  -- false whenever the option was not there to begin with).
+  local stage_ok = true
   local function S(k, v)
-    if v ~= nil and v ~= "" then uci:set(PKG, "main", k, v) else uci:delete(PKG, "main", k) end
+    if not utils.uci_stage(uci, PKG, "main", k, v) then stage_ok = false end
   end
 
   for key, value in pairs(text_fields) do S(key, value) end
@@ -285,12 +296,40 @@ function M.save_watchdog_settings(ctx)
   S("watchdog_happ_capture_ttl", tostring(happ_capture_ttl))
   S("watchdog_happ_capture_port", tostring(happ_capture_port))
   if ctx.engines and ctx.proxy_engine then
-    ctx.engines.save_legacy_to_profile(uci, PKG, ctx.proxy_engine)
+    -- The active engine's profile is part of this save: the watchdog service
+    -- path and test command it mirrors are set right above. Staging it
+    -- silently meant a failure here was committed with everything else.
+    if not ctx.engines.save_legacy_to_profile(uci, PKG, ctx.proxy_engine) then stage_ok = false end
   end
-  uci:commit(PKG)
 
+  -- Nothing is committed once any part of the set failed to stage: a partial
+  -- watchdog configuration is what makes it probe one engine while restarting
+  -- another.
+  if not stage_ok then
+    uci:revert(PKG)
+    set_info(nil)
+    set_err(_("Failed to save settings."))
+    return false
+  end
+
+  -- Not committed means nothing was saved: report failure instead of the
+  -- unconditional success message this used to show.
+  local ok_c, why_c = utils.commit_uci(uci, PKG)
+  if not ok_c and why_c == "commit" then
+    -- Drop the staged set as well: left pending, it would be swept into the
+    -- next unrelated commit from any other tab.
+    uci:revert(PKG)
+    set_info(nil)
+    set_err(_("Failed to save settings."))
+    return false
+  end
   set_err(nil)
-  set_info(_("Watchdog settings saved."))
+  if ok_c then
+    set_info(_("Watchdog settings saved."))
+  else
+    set_info(nil)
+    set_err(_("Settings saved, but the configuration file permissions could not be secured."))
+  end
   return true
 end
 

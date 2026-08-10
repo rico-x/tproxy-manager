@@ -28,6 +28,8 @@ Main features:
 - Happ subscriptions with regular `https://` URLs, encrypted `happ://crypt*` URLs, and Xray-like JSON responses.
 - Batch proxy checks through one test instance with separate outbound tags and SOCKS ports.
 - Active-link selection modes: ordered, random, and fastest.
+- Transactional saves: an operation that touches several files copies them to persistent storage first, and on failure either puts the previous state back or says plainly that it could not.
+- Recovery from the UI for a change that was interrupted mid-write.
 - Fast package builds without the OpenWrt SDK: `.ipk` for OpenWrt 24.10 and `.apk` for OpenWrt 25.12.
 
 Low-level TPROXY engine reference: [docs/en/tproxy-doc.md](docs/en/tproxy-doc.md).  
@@ -222,6 +224,23 @@ Only the services actually affected by the restored changes are restarted - for 
 
 An uploaded-but-not-yet-applied backup is kept in `/tmp` for at most 20 minutes and is then removed automatically. Like the rest of TPROXY Manager, these actions require an authenticated LuCI session.
 
+### Interrupted Changes
+
+Every operation that writes more than one file (backup restore, GEO list save, sharing settings, subscription deletion, template editors) copies the affected files first and only then changes anything. The copy lives in a `0700` directory:
+
+```txt
+/etc/tproxy-manager/.rollback/
+```
+
+It is deliberately on persistent storage rather than `/tmp`: the point of the copy is to survive exactly the failure that loses `/tmp` - a power cut or a reboot.
+
+If an operation does not finish - the process is killed, the router is powered off mid-write - the copy is kept and the `TPROXY` tab shows a warning listing the affected files, with two buttons:
+
+- `Restore the previous state`: the files are put back byte-for-byte, with their original permissions; the copy is removed only after that is verified.
+- `Discard`: accept what is on disk now and drop the copy.
+
+When an operation completes normally the copy is removed by itself and no warning appears.
+
 ## XRAY
 
 ![XRAY](docs/screenshots/placeholder-xray.png)
@@ -354,7 +373,22 @@ Recommended format:
 - `base64`: v2RayTun, Shadowrocket, v2Box, and V2rayNG.
 - `plain`: Happ and clients that accept raw proxy lists.
 
-Sharing is disabled by default. Once enabled, URLs are public: any device that knows the URL can download the exported proxy list.
+Sharing is disabled by default.
+
+Link access (`Access mode`):
+
+- `Token` (default): the URL carries a token, and without it the endpoint answers `404`. A token is created automatically when sharing is enabled; `Generate / rotate token` issues a new one and invalidates every link handed out earlier, immediately.
+- `Public`: no token required. This is a deliberate choice - anyone who knows the URL can download the proxy list.
+
+The endpoint fails closed: the token check is skipped **only** for an explicit `Public`. A missing or unrecognised value is treated as `Token`.
+
+URL format:
+
+```txt
+http://<router>/cgi-bin/luci/tproxy-manager/subscription/<base64|plain>/<token>
+```
+
+**On upgrade.** Configurations created before `Access mode` existed served the list without a token. The install script repairs that: with sharing enabled the mode is set to `Token`, and a token is generated if there was none (logged to syslog). If no randomness is available, sharing is disabled instead - it is never left public. **Links handed out earlier without a token stop working**; re-share them from the `Shared router subscription` block.
 
 Selection modes:
 
@@ -500,6 +534,33 @@ The build also compiles the bundled Russian LuCI translation catalog into:
 ```txt
 /usr/lib/lua/luci/i18n/tproxy-manager.ru.lmo
 ```
+
+## Tests
+
+Static checks run on the developer machine:
+
+```sh
+bash scripts/smoke-local.sh
+```
+
+It covers Lua and shell syntax, shellcheck, the absence of hardcoded Russian strings in `usr/lib/lua/luci/**`, translation-catalog compilation, payload hygiene, JSON/JSONC template validity, and diff whitespace.
+
+The functional suites need `nixio` and the LuCI Lua tree, so they run on a router. The runner stages the working tree into a separate directory on the device and executes the suites against it, so the installed package is never overwritten:
+
+```sh
+scripts/test-on-device.sh root@192.168.1.1 -p 22
+```
+
+Suites in `tests/`:
+
+| Suite | What it covers |
+| --- | --- |
+| `rollback-faults.lua` | the rollback subsystem: read faults, `MANIFEST`/`KEEP`/`STAGE` write faults, `chmod` faults, byte and mode restoration, sweeping abandoned copies, a process killed between two writes, owner identity, UCI staging |
+| `tproxy-state.sh` | the TPROXY delta model: fwmark normalisation, route-table aliases, desired vs recorded rule sets, a table shared by TCP and UDP, the state-file value filter |
+| `hardening-faults.sh` | bounded gzip decompression, list validators, raw-capture TTL, refusing to write into a directory, fail-closed sharing, private temp directories, the lifecycle lock |
+| `backup-cycle.lua` | the end-to-end export -> extract -> diff -> apply cycle, directory-name entropy, absence of leaks |
+
+The suites are safe to run against a live router: each works inside its own temp directory, leaves the package configuration alone, and invokes no `ip`, `nft` or service command. The one exception is `backup-cycle.lua`, which applies a backup of the router's own current configuration (writing back identical bytes) and skips the apply step if the diff turns out to be non-empty.
 
 ## Post-Install Recommendations
 

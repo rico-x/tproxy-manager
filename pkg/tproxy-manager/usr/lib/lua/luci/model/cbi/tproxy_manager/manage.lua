@@ -143,13 +143,24 @@ local function urlencode(s) return (http and http.urlencode) and http.urlencode(
 local function pick_form_or_uci(form_val, uci_val)
   return (form_val ~= nil and form_val ~= "") and form_val or (uci_val or "")
 end
+-- append_line_unique: adds a line and REPORTS what happened. It used to return
+-- nothing, so the quick-add buttons announced "added" for a duplicate and for
+-- a write that never reached the disk alike.
+--   "added"       - the line is now in the file
+--   "exists"      - it was already there; nothing was written
+--   "permissions" - written, but the file mode could not be secured
+--   "failed"      - not written
 local function append_line_unique(path, line)
-  if not line or line == "" then return end
+  if not line or line == "" then return "failed" end
   local body = read_file(path)
   for ln in (body .. "\n"):gmatch("([^\n]*)\n") do
-    if ln:gsub("^%s+",""):gsub("%s+$","") == line then return end
+    if ln:gsub("^%s+",""):gsub("%s+$","") == line then return "exists" end
   end
-  write_file(path, (body ~= "" and (body:match("\n$") and body or body.."\n") or "") .. line .. "\n")
+  local ok, why = write_file(path,
+    (body ~= "" and (body:match("\n$") and body or body.."\n") or "") .. line .. "\n")
+  if ok then return "added" end
+  if why == "permissions" then return "permissions" end
+  return "failed"
 end
 
 -- Current page URL helper.
@@ -183,7 +194,13 @@ do
   local has_main = uci:get(PKG, "main") or sys.call("uci -q get " .. utils.shellescape(PKG .. ".main") .. " >/dev/null 2>&1") == 0
   if not has_main then
     uci:section(PKG,"main","main",{})
-    uci:commit(PKG)
+    -- Section creation is the one commit whose failure would leave every
+    -- later read falling back to defaults; surface it in the log rather
+    -- than continuing silently.
+    local ok_sec, why_sec = utils.commit_uci(uci, PKG)
+    if not ok_sec and why_sec == "commit" then
+      sys.exec("logger -t tproxy-manager 'failed to create the main UCI section'")
+    end
   end
 end
 

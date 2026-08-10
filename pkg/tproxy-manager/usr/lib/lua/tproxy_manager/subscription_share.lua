@@ -36,21 +36,11 @@ local function ensure_dir(path)
   end
 end
 
+-- Единая безопасная атомарная запись из utils: временный файл создаётся
+-- эксклюзивно и получает 0600 до наполнения, поэтому расшаренный список
+-- прокси-ссылок ни на мгновение не лежит доступным на чтение всем.
 local function atomic_write(path, data)
-  path = tostring(path or "")
-  if path == "" then return false end
-  ensure_dir(path)
-  local dir, base = path:match("^(.*)/([^/]+)$")
-  local tmpdir = (dir and dir ~= "") and dir or "/tmp"
-  local tmp = string.format("%s/.%s.%d.tmp", tmpdir, base or "share", math.random(1, 10^9))
-  fs.writefile(tmp, tostring(data or ""):gsub("\r\n", "\n"))
-  -- Use the shared sync+retry+mv fallback: a bare rename() can fail with a
-  -- transient ESTALE on this router's flash filesystem under space pressure,
-  -- and silently swallowing that failure (returning true regardless) used to
-  -- leave watchdog-share.json stale with no indication anything went wrong.
-  local ok = utils.promote_file(tmp, path)
-  if not ok then fs.remove(tmp) end
-  return ok
+  return utils.secure_write(path, data)
 end
 
 local function parse_link_line(line)

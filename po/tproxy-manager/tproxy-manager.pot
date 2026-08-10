@@ -107,7 +107,7 @@ msgstr ""
 msgid "Invalid Mihomo configuration. File was not saved."
 msgstr ""
 
-msgid "Mihomo config saved: "
+msgid "Mihomo config saved:"
 msgstr ""
 
 msgid "Last validation result"
@@ -248,19 +248,19 @@ msgstr ""
 msgid "rttab_tcp/rttab_udp must be positive integers."
 msgstr ""
 
-msgid "Invalid path for "
+msgid "Invalid path for"
 msgstr ""
 
 msgid ". Expected an absolute path without extra whitespace."
 msgstr ""
 
-msgid "Invalid interface name: "
+msgid "Invalid interface name:"
 msgstr ""
 
 msgid "TPROXY settings saved"
 msgstr ""
 
-msgid "List file saved: "
+msgid "List file saved:"
 msgstr ""
 
 msgid "TPROXY: service restarted"
@@ -299,10 +299,10 @@ msgstr ""
 msgid "day of week"
 msgstr ""
 
-msgid "Invalid cron field: "
+msgid "Invalid cron field:"
 msgstr ""
 
-msgid "schedule: "
+msgid "schedule:"
 msgstr ""
 
 msgid "Sundays"
@@ -326,10 +326,10 @@ msgstr ""
 msgid "Saturdays"
 msgstr ""
 
-msgid "on days "
+msgid "on days"
 msgstr ""
 
-msgid "on "
+msgid "on"
 msgstr ""
 
 msgid "and"
@@ -338,7 +338,7 @@ msgstr ""
 msgid "at"
 msgstr ""
 
-msgid "every day at "
+msgid "every day at"
 msgstr ""
 
 msgid "th"
@@ -347,10 +347,10 @@ msgstr ""
 msgid "monthly"
 msgstr ""
 
-msgid "monthly on day "
+msgid "monthly on day"
 msgstr ""
 
-msgid "monthly on days "
+msgid "monthly on days"
 msgstr ""
 
 msgid "Update management"
@@ -452,31 +452,31 @@ msgstr ""
 msgid "Script"
 msgstr ""
 
-msgid "GEO list was not parsed: "
+msgid "GEO list was not parsed:"
 msgstr ""
 
-msgid "Source added: "
+msgid "Source added:"
 msgstr ""
 
 msgid "Destination path (dest) is required."
 msgstr ""
 
-msgid "Updated: "
+msgid "Updated:"
 msgstr ""
 
-msgid "Update failed: "
+msgid "Update failed:"
 msgstr ""
 
 msgid "Updated %d of %d sources"
 msgstr ""
 
-msgid "Source updated: "
+msgid "Source updated:"
 msgstr ""
 
-msgid "Source deleted: "
+msgid "Source deleted:"
 msgstr ""
 
-msgid "GEO list was not saved: "
+msgid "GEO list was not saved:"
 msgstr ""
 
 msgid "Source list saved"
@@ -485,13 +485,13 @@ msgstr ""
 msgid "Update script recreated"
 msgstr ""
 
-msgid "Cron installed: "
+msgid "Cron installed:"
 msgstr ""
 
 msgid "Cron removed"
 msgstr ""
 
-msgid "Invalid JSON/JSONC in "
+msgid "Invalid JSON/JSONC in"
 msgstr ""
 
 msgid "Excluded"
@@ -539,10 +539,10 @@ msgstr ""
 msgid "Subscription not found."
 msgstr ""
 
-msgid "Subscription updated: "
+msgid "Subscription updated:"
 msgstr ""
 
-msgid "Failed to update subscription: "
+msgid "Failed to update subscription:"
 msgstr ""
 
 msgid "Subscriptions updated."
@@ -557,22 +557,22 @@ msgstr ""
 msgid "Invalid template JSON/JSONC."
 msgstr ""
 
-msgid "Watchdog template saved: "
+msgid "Watchdog template saved:"
 msgstr ""
 
 msgid "Test template file path is required."
 msgstr ""
 
-msgid "Test template saved: "
+msgid "Test template saved:"
 msgstr ""
 
 msgid "LINKS_FILE path is required."
 msgstr ""
 
-msgid "Invalid line in LINKS_FILE: "
+msgid "Invalid line in LINKS_FILE:"
 msgstr ""
 
-msgid "LINKS_FILE saved: "
+msgid "LINKS_FILE saved:"
 msgstr ""
 
 msgid "Watchdog log cleared."
@@ -602,16 +602,16 @@ msgstr ""
 msgid "Links check failed."
 msgstr ""
 
-msgid "Link applied: "
+msgid "Link applied:"
 msgstr ""
 
-msgid "Failed to apply link: "
+msgid "Failed to apply link:"
 msgstr ""
 
-msgid "Link checked: "
+msgid "Link checked:"
 msgstr ""
 
-msgid "Link check failed: "
+msgid "Link check failed:"
 msgstr ""
 
 msgid "Link excluded from subscriptions."
@@ -827,9 +827,6 @@ msgstr ""
 msgid "Client"
 msgstr ""
 
-msgid "Format"
-msgstr ""
-
 msgid "Recommended format: base64 for v2RayTun, Shadowrocket, v2Box and V2rayNG; plain for Happ and clients that accept raw VLESS lists."
 msgstr ""
 
@@ -953,7 +950,7 @@ msgstr ""
 msgid "Template JSONC is valid"
 msgstr ""
 
-msgid "JSONC error: "
+msgid "JSONC error:"
 msgstr ""
 
 msgid "Test template"
@@ -1028,10 +1025,10 @@ msgstr ""
 msgid "Batch check port range must not include Watchdog TEST_PORT."
 msgstr ""
 
-msgid "Required field is empty: "
+msgid "Required field is empty:"
 msgstr ""
 
-msgid "Invalid absolute path for "
+msgid "Invalid absolute path for"
 msgstr ""
 
 msgid "Watchdog settings saved."
@@ -1055,10 +1052,10 @@ msgstr ""
 msgid "JSONC is valid (comments allowed)"
 msgstr ""
 
-msgid "JSON error: "
+msgid "JSON error:"
 msgstr ""
 
-msgid "JSON saved: "
+msgid "JSON saved:"
 msgstr ""
 
 msgid "Check URL"
@@ -1325,7 +1322,7 @@ msgstr ""
 msgid "Generate managed Mihomo config from Watchdog links"
 msgstr ""
 
-msgid "Mihomo managed config generated: "
+msgid "Mihomo managed config generated:"
 msgstr ""
 
 msgid "Mihomo converter"
@@ -1388,7 +1385,7 @@ msgstr ""
 msgid "Invalid sing-box configuration. File was not saved."
 msgstr ""
 
-msgid "sing-box config saved: "
+msgid "sing-box config saved:"
 msgstr ""
 
 msgid "sing-box converter"
@@ -1460,8 +1457,6 @@ msgstr ""
 msgid "new"
 msgstr ""
 
-msgid "not in backup, kept as-is"
-msgstr ""
 
 msgid "new file, will be created"
 msgstr ""
@@ -1497,4 +1492,221 @@ msgid "Failed to process the uploaded backup."
 msgstr ""
 
 msgid "Pending import not found or expired."
+msgstr ""
+
+msgid "Backup file is too large (max %d MiB)."
+msgstr ""
+
+msgid "Session validation failed, please reload this page and try again."
+msgstr ""
+
+msgid "Access"
+msgstr ""
+
+msgid "Public (no token)"
+msgstr ""
+
+msgid "Token required"
+msgstr ""
+
+msgid "Token mode is selected but no token has been generated yet - the URLs below will not work until you generate one."
+msgstr ""
+
+msgid "These URLs only work with the current token. Rotating the token immediately invalidates any link shared before."
+msgstr ""
+
+msgid "Current token"
+msgstr ""
+
+msgid "(not generated yet)"
+msgstr ""
+
+msgid "Rotate the token? Any link shared before this stops working immediately."
+msgstr ""
+
+msgid "Generate / rotate token"
+msgstr ""
+
+msgid "Shared subscription token rotated. Update it on any client using the old link."
+msgstr ""
+
+msgid "Failed to save the new token."
+msgstr ""
+
+msgid "will be removed"
+msgstr ""
+
+msgid "Could not read enough randomness to generate a secure token."
+msgstr ""
+
+msgid "Failed to restart: %s"
+msgstr ""
+
+msgid "The engine is running, but these services did not restart: %s. Traffic may still be routed to the previous engine."
+msgstr ""
+
+msgid "Failed to save settings."
+msgstr ""
+
+msgid "%s could not be stopped"
+msgstr ""
+
+
+msgid "%s did not come back up"
+msgstr ""
+
+
+msgid "%s did not start; ROLLBACK INCOMPLETE: %s. Check the engine and service status manually."
+msgstr ""
+
+
+msgid "%s did not start; reverted to %s."
+msgstr ""
+
+
+msgid "%s install failed."
+msgstr ""
+
+
+msgid "%s installed."
+msgstr ""
+
+
+msgid "%s is already listed in %s"
+msgstr ""
+
+
+msgid "Binary is not installed: %s"
+msgstr ""
+
+
+msgid "Failed to add %s to %s"
+msgstr ""
+
+
+msgid "Failed to clear the log."
+msgstr ""
+
+
+msgid "Failed to delete the subscription."
+msgstr ""
+
+
+msgid "Failed to delete the subscription: the link list could not be resynchronised; the previous state was restored."
+msgstr ""
+
+
+msgid "Failed to save settings, and the previous file could not be restored:"
+msgstr ""
+
+
+msgid "Failed to save settings; the previous file was restored but its permissions could not be secured:"
+msgstr ""
+
+
+msgid "Failed to save shared subscription settings, and the previous file could not be restored:"
+msgstr ""
+
+
+msgid "Failed to save shared subscription settings; the previous file was restored but its permissions could not be secured:"
+msgstr ""
+
+
+msgid "Failed to save the engine selection - no services were restarted."
+msgstr ""
+
+
+msgid "Failed to stage the engine switch - nothing was changed."
+msgstr ""
+
+
+msgid "Latest %s version is not available."
+msgstr ""
+
+
+msgid "No version manager configured for %s."
+msgstr ""
+
+
+msgid "ROLLBACK INCOMPLETE: the previous state of these files could not be restored: %s"
+msgstr ""
+
+
+msgid "Settings saved, but the configuration file permissions could not be secured."
+msgstr ""
+
+
+msgid "Shared subscription settings saved, but the file permissions could not be secured:"
+msgstr ""
+
+
+msgid "Still running and holding the TPROXY port: %s."
+msgstr ""
+
+
+msgid "Warning: %s"
+msgstr ""
+
+
+msgid "could not restart %s"
+msgstr ""
+
+
+msgid "the previous configuration could NOT be restored"
+msgstr ""
+
+
+msgid "the restored configuration file permissions could not be secured"
+msgstr ""
+
+msgid "Could not create a rollback snapshot: %s"
+msgstr ""
+
+
+msgid "The previous contents are kept here: %s"
+msgstr ""
+
+
+msgid "The subscription list is busy with another operation. Try again in a moment."
+msgstr ""
+
+msgid "TPROXY: the service did not start; the saved configuration is not applied."
+msgstr ""
+
+msgid "The interrupted change was rolled back; the previous state is restored."
+msgstr ""
+
+
+msgid "Could not restore the previous state of: %s. The snapshot is kept at %s."
+msgstr ""
+
+
+msgid "The kept snapshot was discarded; the current state is left as it is."
+msgstr ""
+
+
+msgid "An earlier change was interrupted before it finished"
+msgstr ""
+
+
+msgid "was absent"
+msgstr ""
+
+
+msgid "Restore the previous state"
+msgstr ""
+
+
+msgid "Discard the kept snapshot and keep the current state?"
+msgstr ""
+
+
+msgid "Discard"
+msgstr ""
+
+
+msgid "These files may be half-written. Restore the previous state, or discard the snapshot to keep what is on disk now."
+msgstr ""
+
+msgid "Request was rejected: invalid or missing CSRF token."
 msgstr ""

@@ -110,8 +110,8 @@ msgstr "Удалить"
 msgid "Invalid Mihomo configuration. File was not saved."
 msgstr "Некорректная конфигурация Mihomo. Файл не сохранён."
 
-msgid "Mihomo config saved: "
-msgstr "Конфигурация Mihomo сохранена: "
+msgid "Mihomo config saved:"
+msgstr "Конфигурация Mihomo сохранена:"
 
 msgid "Last validation result"
 msgstr "Последний результат валидации"
@@ -251,20 +251,20 @@ msgstr "fwmark_tcp/fwmark_udp должны быть десятичными чи�
 msgid "rttab_tcp/rttab_udp must be positive integers."
 msgstr "rttab_tcp/rttab_udp должны быть положительными целыми числами."
 
-msgid "Invalid path for "
-msgstr "Некорректный путь для "
+msgid "Invalid path for"
+msgstr "Некорректный путь для"
 
 msgid ". Expected an absolute path without extra whitespace."
 msgstr ". Ожидается абсолютный путь без лишних пробелов."
 
-msgid "Invalid interface name: "
-msgstr "Некорректное имя интерфейса: "
+msgid "Invalid interface name:"
+msgstr "Некорректное имя интерфейса:"
 
 msgid "TPROXY settings saved"
 msgstr "Настройки TPROXY сохранены"
 
-msgid "List file saved: "
-msgstr "Файл списка сохранён: "
+msgid "List file saved:"
+msgstr "Файл списка сохранён:"
 
 msgid "TPROXY: service restarted"
 msgstr "TPROXY: сервис перезапущен"
@@ -302,11 +302,11 @@ msgstr "месяц"
 msgid "day of week"
 msgstr "день недели"
 
-msgid "Invalid cron field: "
-msgstr "Некорректное поле cron: "
+msgid "Invalid cron field:"
+msgstr "Некорректное поле cron:"
 
-msgid "schedule: "
-msgstr "расписание: "
+msgid "schedule:"
+msgstr "расписание:"
 
 msgid "Sundays"
 msgstr "воскресенья"
@@ -329,11 +329,11 @@ msgstr "пятницы"
 msgid "Saturdays"
 msgstr "субботы"
 
-msgid "on days "
-msgstr "по дням "
+msgid "on days"
+msgstr "по дням"
 
-msgid "on "
-msgstr "в "
+msgid "on"
+msgstr "в"
 
 msgid "and"
 msgstr "и"
@@ -341,8 +341,8 @@ msgstr "и"
 msgid "at"
 msgstr "в"
 
-msgid "every day at "
-msgstr "каждый день в "
+msgid "every day at"
+msgstr "каждый день в"
 
 msgid "th"
 msgstr "-го"
@@ -350,11 +350,11 @@ msgstr "-го"
 msgid "monthly"
 msgstr "ежемесячно"
 
-msgid "monthly on day "
-msgstr "ежемесячно в день "
+msgid "monthly on day"
+msgstr "ежемесячно в день"
 
-msgid "monthly on days "
-msgstr "ежемесячно по дням "
+msgid "monthly on days"
+msgstr "ежемесячно по дням"
 
 msgid "Update management"
 msgstr "Управление обновлениями"
@@ -455,32 +455,32 @@ msgstr "Список источников"
 msgid "Script"
 msgstr "Скрипт"
 
-msgid "GEO list was not parsed: "
-msgstr "Список GEO не разобран: "
+msgid "GEO list was not parsed:"
+msgstr "Список GEO не разобран:"
 
-msgid "Source added: "
-msgstr "Источник добавлен: "
+msgid "Source added:"
+msgstr "Источник добавлен:"
 
 msgid "Destination path (dest) is required."
 msgstr "Путь назначения (dest) обязателен."
 
-msgid "Updated: "
-msgstr "Обновлено: "
+msgid "Updated:"
+msgstr "Обновлено:"
 
-msgid "Update failed: "
-msgstr "Обновление завершилось ошибкой: "
+msgid "Update failed:"
+msgstr "Обновление завершилось ошибкой:"
 
 msgid "Updated %d of %d sources"
 msgstr "Обновлено %d из %d источников"
 
-msgid "Source updated: "
-msgstr "Источник обновлён: "
+msgid "Source updated:"
+msgstr "Источник обновлён:"
 
-msgid "Source deleted: "
-msgstr "Источник удалён: "
+msgid "Source deleted:"
+msgstr "Источник удалён:"
 
-msgid "GEO list was not saved: "
-msgstr "Список GEO не сохранён: "
+msgid "GEO list was not saved:"
+msgstr "Список GEO не сохранён:"
 
 msgid "Source list saved"
 msgstr "Список источников сохранён"
@@ -488,14 +488,14 @@ msgstr "Список источников сохранён"
 msgid "Update script recreated"
 msgstr "Скрипт обновления пересоздан"
 
-msgid "Cron installed: "
-msgstr "Cron установлен: "
+msgid "Cron installed:"
+msgstr "Cron установлен:"
 
 msgid "Cron removed"
 msgstr "Cron удалён"
 
-msgid "Invalid JSON/JSONC in "
-msgstr "Некорректный JSON/JSONC в "
+msgid "Invalid JSON/JSONC in"
+msgstr "Некорректный JSON/JSONC в"
 
 msgid "Excluded"
 msgstr "Исключена"
@@ -542,11 +542,11 @@ msgstr "Подписка удалена."
 msgid "Subscription not found."
 msgstr "Подписка не найдена."
 
-msgid "Subscription updated: "
-msgstr "Подписка обновлена: "
+msgid "Subscription updated:"
+msgstr "Подписка обновлена:"
 
-msgid "Failed to update subscription: "
-msgstr "Не удалось обновить подписку: "
+msgid "Failed to update subscription:"
+msgstr "Не удалось обновить подписку:"
 
 msgid "Subscriptions updated."
 msgstr "Подписки обновлены."
@@ -560,23 +560,23 @@ msgstr "Путь к файлу шаблона обязателен."
 msgid "Invalid template JSON/JSONC."
 msgstr "Некорректный JSON/JSONC шаблона."
 
-msgid "Watchdog template saved: "
-msgstr "Шаблон Watchdog сохранён: "
+msgid "Watchdog template saved:"
+msgstr "Шаблон Watchdog сохранён:"
 
 msgid "Test template file path is required."
 msgstr "Путь к тестовому шаблону обязателен."
 
-msgid "Test template saved: "
-msgstr "Тестовый шаблон сохранён: "
+msgid "Test template saved:"
+msgstr "Тестовый шаблон сохранён:"
 
 msgid "LINKS_FILE path is required."
 msgstr "Путь LINKS_FILE обязателен."
 
-msgid "Invalid line in LINKS_FILE: "
-msgstr "Некорректная строка в LINKS_FILE: "
+msgid "Invalid line in LINKS_FILE:"
+msgstr "Некорректная строка в LINKS_FILE:"
 
-msgid "LINKS_FILE saved: "
-msgstr "LINKS_FILE сохранён: "
+msgid "LINKS_FILE saved:"
+msgstr "LINKS_FILE сохранён:"
 
 msgid "Watchdog log cleared."
 msgstr "Лог Watchdog очищен."
@@ -605,17 +605,17 @@ msgstr "Проверка всех ссылок выполнена."
 msgid "Links check failed."
 msgstr "Проверка ссылок завершилась ошибкой."
 
-msgid "Link applied: "
-msgstr "Ссылка применена: "
+msgid "Link applied:"
+msgstr "Ссылка применена:"
 
-msgid "Failed to apply link: "
-msgstr "Не удалось применить ссылку: "
+msgid "Failed to apply link:"
+msgstr "Не удалось применить ссылку:"
 
-msgid "Link checked: "
-msgstr "Ссылка проверена: "
+msgid "Link checked:"
+msgstr "Ссылка проверена:"
 
-msgid "Link check failed: "
-msgstr "Проверка ссылки завершилась ошибкой: "
+msgid "Link check failed:"
+msgstr "Проверка ссылки завершилась ошибкой:"
 
 msgid "Link excluded from subscriptions."
 msgstr "Ссылка исключена из подписок."
@@ -902,8 +902,8 @@ msgstr "Сохранить шаблон"
 msgid "Template JSONC is valid"
 msgstr "JSONC шаблона корректен"
 
-msgid "JSONC error: "
-msgstr "Ошибка JSONC: "
+msgid "JSONC error:"
+msgstr "Ошибка JSONC:"
 
 msgid "Test template"
 msgstr "Тестовый шаблон"
@@ -977,11 +977,11 @@ msgstr "Диапазон портов batch-проверки выходит за
 msgid "Batch check port range must not include Watchdog TEST_PORT."
 msgstr "Диапазон портов batch-проверки не должен включать Watchdog TEST_PORT."
 
-msgid "Required field is empty: "
-msgstr "Обязательное поле пустое: "
+msgid "Required field is empty:"
+msgstr "Обязательное поле пустое:"
 
-msgid "Invalid absolute path for "
-msgstr "Некорректный абсолютный путь для "
+msgid "Invalid absolute path for"
+msgstr "Некорректный абсолютный путь для"
 
 msgid "Watchdog settings saved."
 msgstr "Настройки Watchdog сохранены."
@@ -1004,11 +1004,11 @@ msgstr "Некорректное имя файла. Ожидается *.json б
 msgid "JSONC is valid (comments allowed)"
 msgstr "JSONC корректен (комментарии разрешены)"
 
-msgid "JSON error: "
-msgstr "Ошибка JSON: "
+msgid "JSON error:"
+msgstr "Ошибка JSON:"
 
-msgid "JSON saved: "
-msgstr "JSON сохранён: "
+msgid "JSON saved:"
+msgstr "JSON сохранён:"
 
 msgid "Check URL"
 msgstr "URL проверки"
@@ -1108,9 +1108,6 @@ msgstr "Экспортируется ссылок"
 
 msgid "Client"
 msgstr "Клиент"
-
-msgid "Format"
-msgstr "Формат"
 
 msgid "Recommended format: base64 for v2RayTun, Shadowrocket, v2Box and V2rayNG; plain for Happ and clients that accept raw VLESS lists."
 msgstr "Рекомендуемый формат: base64 для v2RayTun, Shadowrocket, v2Box и V2rayNG; plain для Happ и клиентов, принимающих raw-списки VLESS."
@@ -1328,8 +1325,8 @@ msgstr "Установить выбранную версию Mihomo?"
 msgid "Generate managed Mihomo config from Watchdog links"
 msgstr "Сгенерировать managed-конфиг Mihomo из ссылок Watchdog"
 
-msgid "Mihomo managed config generated: "
-msgstr "Managed-конфиг Mihomo сгенерирован: "
+msgid "Mihomo managed config generated:"
+msgstr "Managed-конфиг Mihomo сгенерирован:"
 
 msgid "Mihomo converter"
 msgstr "Конвертер Mihomo"
@@ -1391,8 +1388,8 @@ msgstr "sing-box (JSON-файлы в /etc/sing-box)"
 msgid "Invalid sing-box configuration. File was not saved."
 msgstr "Некорректная конфигурация sing-box. Файл не сохранён."
 
-msgid "sing-box config saved: "
-msgstr "Конфиг sing-box сохранён: "
+msgid "sing-box config saved:"
+msgstr "Конфиг sing-box сохранён:"
 
 msgid "sing-box converter"
 msgstr "Конвертер sing-box"
@@ -1463,8 +1460,6 @@ msgstr "Применить этот бэкап? Текущие настройк�
 msgid "new"
 msgstr "новое"
 
-msgid "not in backup, kept as-is"
-msgstr "нет в бэкапе, останется как есть"
 
 msgid "new file, will be created"
 msgstr "новый файл, будет создан"
@@ -1501,3 +1496,220 @@ msgstr "Не удалось обработать загруженный бэка
 
 msgid "Pending import not found or expired."
 msgstr "Ожидающий импорт не найден или истёк по времени."
+
+msgid "Backup file is too large (max %d MiB)."
+msgstr "Файл бэкапа слишком большой (максимум %d МиБ)."
+
+msgid "Session validation failed, please reload this page and try again."
+msgstr "Проверка сессии не пройдена, обновите страницу и попробуйте снова."
+
+msgid "Access"
+msgstr "Доступ"
+
+msgid "Public (no token)"
+msgstr "Публичный (без токена)"
+
+msgid "Token required"
+msgstr "Требуется токен"
+
+msgid "Token mode is selected but no token has been generated yet - the URLs below will not work until you generate one."
+msgstr "Выбран режим с токеном, но токен ещё не сгенерирован — ссылки ниже не будут работать, пока вы его не создадите."
+
+msgid "These URLs only work with the current token. Rotating the token immediately invalidates any link shared before."
+msgstr "Эти ссылки работают только с текущим токеном. Смена токена сразу же делает недействительными все ранее выданные ссылки."
+
+msgid "Current token"
+msgstr "Текущий токен"
+
+msgid "(not generated yet)"
+msgstr "(ещё не сгенерирован)"
+
+msgid "Rotate the token? Any link shared before this stops working immediately."
+msgstr "Сменить токен? Все ранее выданные ссылки сразу перестанут работать."
+
+msgid "Generate / rotate token"
+msgstr "Сгенерировать / сменить токен"
+
+msgid "Shared subscription token rotated. Update it on any client using the old link."
+msgstr "Токен расшаренной подписки изменён. Обновите его на всех клиентах, использующих старую ссылку."
+
+msgid "Failed to save the new token."
+msgstr "Не удалось сохранить новый токен."
+
+msgid "will be removed"
+msgstr "будет удалён"
+
+msgid "Could not read enough randomness to generate a secure token."
+msgstr "Не удалось получить достаточно случайных данных для безопасного токена."
+
+msgid "Failed to restart: %s"
+msgstr "Не удалось перезапустить: %s"
+
+msgid "The engine is running, but these services did not restart: %s. Traffic may still be routed to the previous engine."
+msgstr "Ядро запущено, но эти службы не перезапустились: %s. Трафик может по-прежнему идти в предыдущее ядро."
+
+msgid "Failed to save settings."
+msgstr "Не удалось сохранить настройки."
+
+msgid "%s could not be stopped"
+msgstr "Не удалось остановить %s"
+
+
+msgid "%s did not come back up"
+msgstr "%s не запустился обратно"
+
+
+msgid "%s did not start; ROLLBACK INCOMPLETE: %s. Check the engine and service status manually."
+msgstr "%s не запустился; ОТКАТ НЕПОЛНЫЙ: %s. Проверьте состояние ядра и служб вручную."
+
+
+msgid "%s did not start; reverted to %s."
+msgstr "%s не запустился; выполнен возврат к %s."
+
+
+msgid "%s install failed."
+msgstr "Не удалось установить %s."
+
+
+msgid "%s installed."
+msgstr "%s установлен."
+
+
+msgid "%s is already listed in %s"
+msgstr "%s уже есть в %s"
+
+
+msgid "Binary is not installed: %s"
+msgstr "Исполняемый файл не установлен: %s"
+
+
+msgid "Failed to add %s to %s"
+msgstr "Не удалось добавить %s в %s"
+
+
+msgid "Failed to clear the log."
+msgstr "Не удалось очистить журнал."
+
+
+msgid "Failed to delete the subscription."
+msgstr "Не удалось удалить подписку."
+
+
+msgid "Failed to delete the subscription: the link list could not be resynchronised; the previous state was restored."
+msgstr "Не удалось удалить подписку: не удалось пересобрать список ссылок; прежнее состояние восстановлено."
+
+
+msgid "Failed to save settings, and the previous file could not be restored:"
+msgstr "Не удалось сохранить настройки, и прежний файл не восстановлен:"
+
+
+msgid "Failed to save settings; the previous file was restored but its permissions could not be secured:"
+msgstr "Не удалось сохранить настройки; прежний файл восстановлен, но права на него не защищены:"
+
+
+msgid "Failed to save shared subscription settings, and the previous file could not be restored:"
+msgstr "Не удалось сохранить настройки общей подписки, и прежний файл не восстановлен:"
+
+
+msgid "Failed to save shared subscription settings; the previous file was restored but its permissions could not be secured:"
+msgstr "Не удалось сохранить настройки общей подписки; прежний файл восстановлен, но права на него не защищены:"
+
+
+msgid "Failed to save the engine selection - no services were restarted."
+msgstr "Не удалось сохранить выбор ядра — службы не перезапускались."
+
+
+msgid "Failed to stage the engine switch - nothing was changed."
+msgstr "Не удалось подготовить переключение ядра — ничего не изменено."
+
+
+msgid "Latest %s version is not available."
+msgstr "Последняя версия %s недоступна."
+
+
+msgid "No version manager configured for %s."
+msgstr "Для %s не настроен менеджер версий."
+
+
+msgid "ROLLBACK INCOMPLETE: the previous state of these files could not be restored: %s"
+msgstr "ОТКАТ НЕПОЛНЫЙ: не удалось восстановить прежнее состояние файлов: %s"
+
+
+msgid "Settings saved, but the configuration file permissions could not be secured."
+msgstr "Настройки сохранены, но права на файл конфигурации не защищены."
+
+
+msgid "Shared subscription settings saved, but the file permissions could not be secured:"
+msgstr "Настройки общей подписки сохранены, но права на файл не защищены:"
+
+
+msgid "Still running and holding the TPROXY port: %s."
+msgstr "Всё ещё работает и удерживает порт TPROXY: %s."
+
+
+msgid "Warning: %s"
+msgstr "Предупреждение: %s"
+
+
+msgid "could not restart %s"
+msgstr "не удалось перезапустить %s"
+
+
+msgid "the previous configuration could NOT be restored"
+msgstr "прежняя конфигурация НЕ восстановлена"
+
+
+msgid "the restored configuration file permissions could not be secured"
+msgstr "права на восстановленный файл конфигурации не защищены"
+
+msgid "Could not create a rollback snapshot: %s"
+msgstr "Не удалось создать снимок для отката: %s"
+
+
+msgid "The previous contents are kept here: %s"
+msgstr "Прежнее содержимое сохранено здесь: %s"
+
+
+msgid "The subscription list is busy with another operation. Try again in a moment."
+msgstr "Список подписок занят другой операцией. Повторите через несколько секунд."
+
+msgid "TPROXY: the service did not start; the saved configuration is not applied."
+msgstr "TPROXY: служба не запустилась; сохранённая конфигурация не применена."
+
+msgid "The interrupted change was rolled back; the previous state is restored."
+msgstr "Прерванное изменение откатано; прежнее состояние восстановлено."
+
+
+msgid "Could not restore the previous state of: %s. The snapshot is kept at %s."
+msgstr "Не удалось восстановить прежнее состояние: %s. Снимок сохранён в %s."
+
+
+msgid "The kept snapshot was discarded; the current state is left as it is."
+msgstr "Сохранённый снимок удалён; текущее состояние оставлено как есть."
+
+
+msgid "An earlier change was interrupted before it finished"
+msgstr "Более раннее изменение было прервано до завершения"
+
+
+msgid "was absent"
+msgstr "отсутствовал"
+
+
+msgid "Restore the previous state"
+msgstr "Восстановить прежнее состояние"
+
+
+msgid "Discard the kept snapshot and keep the current state?"
+msgstr "Удалить сохранённый снимок и оставить текущее состояние?"
+
+
+msgid "Discard"
+msgstr "Удалить"
+
+
+msgid "These files may be half-written. Restore the previous state, or discard the snapshot to keep what is on disk now."
+msgstr "Эти файлы могут быть записаны наполовину. Восстановите прежнее состояние либо удалите снимок, оставив то, что сейчас на диске."
+
+msgid "Request was rejected: invalid or missing CSRF token."
+msgstr "Запрос отклонён: отсутствует или неверен CSRF-токен."

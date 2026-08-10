@@ -57,13 +57,21 @@ local function parse_tsv_versions(text)
   return out
 end
 
+-- Passes the writer's tri-state through: previously the write result was
+-- discarded and the caller always reported "JSON saved", even when nothing
+-- reached the disk.
+--   true                 - saved
+--   nil, msg             - not saved
+--   true, nil, "permissions" - saved, but the mode could not be set
 local function write_json_file_xray(path, text)
   text = (text or ""):gsub("\r\n", "\n")
   if not utils.validate_jsonc_text(text) then
     return nil, _("Invalid JSON (parse error)")
   end
-  write_file(path, text)
-  return true
+  local wrote, wwhy = write_file(path, text)
+  if wrote then return true end
+  if wwhy == "permissions" then return true, nil, "permissions" end
+  return nil, _("Failed to save settings.")
 end
 
 -- ensure Xray dir exists
@@ -84,15 +92,30 @@ local function render(ctx)
   -- Toolbar handlers
   if http.formvalue("_refreshlog") then set_err(nil); redirect_here("xray"); return m end
   if http.formvalue("_clearlog") then
-    sys.call("/etc/init.d/log restart >/dev/null 2>&1")
-    set_err(nil); redirect_here("xray"); return m
+    -- Restarting `log` is what actually drops the ring buffer. Clearing
+    -- the banner regardless read as success even when it failed.
+    if sys.call("/etc/init.d/log restart >/dev/null 2>&1") == 0 then
+      set_err(nil)
+    else
+      set_info(nil); set_err(_("Failed to clear the log."))
+    end
+    redirect_here("xray"); return m
   end
   if http.formvalue("_test") then
     sys.call(string.format("%s -test -format json -confdir %q >%s 2>&1", XRAY_BIN, XRAY_DIR, LOG_TEST))
     set_err(nil); redirect_here("xray"); return m
   end
   if http.formvalue("_clearlog_json") then
-    write_file(LOG_TEST, ""); set_err(nil); redirect_here("xray"); return m
+    local ok, why = write_file(LOG_TEST, "")
+    if ok then
+      set_err(nil)
+    elseif why == "permissions" then
+      set_info(nil)
+      set_err(_("Settings saved, but the configuration file permissions could not be secured."))
+    else
+      set_info(nil); set_err(_("Failed to clear the log."))
+    end
+    redirect_here("xray"); return m
   end
   if http.formvalue("_xray_version_refresh") == "1" then
     local rc, out = run_xray_version({ "status", "--refresh" })
@@ -244,7 +267,24 @@ local function render(ctx)
       local name = (http.formvalue("new_json_name") or ""):gsub("^%s+",""):gsub("%s+$","")
       if name ~= "" and not name:find("[/\\]") and name:match("%.json$") then
         local path = XRAY_DIR .. "/" .. name
-        if not fs.access(path) then write_file(path, "{\n}\n") end
+        if not fs.access(path) then
+          -- Creation is checked: redirecting to an editor for a file that
+          -- was never created (and clearing the error on the way) left the
+          -- user staring at an empty page with no indication of failure.
+          local made, mwhy = write_file(path, "{\n}\n")
+          if not made and mwhy ~= "permissions" then
+            set_info(nil)
+            set_err(_("Failed to save settings."))
+            redirect_here("xray")
+            return m
+          end
+          if not made then
+            set_info(nil)
+            set_err(_("Settings saved, but the configuration file permissions could not be secured."))
+            redirect_here("xray")
+            return m
+          end
+        end
         set_err(nil)
         http.redirect(self_url({ tab="xray", json_file=name }))
       else
@@ -417,7 +457,7 @@ local function render(ctx)
     };
     badge.appendChild(jump);
   }
-  function validate(){ if(!ta||!badge)return; try{ JSON.parse(stripJsonComments(ta.value)); badge.textContent=']] .. pcdata(_("JSONC is valid (comments allowed)")) .. [['; badge.style.color='#16a34a'; }catch(e){ showJsonError(badge, ta, hi, ']] .. pcdata(_("JSON error: ")) .. [[', e.message); } }
+  function validate(){ if(!ta||!badge)return; try{ JSON.parse(stripJsonComments(ta.value)); badge.textContent=']] .. pcdata(_("JSONC is valid (comments allowed)")) .. [['; badge.style.color='#16a34a'; }catch(e){ showJsonError(badge, ta, hi, ']] .. pcdata(_("JSON error:").." ") .. [[', e.message); } }
   var validateDebounced = debounce(validate,250);
   if(ta){ ta.addEventListener('input', function(){ syncHighlight(); validateDebounced(); }); ta.addEventListener('scroll', syncHighlight); syncHighlight(); validate();
 
@@ -449,9 +489,15 @@ local function render(ctx)
         local jf  = fval_last("json_file_selected")
         if not is_known_json_file(jf) then jf = fval_last("json_file") end
         if not is_known_json_file(jf) then jf = chosen end
-        local ok, err = write_json_file_xray(XRAY_DIR .. "/" .. jf, new)
-        if not ok then set_err(err or "save error")
-        else set_err(nil); set_info(_("JSON saved: ")..jf) end
+        local ok, err, warn = write_json_file_xray(XRAY_DIR .. "/" .. jf, new)
+        if not ok then
+          set_info(nil); set_err(err or "save error")
+        elseif warn == "permissions" then
+          set_info(nil)
+          set_err(_("Settings saved, but the configuration file permissions could not be secured."))
+        else
+          set_err(nil); set_info(_("JSON saved:").." "..jf)
+        end
         http.redirect(self_url({ tab = "xray", json_file = jf }))
       end
     end

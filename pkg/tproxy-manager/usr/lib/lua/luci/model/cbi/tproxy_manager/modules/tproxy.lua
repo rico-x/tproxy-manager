@@ -23,6 +23,7 @@ local function render(ctx)
   local is_iface_name, is_nft_table_name, is_fwmark = ctx.is_iface_name, ctx.is_nft_table_name, ctx.is_fwmark
   local combined_log = ctx.combined_log
   local netm_init = ctx.netm_init
+  local utils = ctx.utils
   local engines = ctx.engines
   local proxy_engine = ctx.proxy_engine or "xray"
   local _ = ctx._ or function(s) return s end
@@ -59,34 +60,117 @@ local function render(ctx)
     set_err(nil); redirect_here("tproxy"); return m
   end
   if http.formvalue("_clearlog_tproxy") then
-    sys.call("/etc/init.d/log restart >/dev/null 2>&1")
-    set_err(nil); redirect_here("tproxy"); return m
+    -- Restarting `log` is what actually drops the ring buffer. Clearing
+    -- the banner regardless read as success even when it failed.
+    if sys.call("/etc/init.d/log restart >/dev/null 2>&1") == 0 then
+      set_err(nil)
+    else
+      set_info(nil); set_err(_("Failed to clear the log."))
+    end
+    redirect_here("tproxy"); return m
   end
+  -- engine_message: engines.lua reports a stable code plus parameters instead
+  -- of an English sentence. It is outside the LuCI i18n domain, and a sentence
+  -- assembled there by concatenation could never be found in the catalog — so
+  -- every engine message is built here, where _() actually applies.
+  local function engine_problem(p)
+    if p.code == "restore_failed" then
+      return _("the previous configuration could NOT be restored")
+    elseif p.code == "restore_permissions" then
+      return _("the restored configuration file permissions could not be secured")
+    elseif p.code == "target_not_stopped" then
+      return string.format(_("%s could not be stopped"), p.engine)
+    elseif p.code == "previous_not_up" then
+      return string.format(_("%s did not come back up"), p.engine)
+    elseif p.code == "stack_not_restarted" then
+      return string.format(_("could not restart %s"), p.services)
+    end
+    return p.code
+  end
+
+  local function engine_message(code, p)
+    p = p or {}
+    if code == "not_installed" then
+      return string.format(_("Binary is not installed: %s"), p.binary or "")
+    elseif code == "stage_failed" then
+      return _("Failed to stage the engine switch - nothing was changed.")
+    elseif code == "commit_failed" then
+      return _("Failed to save the engine selection - no services were restarted.")
+    elseif code == "did_not_start_reverted" then
+      return string.format(_("%s did not start; reverted to %s."), p.target or "", p.previous or "")
+    elseif code == "rollback_incomplete" then
+      local parts = {}
+      for _idx, problem in ipairs(p.problems or {}) do parts[#parts + 1] = engine_problem(problem) end
+      local msg = string.format(_("%s did not start; ROLLBACK INCOMPLETE: %s. Check the engine and service status manually."),
+        p.target or "", table.concat(parts, "; "))
+      if p.stuck then
+        msg = msg .. " " .. string.format(_("Still running and holding the TPROXY port: %s."), p.stuck)
+      end
+      return msg
+    elseif code == "no_version_manager" then
+      return string.format(_("No version manager configured for %s."), p.engine or "")
+    elseif code == "latest_unavailable" then
+      if p.out and p.out ~= "" then return p.out end
+      return string.format(_("Latest %s version is not available."), p.engine or "")
+    elseif code == "install_failed" then
+      if p.out and p.out ~= "" then return p.out end
+      return string.format(_("%s install failed."), p.engine or "")
+    end
+    return code
+  end
+
   if http.formvalue("_install_engine") and engines then
     local target = engines.normalize(http.formvalue("_install_engine"))
-    local ok, msg = engines.install_latest(target)
+    local ok, code, params = engines.install_latest(target)
     if ok then
       set_err(nil)
-      set_info(string.format(_("%s installed: %s"), engines.def(target).label, msg or ""))
+      -- The version script's own output is shown when it produced any;
+      -- otherwise a plain confirmation. Passing this through engine_message()
+      -- would compose "Xray installed: Xray installed."
+      local out = params and params.out or ""
+      if out ~= "" then
+        set_info(string.format(_("%s installed: %s"), engines.def(target).label, out))
+      else
+        set_info(string.format(_("%s installed."), engines.def(target).label))
+      end
     else
       set_info(nil)
-      set_err(msg or _("Engine install failed."))
+      set_err(engine_message(code, params))
     end
     redirect_here("tproxy")
     return m
   end
   if http.formvalue("_activate_proxy_engine") == "1" and engines then
     local target = engines.normalize(http.formvalue("proxy_engine_choice") or proxy_engine)
-    local ok, msg = engines.activate(uci, PKG, target)
-    if ok then
+    local ok, msg, warn, detail = engines.activate(uci, PKG, target)
+    if not ok then
+      -- On failure the second value is a code and the third its parameters.
+      set_info(nil)
+      set_err(engine_message(msg, warn))
+      redirect_here("tproxy")
+      return m
+    end
+    -- The engine is running, but the switch may still be partial. Every
+    -- warning is surfaced: reporting plain success while TPROXY still
+    -- points at the previous engine's port is what this reports on.
+    local notes = {}
+    if warn and warn:find("permissions", 1, true) then
+      notes[#notes + 1] = _("Settings saved, but the configuration file permissions could not be secured.")
+    end
+    if warn and warn:find("services", 1, true) then
+      notes[#notes + 1] = string.format(
+        _("The engine is running, but these services did not restart: %s. Traffic may still be routed to the previous engine."),
+        detail or "")
+    end
+    if #notes > 0 then
+      set_info(nil)
+      set_err(string.format(_("Proxy engine activated: %s"), msg or target) .. "\n" ..
+        table.concat(notes, "\n"))
+    else
       set_err(nil)
       set_info(string.format(_("Proxy engine activated: %s"), msg or target))
-      http.redirect(self_url({ tab = engines.def(target).tab }))
-    else
-      set_info(nil)
-      set_err(_(msg or "Proxy engine activation failed."))
-      redirect_here("tproxy")
     end
+    http.redirect(self_url({ tab = engines.def(target).tab }))
     return m
   end
 
@@ -224,7 +308,15 @@ local function render(ctx)
     function rfr.write(self, section) if not self.map:formvalue(self:cbid(section)) then return end; redirect_here("tproxy") end
     local clr = sl:option(Button, "_clearlog_tproxy"); clr.title = ""; clr.inputtitle = "Clear log"
     clr.inputstyle = "remove"; function clr.render() end
-    function clr.write(self, section) if not self.map:formvalue(self:cbid(section)) then return end; sys.call("/etc/init.d/log restart >/dev/null 2>&1"); redirect_here("tproxy") end
+    function clr.write(self, section)
+      if not self.map:formvalue(self:cbid(section)) then return end
+      if sys.call("/etc/init.d/log restart >/dev/null 2>&1") == 0 then
+        set_err(nil)
+      else
+        set_info(nil); set_err(_("Failed to clear the log."))
+      end
+      redirect_here("tproxy")
+    end
   end
 
   local main_s = m:section(SimpleSection, _("TPROXY main settings"))
@@ -707,39 +799,100 @@ local function render(ctx)
   -- register its own setfilehandler before this page's very first
   -- http.formvalue() call, which already happens in manage.lua before this
   -- module even runs.)
+  -- CSRF gate for the two handlers that actually mutate /etc. LuCI's own
+  -- test_post_security() does not run for this page (its form() target only
+  -- arms it when cbi.submit is present), so a cross-site POST carrying just
+  -- _backup_apply=1 + a guessed backup_token would otherwise bypass the
+  -- whole review-before-apply step. Checked against the same
+  -- disp.context.authtoken the upload form embeds.
+  local function backup_csrf_ok()
+    local expected = tostring((disp.context and disp.context.authtoken) or "")
+    return expected ~= "" and http.formvalue("token") == expected
+  end
+
+  -- Recovery from a transaction that was interrupted mid-apply. The snapshot
+  -- store survives (it lives on persistent storage and carries a KEEP marker),
+  -- but until now nothing could act on it from the UI: the files stayed
+  -- half-written and the only record sat in a directory nobody looks at.
+  if http.formvalue("_rollback_recover") ~= nil then
+    if not backup_csrf_ok() then
+      set_info(nil); set_err(_("Request was rejected: invalid or missing CSRF token."))
+    else
+      local dir = trim(http.formvalue("_rollback_recover"))
+      local ok_r, failed = utils.rollback_recover(dir)
+      if ok_r then
+        set_err(nil)
+        set_info(_("The interrupted change was rolled back; the previous state is restored."))
+      else
+        set_info(nil)
+        set_err(string.format(
+          _("Could not restore the previous state of: %s. The snapshot is kept at %s."),
+          table.concat(failed or {}, ", "), dir))
+      end
+    end
+    redirect_here("tproxy"); return m
+  end
+
+  if http.formvalue("_rollback_discard") ~= nil then
+    if not backup_csrf_ok() then
+      set_info(nil); set_err(_("Request was rejected: invalid or missing CSRF token."))
+    elseif utils.rollback_discard(trim(http.formvalue("_rollback_discard"))) then
+      set_err(nil); set_info(_("The kept snapshot was discarded; the current state is left as it is."))
+    else
+      set_info(nil); set_err(_("Failed to save settings."))
+    end
+    redirect_here("tproxy"); return m
+  end
+
   if http.formvalue("_backup_apply") == "1" then
+    if not backup_csrf_ok() then
+      set_info(nil)
+      set_err(_("Session validation failed, please reload this page and try again."))
+      redirect_here("tproxy")
+      return m
+    end
     local token = trim(http.formvalue("backup_token") or "")
-    local ok, touched_or_err = backup.apply(token)
+    local ok, touched_or_err, perm_warning = backup.apply(token)
     if ok then
-      local restarted = {}
-      if touched_or_err.core then
-        sys.call("/etc/init.d/tproxy-manager restart >/dev/null 2>&1")
-        restarted[#restarted + 1] = "TPROXY"
+      -- Report only services that actually came back up, and surface the
+      -- ones that failed separately: a restored config paired with a dead
+      -- engine is exactly the state the admin must not mistake for success.
+      local restarted, failed = {}, {}
+      local function restart_service(flag, script, label)
+        if not flag then return end
+        if sys.call(string.format("[ -x %s ] && %s restart >/dev/null 2>&1", script, script)) == 0 then
+          restarted[#restarted + 1] = label
+        else
+          failed[#failed + 1] = label
+        end
       end
-      if touched_or_err.watchdog then
-        sys.call("[ -x /etc/init.d/tproxy-manager-watchdog ] && /etc/init.d/tproxy-manager-watchdog restart >/dev/null 2>&1")
-        restarted[#restarted + 1] = "Watchdog"
-      end
-      if touched_or_err.xray then
-        sys.call("[ -x /etc/init.d/xray ] && /etc/init.d/xray restart >/dev/null 2>&1")
-        restarted[#restarted + 1] = "Xray"
-      end
-      if touched_or_err.mihomo then
-        sys.call("[ -x /etc/init.d/tproxy-manager-mihomo ] && /etc/init.d/tproxy-manager-mihomo restart >/dev/null 2>&1")
-        restarted[#restarted + 1] = "Mihomo"
-      end
-      if touched_or_err.singbox then
-        sys.call("[ -x /etc/init.d/tproxy-manager-sing-box ] && /etc/init.d/tproxy-manager-sing-box restart >/dev/null 2>&1")
-        restarted[#restarted + 1] = "sing-box"
-      end
-      if touched_or_err.geo then
-        sys.call("/etc/init.d/cron restart >/dev/null 2>&1")
-      end
-      set_err(nil)
-      set_info(string.format(
+      restart_service(touched_or_err.core, "/etc/init.d/tproxy-manager", "TPROXY")
+      restart_service(touched_or_err.watchdog, "/etc/init.d/tproxy-manager-watchdog", "Watchdog")
+      restart_service(touched_or_err.xray, "/etc/init.d/xray", "Xray")
+      restart_service(touched_or_err.mihomo, "/etc/init.d/tproxy-manager-mihomo", "Mihomo")
+      restart_service(touched_or_err.singbox, "/etc/init.d/tproxy-manager-sing-box", "sing-box")
+      restart_service(touched_or_err.geo, "/etc/init.d/cron", "cron")
+
+      local msg = string.format(
         _("Backup restored. Restarted: %s"),
         #restarted > 0 and table.concat(restarted, ", ") or _("nothing (no service-affecting changes)")
-      ))
+      )
+      -- The permissions warning is a real, actionable outcome of the
+      -- restore: files were written but could not be locked down. It used
+      -- to be returned and then dropped on the floor here.
+      if perm_warning and perm_warning ~= "" then
+        msg = msg .. "\n" .. string.format(_("Warning: %s"), perm_warning)
+      end
+      if #failed > 0 then
+        set_info(nil)
+        set_err(msg .. "\n" .. string.format(_("Failed to restart: %s"), table.concat(failed, ", ")))
+      elseif perm_warning and perm_warning ~= "" then
+        set_info(nil)
+        set_err(msg)
+      else
+        set_err(nil)
+        set_info(msg)
+      end
     else
       set_info(nil)
       set_err(touched_or_err or _("Failed to restore backup."))
@@ -748,6 +901,12 @@ local function render(ctx)
     return m
   end
   if http.formvalue("_backup_cancel") == "1" then
+    if not backup_csrf_ok() then
+      set_info(nil)
+      set_err(_("Session validation failed, please reload this page and try again."))
+      redirect_here("tproxy")
+      return m
+    end
     backup.cancel(trim(http.formvalue("backup_token") or ""))
     set_err(nil)
     set_info(_("Backup restore cancelled."))
@@ -770,9 +929,12 @@ local function render(ctx)
           pcdata(e.key), pcdata(e.new), pcdata(_("new")))
       end
       for _, e in ipairs(u.removed) do
+        -- UCI is restored as an exact snapshot (unlike files, which are
+        -- never deleted just for being absent from the backup) - an option
+        -- missing from the backup really will be removed by Apply.
         rows[#rows + 1] = string.format(
           "<div class='bkdiff-kv'><code>%s</code>: %s (%s)</div>",
-          pcdata(e.key), pcdata(e.old), pcdata(_("not in backup, kept as-is")))
+          pcdata(e.key), pcdata(e.old), pcdata(_("will be removed")))
       end
       return table.concat(rows)
     end
@@ -810,11 +972,18 @@ local function render(ctx)
         local mod = diff.modules[id]
         local uci_html = render_uci_diff(mod.uci)
         local file_parts = {}
+        -- "removed" files are shown but not counted: Apply leaves them exactly
+        -- as they are, so counting them would advertise changes that this
+        -- restore never makes.
+        local applied_files = 0
         for _, f in ipairs(mod.files) do
           local html = render_file_diff(f)
-          if html ~= "" then file_parts[#file_parts + 1] = html end
+          if html ~= "" then
+            file_parts[#file_parts + 1] = html
+            if f.status ~= "removed" then applied_files = applied_files + 1 end
+          end
         end
-        local n = #mod.uci.changed + #mod.uci.added + #mod.uci.removed + #file_parts
+        local n = #mod.uci.changed + #mod.uci.added + #mod.uci.removed + applied_files
         if n > 0 then
           total = total + n
           sections[#sections + 1] = string.format(
@@ -824,7 +993,12 @@ local function render(ctx)
         end
       end
 
-      local hidden_token = string.format("<input type='hidden' name='backup_token' value='%s'>", pcdata(token))
+      -- Both the pending-import id and the LuCI CSRF token travel with the
+      -- Apply/Cancel buttons; backup_csrf_ok() above rejects the POST
+      -- without the latter.
+      local hidden_token = string.format(
+        "<input type='hidden' name='backup_token' value='%s'><input type='hidden' name='token' value='%s'>",
+        pcdata(token), pcdata(tostring((disp.context and disp.context.authtoken) or "")))
 
       if total == 0 then
         return string.format(
@@ -858,6 +1032,43 @@ local function render(ctx)
     local dv = sec:option(DummyValue, "_backup"); dv.rawhtml = true
     function dv.cfgvalue()
       backup.cleanup_stale()
+
+      -- Interrupted transactions are surfaced here, with their manifest and the
+      -- two actions that resolve them. Detection is also logged, so an operator
+      -- who never opens this page still finds out.
+      local orphan_html = ""
+      do
+        local orphans = utils.rollback_orphans()
+        if #orphans > 0 then
+          local parts = {}
+          for _idx, o in ipairs(orphans) do
+            local files = {}
+            for _fi, f in ipairs(o.files) do
+              files[#files + 1] = "<div class='bkdiff-file'><code>" .. pcdata(f.path) .. "</code>" ..
+                (f.exists and "" or (" &mdash; " .. pcdata(_("was absent")))) .. "</div>"
+            end
+            parts[#parts + 1] = string.format(
+              "<div class='box' style='margin:.4rem 0'><div><strong>%s</strong></div>" ..
+              "<div style='font-size:.85em;margin:.2rem 0'><code>%s</code></div>" ..
+              "<div style='font-size:.9em;margin:.2rem 0'>%s</div>%s" ..
+              "<div class='inline-row' style='margin-top:.4rem'>" ..
+              "<button class='cbi-button cbi-button-apply' name='_rollback_recover' value='%s'>%s</button>" ..
+              "<button class='cbi-button cbi-button-remove' name='_rollback_discard' value='%s'" ..
+              " onclick=\"return confirm('%s')\">%s</button>" ..
+              "<input type='hidden' name='token' value='%s'></div></div>",
+              pcdata(_("An earlier change was interrupted before it finished")),
+              pcdata(o.dir), pcdata(o.reason or ""), table.concat(files),
+              pcdata(o.dir), pcdata(_("Restore the previous state")),
+              pcdata(o.dir), pcdata(_("Discard the kept snapshot and keep the current state?")),
+              pcdata(_("Discard")),
+              pcdata(tostring((disp.context and disp.context.authtoken) or "")))
+          end
+          orphan_html = "<div class='msg err' style='margin-top:.5rem'>" ..
+            pcdata(_("These files may be half-written. Restore the previous state, or discard the snapshot to keep what is on disk now.")) ..
+            "</div>" .. table.concat(parts)
+        end
+      end
+
       local token = trim(fval("backup_token") or "")
       local export_url = disp.build_url("admin", "network", "tproxy_manager_backup_export")
       local upload_url = disp.build_url("admin", "network", "tproxy_manager_backup_upload")
@@ -870,7 +1081,10 @@ local function render(ctx)
               pcdata(err or _("Pending import not found or expired.")) .. "</div>")
       end
 
-      return string.format([[<div id="backup-wrap"><details>
+      -- The interrupted-transaction warning is emitted OUTSIDE the collapsed
+      -- <details>: it describes files that may be half-written right now, and a
+      -- warning nobody sees until they expand a section is not a warning.
+      return orphan_html .. string.format([[<div id="backup-wrap"><details>
         <summary><strong>%s</strong></summary>
         <style>
           .bkdiff-mod{margin:.3rem 0;padding:.2rem .6rem;border:1px solid #e5e7eb;border-radius:.4rem}
@@ -899,6 +1113,26 @@ local function render(ctx)
     end
   end
 
+  -- report_quick_add: turns append_line_unique's outcome into a banner. The
+  -- four cases are genuinely different to the user — a duplicate is not an
+  -- error, but it is also not "added", and a failed write must never read as
+  -- either.
+  local function report_quick_add(state, ip, path, added_msg)
+    if state == "added" then
+      set_err(nil); set_info(added_msg)
+    elseif state == "exists" then
+      set_err(nil)
+      set_info(string.format(_("%s is already listed in %s"), ip, path))
+    elseif state == "permissions" then
+      set_info(nil)
+      set_err(added_msg .. "\n" ..
+        _("Settings saved, but the configuration file permissions could not be secured."))
+    else
+      set_info(nil)
+      set_err(string.format(_("Failed to add %s to %s"), ip, path))
+    end
+  end
+
   -- Save handlers (TPROXY) + DHCP quick add + restart
   local function save_tproxy_main()
     -- DHCP quick add
@@ -911,9 +1145,8 @@ local function render(ctx)
       end
       local path = getu("src_only_v4_file")
       if path ~= "" then
-        append_line_unique(path, ip_only)
-        set_info(string.format(_("Added %s to src_only_v4_file: %s"), ip_only, path))
-        set_err(nil)
+        report_quick_add(append_line_unique(path, ip_only), ip_only, path,
+          string.format(_("Added %s to src_only_v4_file: %s"), ip_only, path))
       end
       redirect_here("tproxy"); return
     end
@@ -924,9 +1157,8 @@ local function render(ctx)
       end
       local path = getu("src_bypass_v4_file")
       if path ~= "" then
-        append_line_unique(path, ip_bypass)
-        set_info(string.format(_("Added %s to src_bypass_v4_file: %s"), ip_bypass, path))
-        set_err(nil)
+        report_quick_add(append_line_unique(path, ip_bypass), ip_bypass, path,
+          string.format(_("Added %s to src_bypass_v4_file: %s"), ip_bypass, path))
       end
       redirect_here("tproxy"); return
     end
@@ -980,15 +1212,27 @@ local function render(ctx)
       end
       for key, path in pairs(path_fields) do
         if not is_abs_path(path) then
-          set_err(_("Invalid path for ") .. key .. _(". Expected an absolute path without extra whitespace."))
+          set_err(_("Invalid path for").." " .. key .. _(". Expected an absolute path without extra whitespace."))
           return
         end
       end
 
       set_err(nil)
 
-      uci:section(PKG,"main","main",{})
-      uci:set(PKG,"main","log_enabled", http.formvalue("tpx_log_enabled") and "1" or "0")
+      -- Every staged change is recorded from the FIRST one on. Previously the
+      -- accounting started only at the block below, so a failure in the
+      -- interface, port or mode fields was committed as a half-formed
+      -- configuration and still reported as saved.
+      local stage_ok = true
+      local function S(k,v)
+        if not utils.uci_stage(uci, PKG, "main", k, v) then stage_ok = false end
+      end
+      local function D(k)
+        if not utils.uci_unset(uci, PKG, "main", k) then stage_ok = false end
+      end
+
+      if not uci:section(PKG,"main","main",{}) then stage_ok = false end
+      S("log_enabled", http.formvalue("tpx_log_enabled") and "1" or "0")
 
       local selected = {}
       for _,d in ipairs((sys.net and sys.net.devices and sys.net.devices()) or {}) do
@@ -996,34 +1240,30 @@ local function render(ctx)
       end
       for _, iface in ipairs(selected) do
         if not is_iface_name(iface) then
-          set_err(_("Invalid interface name: ") .. tostring(iface))
+          set_err(_("Invalid interface name:").." " .. tostring(iface))
           return
         end
       end
-      if #selected > 0 then uci:set(PKG,"main","ifaces", table.concat(selected," ")) else uci:delete(PKG,"main","ifaces") end
-      uci:set(PKG,"main","ipv6_enabled", http.formvalue("tpx_ipv6_enabled") and "1" or "0")
+      S("ifaces", #selected > 0 and table.concat(selected," ") or nil)
+      S("ipv6_enabled", http.formvalue("tpx_ipv6_enabled") and "1" or "0")
 
       if split then
-        local pt = http.formvalue("tpx_port_tcp")
-        local pu = http.formvalue("tpx_port_udp")
-        uci:set(PKG,"main","tproxy_port_tcp", pt)
-        uci:set(PKG,"main","tproxy_port_udp", pu)
+        S("tproxy_port_tcp", http.formvalue("tpx_port_tcp"))
+        S("tproxy_port_udp", http.formvalue("tpx_port_udp"))
         local p = http.formvalue("tpx_port")
-        if p and p~="" then uci:set(PKG,"main","tproxy_port", p) end
+        if p and p~="" then S("tproxy_port", p) end
       else
-        local p = http.formvalue("tpx_port")
-        uci:set(PKG,"main","tproxy_port", p)
-        uci:delete(PKG,"main","tproxy_port_tcp")
-        uci:delete(PKG,"main","tproxy_port_udp")
+        S("tproxy_port", http.formvalue("tpx_port"))
+        D("tproxy_port_tcp")
+        D("tproxy_port_udp")
       end
 
       local pm = fval("tpx_port_mode")
-      if pm == "bypass" or pm == "only" then uci:set(PKG,"main","port_mode", pm) else uci:delete(PKG,"main","port_mode") end
+      S("port_mode", (pm == "bypass" or pm == "only") and pm or nil)
 
       local sm = fval("tpx_src_mode")
-      if sm == "off" or sm == "only" or sm == "bypass" then uci:set(PKG,"main","src_mode", sm) else uci:delete(PKG,"main","src_mode") end
+      S("src_mode", (sm == "off" or sm == "only" or sm == "bypass") and sm or nil)
 
-      local function S(k,v) if v and v~="" then uci:set(PKG,"main",k,v) else uci:delete(PKG,"main",k) end end
       S("nft_table", nft_table)
       S("fwmark_tcp", fwmark_tcp)
       S("fwmark_udp", fwmark_udp)
@@ -1037,11 +1277,34 @@ local function render(ctx)
       S("src_bypass_v4_file", path_fields.src_bypass_v4_file)
       S("src_bypass_v6_file", path_fields.src_bypass_v6_file)
       if engines then
-        engines.save_legacy_to_profile(uci, PKG, proxy_engine)
+        -- The engine profile is part of the same save: staging it silently
+        -- meant a failure here was committed together with everything else.
+        if not engines.save_legacy_to_profile(uci, PKG, proxy_engine) then
+          stage_ok = false
+        end
       end
 
-      uci:commit(PKG)
-      set_info(_("TPROXY settings saved"))
+      if not stage_ok then
+        uci:revert(PKG)
+        set_info(nil)
+        set_err(_("Failed to save settings."))
+        redirect_here("tproxy")
+        return
+      end
+      local ok_commit, why = utils.commit_uci(uci, PKG)
+      if ok_commit then
+        set_info(_("TPROXY settings saved"))
+      elseif why == "permissions" then
+        set_info(nil)
+        set_err(_("Settings saved, but the configuration file permissions could not be secured."))
+      else
+        -- Not committed: do not claim success and do not let the caller go
+        -- on to restart services with a config that was never written.
+        set_info(nil)
+        set_err(_("Failed to save settings."))
+        redirect_here("tproxy")
+        return
+      end
     end
 
     if want_file then
@@ -1067,18 +1330,50 @@ local function render(ctx)
       end
       if is_allowed then
         local text = http.formvalue("uniedit_text") or ""
-        write_file(path, text)
-        set_info(_("List file saved: ") .. path)
-        set_err(nil)
+        -- Result is checked instead of assumed: "permissions" means the
+        -- file IS saved and only its mode could not be set, so it must not
+        -- be reported as a failed save.
+        local wrote, wwhy = write_file(path, text)
+        if wrote then
+          set_err(nil)
+          set_info(_("List file saved:").." " .. path)
+        elseif wwhy == "permissions" then
+          set_info(nil)
+          set_err(_("Settings saved, but the configuration file permissions could not be secured."))
+        else
+          set_info(nil)
+          set_err(_("Failed to save settings."))
+        end
+        -- No unconditional set_err(nil) here: it used to run right after
+        -- the branch above and wiped the write/permission error that had
+        -- just been set, so a failed save still looked clean to the user.
       elseif path and path ~= "" then
         set_err(_("Invalid list_file: not one of the configured list paths."))
       end
     end
 
     if want_restart then
+      -- Both results were discarded, so a configuration that fails validation
+      -- or a start that cannot bind still reported "service restarted" while
+      -- nothing had been applied. `start` is the one that matters: it validates
+      -- the lists, builds the nft ruleset and installs the policy rules, and its
+      -- output carries the reason it refused.
       sys.call("/etc/init.d/tproxy-manager stop >/dev/null 2>&1")
-      sys.call("/etc/init.d/tproxy-manager start >/dev/null 2>&1")
-      set_info(_("TPROXY: service restarted"))
+      local marker = "__TPM_RC__:"
+      local out = sys.exec(string.format(
+        "(/etc/init.d/tproxy-manager start) 2>&1; printf '\\n%s%%s' \"$?\"", marker)) or ""
+      local rc = tonumber(out:match(marker .. "([%-%d]+)%s*$")) or 1
+      out = trim((out:gsub("\n?" .. marker .. "[%-%d]+%s*$", "")))
+      if rc == 0 then
+        set_err(nil)
+        set_info(_("TPROXY: service restarted"))
+      else
+        -- The service's own diagnostics are shown verbatim: they name the file
+        -- and line of an invalid list entry, which no generic message could.
+        set_info(nil)
+        set_err(_("TPROXY: the service did not start; the saved configuration is not applied.") ..
+          (out ~= "" and ("\n" .. out) or ""))
+      end
       redirect_here("tproxy"); return
     end
   end
