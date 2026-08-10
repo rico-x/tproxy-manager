@@ -46,7 +46,7 @@ function M.run_watchdog_command(args, env)
     end
   end
   parts[#parts + 1] = utils.shellescape(WATCHDOG_SCRIPT)
-  for _, arg in ipairs(args or {}) do
+  for __, arg in ipairs(args or {}) do
     parts[#parts + 1] = utils.shellescape(arg)
   end
   return run_cmd_capture(table.concat(parts, " "))
@@ -100,7 +100,7 @@ end
 
 function M.write_links_file(path, entries)
   local out = {}
-  for _, entry in ipairs(entries or {}) do
+  for __, entry in ipairs(entries or {}) do
     local raw_link = trim(entry.raw_link or entry.link)
     if raw_link ~= "" then
       out[#out + 1] = raw_link

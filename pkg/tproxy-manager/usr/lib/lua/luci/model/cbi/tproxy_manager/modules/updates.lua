@@ -259,7 +259,7 @@ local function cron_spec_human(spec)
       end
     end
     local labels, seen = {}, {}
-    for _, d in ipairs(days) do local k=tostring(d); if not seen[k] and names[k] then seen[k]=true; labels[#labels+1]=names[k] end end
+    for __, d in ipairs(days) do local k=tostring(d); if not seen[k] and names[k] then seen[k]=true; labels[#labels+1]=names[k] end end
     table.sort(labels)
     local text = (#labels==0) and (_("on days").." "..dow) or (#labels==1 and (_("on").." "..labels[1]) or (_("on").." "..table.concat(labels, ", ", 1, #labels-1).." ".._("and").." "..labels[#labels]))
     return time_str ~= "" and (text.." ".._("at").." "..time_str) or text
@@ -284,7 +284,7 @@ end
 -- ---------- GEO config ----------
 local function normalize_rows(data)
   local out = {}
-  for _, it in ipairs(data) do
+  for __, it in ipairs(data) do
     if type(it) == "table" and it.dest then
       out[#out+1] = {
         name = tostring(it.name or ""),
@@ -332,7 +332,7 @@ local function write_geo_script(rows)
     "fi",
     "logger -t " .. SYSLOG_TAG .. " \"starting update\""
   }
-  for _, r in ipairs(rows or {}) do
+  for __, r in ipairs(rows or {}) do
     if r.url and r.url ~= "" and r.dest and r.dest ~= "" then
       -- Skip entries with an invalid url/dest (in case they ended up in
       -- geo-sources.conf bypassing UI validation, e.g. via the "raw JSON"
@@ -412,7 +412,7 @@ local function geo_persist(rows)
   -- even if the request dies between the two writes.
   local store, serr = utils.snapshot_begin("geo")
   if store then
-    for _, path in ipairs({ GEO_CFG, GEO_SCRIPT }) do
+    for __, path in ipairs({ GEO_CFG, GEO_SCRIPT }) do
       if not store then break end
       local ok, aerr = utils.snapshot_add(store, path)
       if not ok then serr = aerr; utils.snapshot_discard(store); store = nil end
@@ -448,7 +448,7 @@ local function geo_persist(rows)
     local failed = utils.snapshot_restore(store)
     if #failed > 0 then
       local names = {}
-      for _, f in ipairs(failed) do
+      for __, f in ipairs(failed) do
         names[#names + 1] = f.path .. (f.state == "permissions" and " (mode)" or "")
       end
       -- The directory is KEPT and marked so the sweeper leaves it alone: it
@@ -744,7 +744,7 @@ table.geo-table.geo-upd th:first-child, table.geo-table.geo-upd td:first-child{ 
     if http.formvalue("_geo_update_all") == "1" then
       local rows = load_rows_again()
       local ok_count, total = 0, 0
-      for _, r in ipairs(rows) do
+      for __, r in ipairs(rows) do
         if r.url and r.url ~= "" and r.dest and r.dest ~= "" then
           total = total + 1
           if fetch_to(r.url, r.dest) then ok_count = ok_count + 1 end

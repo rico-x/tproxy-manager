@@ -42,7 +42,7 @@ local function request_env()
         "HTTP_X_DEVICE_MODEL", "HTTP_X_VER_OS", "HTTP_X_HWID",
         "HTTP_X_REAL_IP", "HTTP_X_FORWARDED_FOR",
     }
-    for _, key in ipairs(keys) do
+    for __, key in ipairs(keys) do
         local value = http.getenv(key)
         if value and env[key] == nil then env[key] = value end
     end
@@ -164,7 +164,7 @@ function action_happ_capture()
         end
     end
     table.sort(keys)
-    for _, key in ipairs(keys) do
+    for __, key in ipairs(keys) do
         local name = key
         if key:match("^HTTP_") then
             name = header_name(key)

@@ -174,7 +174,7 @@ local function self_url(opts)
     if k ~= "tab" and v ~= nil and tostring(v) ~= "" then keys[#keys+1] = k end
   end
   table.sort(keys)
-  for _, k in ipairs(keys) do
+  for __, k in ipairs(keys) do
     qp[#qp+1] = urlencode(k) .. "=" .. urlencode(opts[k])
   end
   if #qp>0 then url = url .. "?" .. table.concat(qp,"&") end

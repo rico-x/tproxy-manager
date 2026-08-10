@@ -102,6 +102,39 @@ else
   t("  the pending directory is cleaned up", count_tmp("^tproxy%-manager%-backup%-pending"), 0)
 end
 
+group("DIFF RENDERING: a diff with added/changed/removed entries")
+-- The UI crashed with "attempt to call local '_'" the first time a diff had an
+-- added UCI option: `_` is the gettext function, and `for _, e in ipairs(...)`
+-- shadowed it with a number. A backup of an identical config has no added or
+-- removed keys, which is why the cycle above never reached that code. This
+-- drives the renderer with all three kinds of entry.
+do
+  -- The renderer lives inside the CBI module's render(ctx); rather than loading
+  -- LuCI's whole form machinery, reproduce the exact loop shapes the module uses
+  -- and assert the translator is still callable inside them. If a `for _` ever
+  -- comes back, `_("...")` here raises the same error the UI raised.
+  local i18n = require "luci.model.cbi.tproxy_manager.i18n"
+  local u = {
+    changed = { { key = "tproxy_port", old = "61219", new = "61220" } },
+    added   = { { key = "new_option", new = "1" } },
+    removed = { { key = "gone_option", old = "0" } },
+  }
+  local ok_render, err_render = pcall(function()
+    local rows = {}
+    for __, e in ipairs(u.changed) do rows[#rows + 1] = e.key .. i18n("") end
+    for __, e in ipairs(u.added) do rows[#rows + 1] = e.key .. i18n("new") end
+    for __, e in ipairs(u.removed) do rows[#rows + 1] = e.key .. i18n("will be removed") end
+    return table.concat(rows)
+  end)
+  t("the translator stays callable inside diff loops", ok_render, true)
+  if not ok_render then print("  error: " .. tostring(err_render)) end
+
+  -- And the shipped module must not reintroduce the shadowing.
+  local src = utils.read_file("/usr/lib/lua/luci/model/cbi/tproxy_manager/modules/tproxy.lua")
+  t("the shipped module binds no '_' loop variable",
+    src:find("for%s+_%s*,") == nil and src:find("for%s+_%s+in") == nil, true)
+end
+
 group("CLEANUP: discard_export removes the whole private directory")
 backup.discard_export(archive)
 t("the private directory is gone", fs.stat(outdir), nil)

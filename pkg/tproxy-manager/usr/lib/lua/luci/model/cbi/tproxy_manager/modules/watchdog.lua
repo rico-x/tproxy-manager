@@ -157,7 +157,7 @@ local function remove_subscription_sources(db, sub)
       item.sources[skey] = nil
       db.excluded[skey .. "|" .. hash] = nil
       local has_source = false
-      for _ in pairs(item.sources) do has_source = true; break end
+      for __ in pairs(item.sources) do has_source = true; break end
       if not has_source then
         db.links[hash] = nil
         db.removed[hash] = os.time()
@@ -262,7 +262,7 @@ local TEMPLATE_CHOICES = {
 
 local function template_choice_by_id(id)
   id = trim(id)
-  for _, choice in ipairs(TEMPLATE_CHOICES) do
+  for __, choice in ipairs(TEMPLATE_CHOICES) do
     if choice.id == id then return choice end
   end
   return TEMPLATE_CHOICES[1]
@@ -1155,7 +1155,7 @@ local function render(ctx)
       -- outside this process even if it dies mid-transaction.
       local store, serr = utils.snapshot_begin("sub-delete")
       if store then
-        for _, path in ipairs({ subscriptions_path, links_path }) do
+        for __, path in ipairs({ subscriptions_path, links_path }) do
           if not store then break end
           local ok, aerr = utils.snapshot_add(store, path)
           if not ok then serr = aerr; utils.snapshot_discard(store); store = nil end

@@ -334,10 +334,10 @@ local function render(ctx)
           local secname = s[".name"]
           local nets = uci:get_list("firewall", secname, "network") or {}
           local devs = uci:get_list("firewall", secname, "device") or {}
-          for _, d in ipairs(devs) do exclude[d] = true end
+          for __, d in ipairs(devs) do exclude[d] = true end
           local nm = netm_init
           if nm then
-            for _, n in ipairs(nets) do
+            for __, n in ipairs(nets) do
               local iface = nm:get_interface(n)
               if iface then
                 if iface.get_device then
@@ -347,7 +347,7 @@ local function render(ctx)
                 if iface.get_devices then
                   local ds = iface:get_devices()
                   if ds then
-                    for _, dv in ipairs(ds) do
+                    for __, dv in ipairs(ds) do
                       if dv and dv.name then exclude[dv:name()] = true end
                     end
                   end
@@ -372,7 +372,7 @@ local function render(ctx)
         pcdata(_("Interfaces"))
       )
 
-      for _,d in ipairs((sys.net and sys.net.devices and sys.net.devices()) or {}) do
+      for __,d in ipairs((sys.net and sys.net.devices and sys.net.devices()) or {}) do
         if d ~= "lo" and not d:match("^wwan") and not exclude[d] then
           local chk = set[d] and "checked" or ""
           buf[#buf+1] = string.format(
@@ -549,7 +549,7 @@ local function render(ctx)
       end
 
       local chosen = fval("list_file")
-      local found=false; for _,o in ipairs(options) do if o[1]==chosen then found=true end end
+      local found=false; for __,o in ipairs(options) do if o[1]==chosen then found=true end end
       if not found then chosen = options[1][1] end
 
       local function visible_for_mode(kind, sm)
@@ -559,9 +559,9 @@ local function render(ctx)
         return false
       end
       local chosen_kind = "none"
-      for _,o in ipairs(options) do if o[1]==chosen then chosen_kind=o[3] end end
+      for __,o in ipairs(options) do if o[1]==chosen then chosen_kind=o[3] end end
       if not visible_for_mode(chosen_kind, smode) then
-        for _,o in ipairs(options) do if visible_for_mode(o[3], smode) then chosen = o[1]; break end end
+        for __,o in ipairs(options) do if visible_for_mode(o[3], smode) then chosen = o[1]; break end end
       end
 
       local content = read_file(chosen)
@@ -581,7 +581,7 @@ local function render(ctx)
       local sel = {}
       sel[#sel+1] = "<div id='unified-editor' class='editor-wrap' style='width:520px; max-width:100%'>"
       sel[#sel+1] = "<div class='inline-row'><label>" .. _("File to edit") .. ":</label><select name='list_file' style='max-width:260px'>"
-      for _,o in ipairs(options) do
+      for __,o in ipairs(options) do
         local path, label, kind = o[1], o[2], o[3]
         local selattr = (path == chosen) and " selected" or ""
         local show = (kind=='none') or (smode=='only' and kind=='only') or (smode=='bypass' and kind=='bypass')
@@ -723,7 +723,7 @@ local function render(ctx)
         sel[#sel+1] = "<div style='color:#6b7280'>" .. _("No active leases.") .. "</div>"
       else
         sel[#sel+1] = "<table class='leases-table'><colgroup><col class='col-ip'><col class='col-host'><col class='col-mac'><col class='col-act'></colgroup><thead><tr><th>IP</th><th>" .. _("Name") .. "</th><th>MAC</th><th>" .. _("Actions") .. "</th></tr></thead><tbody>"
-        for _, r in ipairs(leases) do
+        for __, r in ipairs(leases) do
           sel[#sel+1] = string.format(
             "<tr><td><code>%s</code></td><td>%s</td><td><code>%s</code></td>" ..
             "<td>" ..
@@ -918,17 +918,17 @@ local function render(ctx)
   do
     local function render_uci_diff(u)
       local rows = {}
-      for _, e in ipairs(u.changed) do
+      for __, e in ipairs(u.changed) do
         rows[#rows + 1] = string.format(
           "<div class='bkdiff-kv'><code>%s</code>: <span class='bkdiff-del'>%s</span> &rarr; <span class='bkdiff-add'>%s</span></div>",
           pcdata(e.key), pcdata(e.old), pcdata(e.new))
       end
-      for _, e in ipairs(u.added) do
+      for __, e in ipairs(u.added) do
         rows[#rows + 1] = string.format(
           "<div class='bkdiff-kv'><code>%s</code>: <span class='bkdiff-add'>%s</span> (%s)</div>",
           pcdata(e.key), pcdata(e.new), pcdata(_("new")))
       end
-      for _, e in ipairs(u.removed) do
+      for __, e in ipairs(u.removed) do
         -- UCI is restored as an exact snapshot (unlike files, which are
         -- never deleted just for being absent from the backup) - an option
         -- missing from the backup really will be removed by Apply.
@@ -954,7 +954,7 @@ local function render(ctx)
           "</div>"
       end
       local rows = {}
-      for _, tok in ipairs(f.diff) do
+      for __, tok in ipairs(f.diff) do
         if tok.tag ~= "same" then
           rows[#rows + 1] = "<div class='" .. backup_diff_line_class(tok.tag) .. "'>" ..
             (tok.tag == "add" and "+ " or "- ") .. pcdata(tok.text) .. "</div>"
@@ -968,7 +968,7 @@ local function render(ctx)
     local function render_backup_diff(diff, token)
       local total = 0
       local sections = {}
-      for _, id in ipairs(diff.order) do
+      for __, id in ipairs(diff.order) do
         local mod = diff.modules[id]
         local uci_html = render_uci_diff(mod.uci)
         local file_parts = {}
@@ -976,7 +976,7 @@ local function render(ctx)
         -- as they are, so counting them would advertise changes that this
         -- restore never makes.
         local applied_files = 0
-        for _, f in ipairs(mod.files) do
+        for __, f in ipairs(mod.files) do
           local html = render_file_diff(f)
           if html ~= "" then
             file_parts[#file_parts + 1] = html
@@ -1235,10 +1235,10 @@ local function render(ctx)
       S("log_enabled", http.formvalue("tpx_log_enabled") and "1" or "0")
 
       local selected = {}
-      for _,d in ipairs((sys.net and sys.net.devices and sys.net.devices()) or {}) do
+      for __,d in ipairs((sys.net and sys.net.devices and sys.net.devices()) or {}) do
         if d ~= "lo" and not d:match("^wwan") and http.formvalue("tpx_if_"..d) then selected[#selected+1]=d end
       end
-      for _, iface in ipairs(selected) do
+      for __, iface in ipairs(selected) do
         if not is_iface_name(iface) then
           set_err(_("Invalid interface name:").." " .. tostring(iface))
           return
@@ -1324,7 +1324,7 @@ local function render(ctx)
       }
       local is_allowed = false
       if path and path ~= "" then
-        for _, p in ipairs(allowed_list_files) do
+        for __, p in ipairs(allowed_list_files) do
           if p ~= "" and p == path then is_allowed = true; break end
         end
       end

@@ -127,6 +127,15 @@ if grep -RIn '[А-Яа-яЁё]' "$PKG_DIR/usr/lib/lua/luci"; then
   echo "LuCI Lua files must use English gettext msgids, not hardcoded Russian UI strings" >&2
   exit 1
 fi
+# `_` is the gettext function in every LuCI module here. Binding it as a loop
+# variable shadows it, and the next `_("...")` inside that loop calls a number -
+# a runtime crash that only fires when the loop actually has iterations. That is
+# how the backup diff blew up on the first archive with an added UCI option.
+# Any unused loop variable in these files must be `__`.
+if grep -RIn --include='*.lua' -E '\bfor[[:space:]]+_[[:space:],=]|\bfor[[:space:]]+_[[:space:]]+in\b' "$PKG_DIR/usr/lib/lua/luci"; then
+  echo "'_' is the gettext function in LuCI modules: use '__' for unused loop variables" >&2
+  exit 1
+fi
 python3 "$ROOT/scripts/compile-luci-i18n.py" "$ROOT/po/tproxy-manager/ru.po" /tmp/tproxy-manager.ru.lmo
 test -s /tmp/tproxy-manager.ru.lmo
 printf 'ok\n'

@@ -36,7 +36,7 @@ end
 
 local function run_mihomo_version(args)
   local parts = { utils.shellescape(MIHOMO_VERSION_SCRIPT) }
-  for _, arg in ipairs(args or {}) do
+  for __, arg in ipairs(args or {}) do
     parts[#parts + 1] = utils.shellescape(arg)
   end
   return run_cmd_capture(table.concat(parts, " "))
@@ -273,7 +273,7 @@ local function render(ctx)
       rows[#rows + 1] = "</div>"
       rows[#rows + 1] = "<div style='margin-top:.7rem'>"
       rows[#rows + 1] = "<select name='mihomo_install_tag' style='max-width:18rem'>"
-      for _, item in ipairs(versions) do
+      for __, item in ipairs(versions) do
         local suffix = item.prerelease and " prerelease" or ""
         rows[#rows + 1] = string.format("<option value='%s'>%s%s · %s</option>", pcdata(item.tag), pcdata(item.tag), pcdata(suffix), pcdata(item.published))
       end
@@ -312,15 +312,15 @@ local function render(ctx)
     local default_config = basename(ctx.uci:get(ctx.PKG, "main", "mihomo_profile_config_file"), "tproxy-manager.yaml")
     local chosen = fval("mihomo_file")
     if chosen == "" then chosen = default_config end
-    local found=false; for _,f in ipairs(config_files) do if f==chosen then found=true; break end end
+    local found=false; for __,f in ipairs(config_files) do if f==chosen then found=true; break end end
     if not found then
-      for _, f in ipairs(config_files) do if f == default_config then chosen = f; found = true; break end end
+      for __, f in ipairs(config_files) do if f == default_config then chosen = f; found = true; break end end
     end
     if not found then chosen = config_files[1] end
 
     local function is_known_yaml_file(name)
       if not name or name == "" or name:find("[/\\]") then return false end
-      for _, f in ipairs(config_files) do if f == name then return true end end
+      for __, f in ipairs(config_files) do if f == name then return true end end
       return false
     end
 
@@ -387,7 +387,7 @@ local function render(ctx)
       )
       buf[#buf+1] = "<label>" .. _("File to edit") .. "</label>"
       buf[#buf+1] = "<select name='mihomo_file'>"
-      for _, f in ipairs(config_files) do
+      for __, f in ipairs(config_files) do
         local sel = (f==chosen) and " selected" or ""
         buf[#buf+1] = string.format("<option value=\"%s\"%s>%s</option>", pcdata(f), sel, pcdata(f))
       end

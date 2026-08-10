@@ -190,7 +190,7 @@ function M.private_dir(parent, prefix)
   if not M.ensure_dir(parent) then return nil, "parent directory is unavailable" end
   prefix = tostring(prefix or "tpm"):gsub("[^%w%-_.]", "")
   if prefix == "" then prefix = "tpm" end
-  for _ = 1, 8 do
+  for __ = 1, 8 do
     local suffix = M.random_hex(12)
     if not suffix then return nil, "no entropy available for a private directory" end
     local dir = string.format("%s/%s.%s", parent, prefix, suffix)
@@ -212,7 +212,7 @@ end
 function M.private_tmpdir(for_path)
   local dir = tostring(for_path or ""):match("^(.*)/[^/]+$") or "/tmp"
   if not M.ensure_dir(dir) then return nil end
-  for _ = 1, 8 do
+  for __ = 1, 8 do
     local candidate = string.format("%s/.tpm-tmp.%d.%d", dir,
       math.random(1, 10 ^ 9), math.random(1, 10 ^ 9))
     -- mkdir is atomic and fails if the name exists in any form, including
@@ -542,7 +542,7 @@ function M.snapshot_begin(label)
   label = tostring(label or "tx"):gsub("[^%w%-_]", "")
   if label == "" then label = "tx" end
   local pid = M.self_pid() or "0"
-  for _ = 1, 8 do
+  for __ = 1, 8 do
     local dir = string.format("%s/%s.%s.%d", root, label, pid, math.random(100000, 999999))
     if sys.call("mkdir -m 0700 " .. M.shellescape(dir) .. " >/dev/null 2>&1") == 0 then
       if not write_meta(dir .. "/STAGE", STAGE_PREPARED .. "\n") then
@@ -566,7 +566,7 @@ end
 
 local function snapshot_manifest(store)
   local lines = {}
-  for _, it in ipairs(store.items) do
+  for __, it in ipairs(store.items) do
     lines[#lines + 1] = string.format("%03d %-6s %s", it.idx,
       it.exists and (it.perm or "?") or "absent", it.path)
   end
@@ -618,7 +618,7 @@ end
 
 function M.snapshot_restore(store)
   local failed = {}
-  for _, it in ipairs(store.items) do
+  for __, it in ipairs(store.items) do
     local state
     if not it.exists then
       fs.remove(it.path)
@@ -702,7 +702,7 @@ end
 -- could not be restored - in which case the store is deliberately left in place.
 function M.rollback_recover(dir)
   local target
-  for _, entry in ipairs(M.rollback_orphans()) do
+  for __, entry in ipairs(M.rollback_orphans()) do
     if entry.dir == dir then target = entry; break end
   end
   if not target then return false, { "no such preserved snapshot" } end
@@ -711,7 +711,7 @@ function M.rollback_recover(dir)
   local failed = M.snapshot_restore({ dir = dir, items = target.files })
   if #failed > 0 then
     local names = {}
-    for _, f in ipairs(failed) do names[#names + 1] = f.path .. (f.state == "permissions" and " (mode)" or "") end
+    for __, f in ipairs(failed) do names[#names + 1] = f.path .. (f.state == "permissions" and " (mode)" or "") end
     return false, names
   end
   sys.call("rm -rf " .. M.shellescape(dir) .. " >/dev/null 2>&1")
@@ -721,7 +721,7 @@ end
 -- rollback_discard: accept the current state of the files and drop the store.
 function M.rollback_discard(dir)
   local target
-  for _, entry in ipairs(M.rollback_orphans()) do
+  for __, entry in ipairs(M.rollback_orphans()) do
     if entry.dir == dir then target = entry; break end
   end
   if not target then return false end
@@ -923,7 +923,7 @@ end
 function M.is_ipv4(value)
   local a, b, c, d = tostring(value or ""):match("^(%d+)%.(%d+)%.(%d+)%.(%d+)$")
   if not a then return false end
-  for _, part in ipairs({ a, b, c, d }) do
+  for __, part in ipairs({ a, b, c, d }) do
     local n = tonumber(part)
     if not n or n < 0 or n > 255 then return false end
   end
