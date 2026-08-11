@@ -1713,3 +1713,9 @@ msgstr "Эти файлы могут быть записаны наполови�
 
 msgid "Request was rejected: invalid or missing CSRF token."
 msgstr "Запрос отклонён: отсутствует или неверен CSRF-токен."
+
+msgid "A full link check is already running."
+msgstr "Полная проверка ссылок уже выполняется."
+
+msgid "Full link check started in the background; reload the page to see results as they arrive."
+msgstr "Полная проверка ссылок запущена в фоне; обновите страницу, чтобы увидеть результаты по мере готовности."

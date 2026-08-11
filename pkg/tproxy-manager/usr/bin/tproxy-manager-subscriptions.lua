@@ -29,7 +29,12 @@ local CAPTURE_PID = CAPTURE_DIR .. "/pid"
 local CAPTURE_OUT = CAPTURE_DIR .. "/out"
 
 local function trim(value)
-  return tostring(value or ""):gsub("\r", ""):gsub("^%s+", ""):gsub("%s+$", "")
+  -- Assigning first truncates gsub's second return value (the replacement
+  -- count). Returning it straight through made every caller receive two
+  -- values, and `tonumber(trim(x))` then read that count as the numeric
+  -- base -- an outright error for a count of 0 or 1.
+  local text = tostring(value or ""):gsub("\r", ""):gsub("^%s+", ""):gsub("%s+$", "")
+  return text
 end
 
 local function shellescape(value)
@@ -259,9 +264,13 @@ local function base64_decode(data)
 end
 
 local function urlencode(value)
-  return tostring(value or ""):gsub("([^A-Za-z0-9%-%._~])", function(c)
+  -- Same one-value discipline as trim(): gsub also returns the replacement
+  -- count, and in the last argument position that count is handed to the callee
+  -- as an extra argument.
+  local encoded = tostring(value or ""):gsub("([^A-Za-z0-9%-%._~])", function(c)
     return string.format("%%%02X", c:byte())
   end)
+  return encoded
 end
 
 local function resolve_subscription_url(url)
@@ -573,18 +582,58 @@ end
 local MAX_SUBSCRIPTION_DOWNLOAD_BYTES = 4 * 1024 * 1024
 local MAX_SUBSCRIPTION_DECODED_BYTES  = 8 * 1024 * 1024
 
+-- Sweeps working directories left behind by earlier runs. Every normal exit path
+-- of fetch_url() removes its own, but an unexpected error inside it (a Lua error
+-- aborts the function and skips the cleanup) leaves one behind — and this runs
+-- once per watchdog cycle, so a fault that repeats fills tmpfs. Measured on the
+-- test router: 802 orphans holding 110 MB of a 243 MB /tmp after one crashing
+-- fault ran overnight. The age cut-off is deliberately far longer than any
+-- download can take, so a directory in active use by a concurrent run is never
+-- touched.
+local WORKDIR_PREFIX = "/tmp/.tpm-sub."
+local WORKDIR_MAX_AGE_SECONDS = 3600
+
+-- The directory the current download is using. fetch_url() clears it on every
+-- normal exit; the pcall at its call site uses it to clean up after a raised
+-- error, which is what turned one repeating fault into 802 orphans.
+local active_workdir = nil
+
+local function drop_active_workdir()
+  if not active_workdir then return end
+  exec_ok("rm -rf " .. shellescape(active_workdir) .. " >/dev/null 2>&1")
+  active_workdir = nil
+end
+
+local function sweep_stale_workdirs()
+  -- `find -mmin +60 -prune` never descends into a directory it is about to
+  -- delete, and -maxdepth keeps the scan to /tmp's own entries.
+  exec_ok(string.format(
+    "find /tmp -maxdepth 1 -name %s -type d -mmin +%d -prune -exec rm -rf {} + >/dev/null 2>&1",
+    shellescape(".tpm-sub.*"), math.floor(WORKDIR_MAX_AGE_SECONDS / 60)))
+end
+
 local function fetch_url(sub, resolved_url)
+  sweep_stale_workdirs()
   -- Both files live inside an exclusively-created 0700 directory. curl has
   -- to (re)open them by path, so an exclusive create alone would still leave
   -- a window in world-writable /tmp where the path could be swapped; inside
   -- a private directory no other user can even resolve the names.
   local workdir
   for _ = 1, 8 do
-    local cand = string.format("/tmp/.tpm-sub.%d.%d", math.random(1, 10 ^ 9), math.random(1, 10 ^ 9))
+    local cand = string.format("%s%d.%d", WORKDIR_PREFIX, math.random(1, 10 ^ 9), math.random(1, 10 ^ 9))
     if exec_ok("mkdir -m 0700 " .. shellescape(cand) .. " >/dev/null 2>&1") then workdir = cand; break end
   end
   if not workdir then
     return "000", "", "could not create a private working directory for the download"
+  end
+  active_workdir = workdir
+  -- Defined here, immediately after the directory exists, rather than further
+  -- down next to its first use: the exclusive-create failure below returns early,
+  -- and with the definition after that point those returns left the directory
+  -- behind for the hourly sweep instead of removing it straight away.
+  local function cleanup()
+    exec_ok("rm -rf " .. shellescape(workdir) .. " >/dev/null 2>&1")
+    if active_workdir == workdir then active_workdir = nil end
   end
   local body = workdir .. "/body"
   local err  = workdir .. "/err"
@@ -598,6 +647,7 @@ local function fetch_url(sub, resolved_url)
     for _, path in ipairs({ body, err }) do
       local fd = nixio.open(path, flags, "600")
       if not fd then
+        cleanup()
         return "000", "", "could not create a private temp file for the download"
       end
       fd:close()
@@ -605,7 +655,11 @@ local function fetch_url(sub, resolved_url)
   else
     for _, path in ipairs({ body, err }) do
       local fh = io.open(path, "wb")
-      if fh then fh:close() end
+      if not fh then
+        cleanup()
+        return "000", "", "could not create a private temp file for the download"
+      end
+      fh:close()
       exec_ok("chmod 0600 " .. shellescape(path) .. " >/dev/null 2>&1")
     end
   end
@@ -634,10 +688,6 @@ local function fetch_url(sub, resolved_url)
   -- io.popen's exit status is not reliably surfaced and a truncated or
   -- refused download would be parsed as if it were a valid response body.
   local cmd = "{ " .. table.concat(parts, " ") .. "; printf '\\n%s' \"$?\"; } 2>" .. shellescape(err)
-
-  local function cleanup()
-    exec_ok("rm -rf " .. shellescape(workdir) .. " >/dev/null 2>&1")
-  end
 
   local p = io.popen(cmd)
   local raw = p and (p:read("*a") or "") or ""
@@ -898,7 +948,14 @@ local function fetch_subscription(db, sub)
     return false, sub.last_error
   end
 
-  local code, response, err = fetch_url(sub, resolved_url)
+  -- fetch_url shells out, parses and decompresses; a fault in there used to
+  -- abort the whole run with a Lua traceback, which both hid the reason from the
+  -- subscription's own error field and skipped the working directory cleanup.
+  local ok_fetch, code, response, err = pcall(fetch_url, sub, resolved_url)
+  if not ok_fetch then
+    drop_active_workdir()
+    code, response, err = "000", "", tostring(code)
+  end
   if code ~= "200" or response == "" then
     sub.last_status = "error"
     sub.last_error = err ~= "" and err or ("HTTP " .. tostring(code))

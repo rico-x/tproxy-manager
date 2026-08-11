@@ -1245,6 +1245,9 @@ local function render(ctx)
   end
 
   if http.formvalue("_sub_edit_cancel") == "1" then
+    -- Drop any banner from the previous action: a cancel that leaves the
+    -- earlier "saved" message on screen reads as if it had saved something.
+    set_err(nil); set_info(nil)
     helpers.redirect_watchdog()
     return m
   end
@@ -1359,8 +1362,21 @@ local function render(ctx)
   end
 
   if http.formvalue("_watchdog_check_all") == "1" then
-    local rc, out = helpers.run_watchdog_command({ "check-all" })
-    if rc == 0 then set_info(out ~= "" and out or _("All links check completed.")) else set_err(out ~= "" and out or _("Links check failed.")) end
+    -- Detached on purpose: the scan takes about two seconds per link, so with a
+    -- realistic list it outlives uhttpd's 60 s CGI limit and the request died
+    -- with "Bad Gateway" while the scan kept running invisibly. Each link's
+    -- result is written to its own state file as it completes, which is what the
+    -- table below reads, so reloading the page shows the progress.
+    if helpers.watchdog_command_running("check-all") then
+      set_info(nil)
+      set_err(_("A full link check is already running."))
+    elseif helpers.run_watchdog_command_detached({ "check-all" }) then
+      set_err(nil)
+      set_info(_("Full link check started in the background; reload the page to see results as they arrive."))
+    else
+      set_info(nil)
+      set_err(_("Links check failed."))
+    end
     helpers.redirect_watchdog()
     return m
   end
@@ -1404,6 +1420,9 @@ local function render(ctx)
   end
 
   if http.formvalue("_wd_edit_cancel") == "1" then
+    -- Drop any banner from the previous action: a cancel that leaves the
+    -- earlier "saved" message on screen reads as if it had saved something.
+    set_err(nil); set_info(nil)
     helpers.redirect_watchdog()
     return m
   end

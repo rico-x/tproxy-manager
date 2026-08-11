@@ -13,7 +13,12 @@ local M = {}
 math.randomseed(os.time() + math.floor(os.clock() * 1000000))
 
 function M.trim(value)
-  return tostring(value or ""):gsub("\r", ""):gsub("^%s+", ""):gsub("%s+$", "")
+  -- Assigning first truncates gsub's second return value (the replacement
+  -- count). Returning it straight through made every caller receive two values,
+  -- and `tonumber(trim(x))` then read that count as the numeric base -- an
+  -- outright error for a count of 0 or 1.
+  local text = tostring(value or ""):gsub("\r", ""):gsub("^%s+", ""):gsub("%s+$", "")
+  return text
 end
 
 function M.ensure_dir(path)
@@ -870,9 +875,16 @@ end
 function M.make_temp_message_store(err_file, info_file, err_ttl)
   local ttl = tonumber(err_ttl) or 0
 
-  local function set_file(path, text)
+  -- Setting one channel clears the other. The two are mutually exclusive at
+  -- every call site — the convention is `set_err(nil); set_info(x)` and
+  -- `set_info(nil); set_err(x)` — but a validation branch that reports an error
+  -- and forgets the pairing leaves the previous success banner on screen next
+  -- to it, so the page says both "saved" and "invalid" about the same click.
+  -- Enforcing it here means no handler can get that pairing wrong.
+  local function set_file(path, other_path, text)
     if text and text ~= "" then
       M.write_file(path, text)
+      fs.remove(other_path)
     else
       fs.remove(path)
     end
@@ -900,9 +912,9 @@ function M.make_temp_message_store(err_file, info_file, err_ttl)
   end
 
   return {
-    set_err = function(text) set_file(err_file, text) end,
+    set_err = function(text) set_file(err_file, info_file, text) end,
     get_err = make_getter(err_file),
-    set_info = function(text) set_file(info_file, text) end,
+    set_info = function(text) set_file(info_file, err_file, text) end,
     get_info = make_getter(info_file),
   }
 end

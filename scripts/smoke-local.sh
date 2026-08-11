@@ -71,6 +71,48 @@ while IFS= read -r -d '' file; do
 done < <(find "$PKG_DIR" -type f -print0)
 printf 'ok\n'
 
+section "Lua pitfalls"
+# `s:gsub(...)` returns TWO values, so `return tostring(v):gsub(...)` makes trim()
+# hand every caller the text AND the replacement count. `tonumber(trim(x))` then
+# reads that count as the numeric base and a count of 0 or 1 is not a legal base
+# — a hard error. That is how gzip-compressed subscription fetching broke while
+# plain-text ones kept working and hid it. Assign to a local, then return it.
+if grep -rIn --include='*.lua' -E '^\s*return\s+tostring\(value or ""\)\s*:gsub' "$PKG_DIR"; then
+  echo "trim() must not return gsub's result directly: assign to a local first, or callers receive two values" >&2
+  exit 1
+fi
+# The engine rollback store sits at a fixed, predictable path in world-writable
+# /tmp. Creating it with a bare `mkdir -p` adopts whatever an unprivileged local
+# process may have planted there (including a symlink), and rollback then copies
+# that content over the live engine binary as root. Both version managers must
+# route the store through the ownership-checked helper.
+for engine_version_file in \
+  "$PKG_DIR/usr/bin/tproxy-manager-xray-version.lua" \
+  "$PKG_DIR/usr/lib/lua/tproxy_manager/core_version.lua"; do
+  test -f "$engine_version_file"
+  grep -q 'ensure_private_dir' "$engine_version_file" || {
+    echo "engine rollback store must be created through ensure_private_dir: $engine_version_file" >&2
+    exit 1
+  }
+  grep -q 'trusted_file' "$engine_version_file" || {
+    echo "rollback must verify the backup file before installing it: $engine_version_file" >&2
+    exit 1
+  }
+  # ensure_private_dir() DELETES a path it cannot trust, and a shared root can
+  # never be trusted (/tmp is 1777), so handing it one means `rm -rf /tmp`. The
+  # candidate must be screened before anything is removed — assert the screen is
+  # the first thing the function does, and that the refusal list names /tmp.
+  grep -A2 'local function ensure_private_dir' "$engine_version_file" | grep -q 'owned_path_ok' || {
+    echo "ensure_private_dir must screen its argument with owned_path_ok before deleting: $engine_version_file" >&2
+    exit 1
+  }
+  grep -q '\["/tmp"\] = true' "$engine_version_file" || {
+    echo "the dangerous-path refusal list must name /tmp: $engine_version_file" >&2
+    exit 1
+  }
+done
+printf 'ok\n'
+
 section "Test suites"
 # The suites under tests/ exercise the rollback subsystem with injected faults
 # (unreadable source, unwritable MANIFEST/KEEP/STAGE, failing chmod, rollback,
@@ -134,6 +176,16 @@ fi
 # Any unused loop variable in these files must be `__`.
 if grep -RIn --include='*.lua' -E '\bfor[[:space:]]+_[[:space:],=]|\bfor[[:space:]]+_[[:space:]]+in\b' "$PKG_DIR/usr/lib/lua/luci"; then
   echo "'_' is the gettext function in LuCI modules: use '__' for unused loop variables" >&2
+  exit 1
+fi
+# The CBI form already emits LuCI's CSRF token field. A module that adds its own
+# makes the browser submit `token` twice, http.formvalue("token") then returns a
+# table, and LuCI rejects the request as "security token invalid or expired" -
+# every button in that form stops working. curl tests that send one value never
+# reproduce it, so this is checked statically. The standalone upload page in the
+# controller builds its own <form> and legitimately carries one.
+if grep -RIn --include='*.lua' -E "name=['\"]token['\"]" "$PKG_DIR/usr/lib/lua/luci/model"; then
+  echo "CBI modules must not emit their own 'token' field: the enclosing form already has one" >&2
   exit 1
 fi
 python3 "$ROOT/scripts/compile-luci-i18n.py" "$ROOT/po/tproxy-manager/ru.po" /tmp/tproxy-manager.ru.lmo

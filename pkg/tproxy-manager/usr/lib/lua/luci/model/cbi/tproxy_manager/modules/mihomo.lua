@@ -413,11 +413,26 @@ local function render(ctx)
     var form = sel.closest && sel.closest('form');
     if(form) form.addEventListener('submit', remember, true);
     sel.setAttribute('data-prev', sel.value);
+
+    // Name the file in the delete confirmation: the other buttons redirect and
+    // the selector returns on the first file, so a bare "Delete selected file?"
+    // can be confirmed for a file the user never had open.
+    document.addEventListener('DOMContentLoaded', function(){
+      var del = document.querySelector('#mihomo-editor button[name="_mihomo_delete"]');
+      if (!del) return;
+      var ask = del.getAttribute('data-confirm') || '';
+      del.onclick = function(){
+        if (window.__xray_guard && !window.__xray_guard()) return false;
+        return confirm(ask + '\n\n' + (sel.value || ''));
+      };
+    });
 })();
 </script>]]
       buf[#buf+1] = string.format([[
 <button class="cbi-button cbi-button-remove" name="_mihomo_delete" value="1"
+    data-confirm="%s"
     onclick="return (window.__xray_guard?window.__xray_guard():true) && confirm('%s')">%s</button>]],
+        pcdata(_("Delete selected file?")),
         pcdata(_("Delete selected file?")),
         pcdata(_("Delete"))
       )

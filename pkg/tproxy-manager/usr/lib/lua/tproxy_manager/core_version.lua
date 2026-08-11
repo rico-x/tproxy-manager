@@ -3,7 +3,12 @@ local jsonc = require "luci.jsonc"
 local M = {}
 
 local function trim(value)
-  return tostring(value or ""):gsub("\r", ""):gsub("^%s+", ""):gsub("%s+$", "")
+  -- Assigning first truncates gsub's second return value (the replacement
+  -- count). Returning it straight through made every caller receive two
+  -- values, and `tonumber(trim(x))` then read that count as the numeric
+  -- base -- an outright error for a count of 0 or 1.
+  local text = tostring(value or ""):gsub("\r", ""):gsub("^%s+", ""):gsub("%s+$", "")
+  return text
 end
 
 local function shellescape(value)
@@ -20,12 +25,6 @@ local function read_file(path)
   return data
 end
 
-local function write_file(path, data)
-  local fh = assert(io.open(path, "wb"))
-  fh:write(data or "")
-  fh:close()
-end
-
 local function exec_capture(cmd)
   local p = io.popen(cmd .. " 2>&1")
   if not p then return 1, "" end
@@ -38,6 +37,7 @@ local function exec_ok(cmd)
   local rc = os.execute(cmd)
   return rc == true or rc == 0
 end
+
 
 local function command_output(cmd)
   local p = io.popen(cmd .. " 2>/dev/null")
@@ -57,8 +57,135 @@ local function ensure_dir(path)
   return exec_ok("mkdir -p " .. shellescape(path) .. " >/dev/null 2>&1")
 end
 
+-- Paths this module must never delete or claim ownership of, whatever a caller
+-- passes in. ensure_private_dir() WIPES what it cannot trust, and a shared root
+-- can never pass the "root-only" test — /tmp is mode 1777 by definition — so a
+-- caller that resolved one by accident would have had root run `rm -rf /tmp`.
+-- Nothing here is worth a clever rule: an explicit refusal list, plus a minimum
+-- depth so the shallowest thing that can ever be touched is a NAMED CHILD of a
+-- system directory rather than the directory itself.
+local DANGEROUS_PATHS = {
+  [""] = true, ["."] = true, [".."] = true, ["/"] = true,
+  ["/bin"] = true, ["/dev"] = true, ["/dev/shm"] = true, ["/etc"] = true,
+  ["/etc/config"] = true, ["/lib"] = true, ["/mnt"] = true, ["/overlay"] = true,
+  ["/proc"] = true, ["/root"] = true, ["/sbin"] = true, ["/sys"] = true,
+  ["/tmp"] = true, ["/usr"] = true, ["/usr/bin"] = true, ["/usr/lib"] = true,
+  ["/usr/sbin"] = true, ["/var"] = true, ["/var/lock"] = true,
+  ["/var/log"] = true, ["/var/run"] = true, ["/var/tmp"] = true, ["/www"] = true,
+}
+
+local function owned_path_ok(path)
+  path = tostring(path or "")
+  if DANGEROUS_PATHS[path] then return false end
+  if path:sub(1, 1) ~= "/" then return false end          -- absolute only
+  if path:sub(-1) == "/" then return false end            -- no trailing slash
+  if path:find("//", 1, true) then return false end
+  -- No traversal: "/tmp/x/../.." would otherwise resolve upwards past anything.
+  if path:find("/%.%.?/") or path:match("/%.%.?$") then return false end
+  local depth = 0
+  for _ in path:gmatch("[^/]+") do depth = depth + 1 end
+  return depth >= 2
+end
+
 local function remove_path(path)
+  -- Refuses rather than deletes: this is reached with caller-supplied paths.
+  if not owned_path_ok(path) then return false end
   return exec_ok("rm -rf " .. shellescape(path) .. " >/dev/null 2>&1")
+end
+
+-- The rollback store and the release cache live under fixed, predictable names in
+-- the world-writable /tmp, so anything already sitting at one of those paths may
+-- have been planted by an unprivileged local process. `mkdir -p` would happily
+-- adopt such a directory (or follow a symlink out of /tmp), root would then write
+-- the previous binary inside a location that process controls, and the next
+-- rollback would copy whatever it finds there over the live engine binary and
+-- restart it as root. So the store is inspected before it is trusted: only a real
+-- directory owned by root that nobody else can write to qualifies.
+local function path_facts(path)
+  local rc, out = exec_capture("ls -ldn " .. shellescape(path))
+  if rc ~= 0 or out == "" then return nil end
+  local mode, uid = out:match("^(%S+)%s+%S+%s+(%d+)")
+  if not mode or #mode < 10 then return nil end
+  return {
+    kind = mode:sub(1, 1),
+    uid = uid,
+    group_write = mode:sub(6, 6) == "w",
+    other_write = mode:sub(9, 9) == "w",
+  }
+end
+
+local function root_only(path, kind)
+  local f = path_facts(path)
+  return f ~= nil and f.kind == kind and f.uid == "0"
+    and not f.group_write and not f.other_write
+end
+
+-- Wipes and recreates the path unless it is already a directory only root can
+-- write to. `rm -rf` on a symlink removes the link itself, never its target, and
+-- `mkdir` without -p fails if a racing process re-creates the path — so this
+-- either yields a trustworthy directory or fails closed.
+--
+-- The candidate is screened FIRST, before anything is deleted: a shared root such
+-- as /tmp fails the root-only test by design, so without the screen this function
+-- would delete it.
+local function ensure_private_dir(path)
+  if not owned_path_ok(path) then return false end
+  if not root_only(path, "d") then
+    remove_path(path)
+    if not exec_ok("mkdir -m 0700 " .. shellescape(path) .. " >/dev/null 2>&1") then return false end
+  end
+  return root_only(path, "d")
+end
+
+-- Gate for anything root is about to install, execute or parse out of /tmp.
+local function trusted_file(path)
+  return root_only(path, "-")
+end
+
+-- Writes through a uniquely named temp file inside the target's own directory and
+-- renames it over the target.
+--
+-- "Remove the path, then open it" is not enough: between the unlink and the open
+-- another process can put the symlink back, and root then writes through it into
+-- a file it never chose. rename(2) has no such window — it swaps the directory
+-- entry itself, atomically, and cannot be redirected by a symlink left at the
+-- destination. The temp name is unique so two concurrent runs cannot collide.
+--
+-- The directory MUST already be one only root can write to; otherwise the temp
+-- file itself would be substitutable and the write is refused instead.
+local function write_file(path, data)
+  if not owned_path_ok(path) then return false end
+  local dir = tostring(path):match("^(.*)/[^/]+$") or ""
+  if not root_only(dir, "d") then return false end
+  local tmp
+  for _ = 1, 8 do
+    local cand = string.format("%s/.tmp.%d.%d", dir, math.random(1, 10 ^ 9), math.random(1, 10 ^ 9))
+    if not path_facts(cand) then tmp = cand; break end
+  end
+  if not tmp then return false end
+  local fh = io.open(tmp, "wb")
+  if not fh then return false end
+  fh:write(data or "")
+  fh:close()
+  exec_ok("chmod 0600 " .. shellescape(tmp) .. " >/dev/null 2>&1")
+  if not os.rename(tmp, path) then
+    remove_path(tmp)
+    return false
+  end
+  return trusted_file(path)
+end
+
+-- Reads a file only if root alone could have written it. The release cache is
+-- parsed for the download URLs that install() then hands to curl, so a cache an
+-- unprivileged process can substitute (directly or through a planted symlink)
+-- decides which binary root installs. Anything that does not pass is discarded
+-- rather than parsed.
+local function read_trusted_file(path)
+  if not trusted_file(path) then
+    if path_facts(path) then remove_path(path) end
+    return ""
+  end
+  return read_file(path)
 end
 
 local function number_output(cmd)
@@ -118,14 +245,54 @@ local function detect_bin(cfg)
   return found ~= "" and found or (cfg.bin_paths and cfg.bin_paths[1] or cfg.binary)
 end
 
+-- Resolves where the release cache lives: a directory this module may own, plus a
+-- file inside it. Separate from the rollback store so the two have independent
+-- lifetimes, but created and checked the same way — the cache decides which URL
+-- install() downloads, so it has to be as untouchable as the binary it leads to.
+--
+-- The directory part of cache_file is deliberately NOT used as a fallback. The
+-- historical layout was "/tmp/tproxy-manager-<engine>-releases.json", whose
+-- dirname is the shared /tmp: deriving the store from it handed a path that can
+-- never be root-only to a function that wipes what it cannot trust. A caller that
+-- names no cache_dir gets a dedicated child derived from cfg.name instead, and if
+-- even that is not available the caller gets nothing and runs without a cache.
+local function resolve_cache(cfg)
+  local dir = cfg.cache_dir
+  local file = cfg.cache_file
+  if not owned_path_ok(dir) then
+    local name = tostring(cfg.name or ""):match("^[%w%-_]+$")
+    if not name then return nil, nil end
+    dir = "/tmp/tproxy-manager-" .. name .. "-cache"
+    file = nil
+  end
+  -- The file must sit inside the store, or the write would land outside the only
+  -- directory whose ownership was verified.
+  if not file or not owned_path_ok(file) or file:sub(1, #dir + 1) ~= dir .. "/" then
+    file = dir .. "/releases.json"
+  end
+  return dir, file
+end
+
 local function fetch_releases(cfg, force)
-  local raw = read_file(cfg.cache_file)
+  local dir, cache_file = resolve_cache(cfg)
+  local store_ok = dir ~= nil and ensure_private_dir(dir)
+  -- Earlier versions kept the cache directly in /tmp. Drop that file once the
+  -- private store exists so a stale copy nobody validates cannot be read by an
+  -- older script left on the system, and so /tmp does not keep the litter.
+  if store_ok and cfg.legacy_cache_file then
+    remove_path(cfg.legacy_cache_file)
+  end
+  -- A cache that is not root's alone is not read at all, so nothing an
+  -- unprivileged process planted can reach the JSON parser.
+  local raw = store_ok and read_trusted_file(cache_file) or ""
   if raw ~= "" and not force then return raw end
   local cmd = "curl -fsSL --connect-timeout 8 --max-time 25 -H " ..
     shellescape("Accept: application/vnd.github+json") .. " " .. shellescape(cfg.api_url)
   local rc, out = exec_capture(cmd)
   if rc == 0 and out:match("^%[") then
-    write_file(cfg.cache_file, out)
+    -- Caching is an optimisation: if the store cannot be trusted, keep working
+    -- from what was just fetched rather than persisting it somewhere unsafe.
+    if store_ok then write_file(cache_file, out) end
     return out
   end
   if raw ~= "" then return raw end
@@ -259,7 +426,13 @@ local function replace_binary(cfg, bin, unpacked, old_version)
     )
   end
 
-  ensure_dir(backup_dir)
+  -- Refuse rather than write the rollback copy into a directory that is not
+  -- exclusively root's: the whole point of the store is that rollback can trust
+  -- what it finds there.
+  if not ensure_private_dir(backup_dir) then
+    return false, "refusing to install: " .. backup_dir ..
+      " is not a directory only root can write to"
+  end
   ensure_dir(bin_dir)
   remove_path(backup_file)
   remove_path(backup_meta)
@@ -354,14 +527,14 @@ function M.install(cfg, tag)
   if work == "" then return false, "unable to create temporary directory" end
   local archive = work .. "/" .. item.name
   local ok, msg = download_file(item.url, archive)
-  if not ok then exec_ok("rm -rf " .. shellescape(work)); return false, msg end
+  if not ok then remove_path(work); return false, msg end
   ok, msg = verify_digest(item, archive)
-  if not ok then exec_ok("rm -rf " .. shellescape(work)); return false, msg end
+  if not ok then remove_path(work); return false, msg end
   local unpacked, unpack_err = unpack_archive(cfg, item, archive, work)
-  if not unpacked then exec_ok("rm -rf " .. shellescape(work)); return false, unpack_err end
+  if not unpacked then remove_path(work); return false, unpack_err end
   local unpacked_version, unpacked_raw = current_version(cfg, unpacked)
   if unpacked_version == "" then
-    exec_ok("rm -rf " .. shellescape(work))
+    remove_path(work)
     return false, "downloaded binary is not executable on this system: " .. tostring(unpacked_raw)
   end
 
@@ -380,9 +553,24 @@ end
 
 function M.rollback(cfg)
   if not file_exists(cfg.backup_file) then return false, "backup is not available" end
+  -- This copies a binary from /tmp over the live engine and restarts it as root,
+  -- so the store has to be verified before it is believed. Both checks matter:
+  -- the directory, because a writable one lets anybody swap the file underneath
+  -- us, and the file, because it is what actually gets installed. Nothing is
+  -- deleted or recreated here — a store that fails the check is left alone and
+  -- the rollback simply refuses, so a tampered store is reported rather than
+  -- quietly replaced (and an untampered one is never destroyed).
+  local store = cfg.backup_dir or "/tmp"
+  if not root_only(store, "d") then
+    return false, "refusing to roll back: " .. store ..
+      " is not a directory only root can write to"
+  end
+  if not trusted_file(cfg.backup_file) then
+    return false, "refusing to roll back: " .. tostring(cfg.backup_file) ..
+      " is not a regular file owned by root only"
+  end
   local bin = detect_bin(cfg)
-  local swap = (cfg.backup_dir or "/tmp") .. "/" .. tostring(cfg.binary or "binary") .. ".current." .. tostring(os.time())
-  ensure_dir(cfg.backup_dir or "/tmp")
+  local swap = store .. "/" .. tostring(cfg.binary or "binary") .. ".current." .. tostring(os.time())
   if file_exists(bin) then
     local rc, out = exec_capture("cp " .. shellescape(bin) .. " " .. shellescape(swap) ..
       " && chmod 0755 " .. shellescape(swap))
@@ -428,5 +616,12 @@ function M.dispatch(cfg, argv)
 end
 
 M.version_string = version_string
+
+-- Exported for tests/engine-cache-store.lua. These two decide whether root
+-- deletes a directory tree, so the suite checks them directly instead of
+-- inferring the decision from behaviour further up.
+M._owned_path_ok = owned_path_ok
+M._resolve_cache = resolve_cache
+M._ensure_private_dir = ensure_private_dir
 
 return M

@@ -28,7 +28,11 @@ local cfg = {
   env_bin = "SINGBOX_BIN",
   bin_paths = { "/usr/bin/sing-box", "/usr/sbin/sing-box" },
   api_url = "https://api.github.com/repos/SagerNet/sing-box/releases?per_page=20",
-  cache_file = "/tmp/tproxy-manager-singbox-releases.json",
+  -- Inside a root-only directory, not directly in world-writable /tmp: the
+  -- cache supplies the download URL that install() hands to curl.
+  cache_dir = "/tmp/tproxy-manager-singbox-cache",
+  cache_file = "/tmp/tproxy-manager-singbox-cache/releases.json",
+  legacy_cache_file = "/tmp/tproxy-manager-singbox-releases.json",
   backup_dir = "/tmp/tproxy-manager-singbox-backup",
   backup_file = "/tmp/tproxy-manager-singbox-backup/sing-box.previous",
   backup_meta = "/tmp/tproxy-manager-singbox-backup/sing-box.previous.version",

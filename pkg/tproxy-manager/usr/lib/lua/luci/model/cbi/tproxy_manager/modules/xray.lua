@@ -351,11 +351,28 @@ local function render(ctx)
   var form = sel.closest && sel.closest('form');
   if(form) form.addEventListener('submit', remember, true);
   sel.setAttribute('data-prev', sel.value);
+
+  // Name the file in the delete confirmation. Every other button on this tab
+  // redirects, and the selector then comes back on the FIRST file rather than
+  // the one that was open before — so "Delete selected file?" alone can get an
+  // OK for a file the user never meant to touch. The name is read from the live
+  // selector at click time, which is exactly what the handler will act on.
+  document.addEventListener('DOMContentLoaded', function(){
+    var del = document.querySelector('#json-editor button[name="_json_delete"]');
+    if (!del) return;
+    var ask = del.getAttribute('data-confirm') || '';
+    del.onclick = function(){
+      if (window.__xray_guard && !window.__xray_guard()) return false;
+      return confirm(ask + '\n\n' + (sel.value || ''));
+    };
+  });
 })();
 </script>]]
       buf[#buf+1] = string.format([[
 <button class="cbi-button cbi-button-remove" name="_json_delete" value="1"
+  data-confirm="%s"
   onclick="return (window.__xray_guard?window.__xray_guard():true) && confirm('%s')">%s</button>]],
+        pcdata(_("Delete selected file?")),
         pcdata(_("Delete selected file?")),
         pcdata(_("Delete"))
       )

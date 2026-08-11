@@ -733,10 +733,24 @@ table.geo-table.geo-upd th:first-child, table.geo-table.geo-upd td:first-child{ 
       local idx = tonumber(http.formvalue("_geo_update_one"))
       local rows = load_rows_again()
       local r = (idx and rows[idx]) and rows[idx] or nil
-      if r and r.url ~= "" and r.dest ~= "" then
-        local ok = fetch_to(r.url, r.dest)
-        set_info(ok and (_("Updated:").." "..(r.name or r.dest)) or (_("Update failed:").." "..(r.name or r.dest)))
+      -- A failed download has to reach the user as an error. It used to go
+      -- through set_info together with the success case, which renders in the
+      -- green box that fades out after five seconds — so a download that never
+      -- happened looked exactly like one that did. The same went for a row with
+      -- no URL or destination: that branch reported nothing at all and the click
+      -- looked like a no-op.
+      if not r or (r.url or "") == "" then
+        set_info(nil)
+        set_err(_("Source URL must start with http:// or https://."))
+      elseif (r.dest or "") == "" then
+        set_info(nil)
+        set_err(_("Destination path (dest) is required."))
+      elseif fetch_to(r.url, r.dest) then
         set_err(nil)
+        set_info(_("Updated:").." "..(r.name or r.dest))
+      else
+        set_info(nil)
+        set_err(_("Update failed:").." "..(r.name or r.dest))
       end
       redirect_here("updates"); return m
     end
@@ -750,7 +764,14 @@ table.geo-table.geo-upd th:first-child, table.geo-table.geo-upd td:first-child{ 
           if fetch_to(r.url, r.dest) then ok_count = ok_count + 1 end
         end
       end
-      set_info(string.format(_("Updated %d of %d sources"), ok_count, total)); set_err(nil)
+      -- "Updated 0 of 3 sources" in the green fading box read as success. Any
+      -- source that did not update makes this an error the user has to see.
+      local summary = string.format(_("Updated %d of %d sources"), ok_count, total)
+      if ok_count < total then
+        set_info(nil); set_err(summary)
+      else
+        set_err(nil); set_info(summary)
+      end
       redirect_here("updates"); return m
     end
 
@@ -795,6 +816,9 @@ table.geo-table.geo-upd th:first-child, table.geo-table.geo-upd td:first-child{ 
     end
 
     if http.formvalue("_geo_cancel_edit") == "1" then
+      -- Drop any banner from the previous action: a cancel that leaves the
+      -- earlier "saved" message on screen reads as if it had saved something.
+      set_err(nil); set_info(nil)
       redirect_here("updates"); return m
     end
 

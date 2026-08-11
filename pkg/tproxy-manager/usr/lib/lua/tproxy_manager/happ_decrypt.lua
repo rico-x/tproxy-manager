@@ -5,7 +5,12 @@ local M = {}
 local DEFAULT_HAPP_KEYS = "/usr/share/tproxy-manager/happ-decrypt-keys.json"
 
 local function trim(value)
-  return tostring(value or ""):gsub("\r", ""):gsub("^%s+", ""):gsub("%s+$", "")
+  -- Assigning first truncates gsub's second return value (the replacement
+  -- count). Returning it straight through made every caller receive two
+  -- values, and `tonumber(trim(x))` then read that count as the numeric
+  -- base -- an outright error for a count of 0 or 1.
+  local text = tostring(value or ""):gsub("\r", ""):gsub("^%s+", ""):gsub("%s+$", "")
+  return text
 end
 
 local function shellescape(value)

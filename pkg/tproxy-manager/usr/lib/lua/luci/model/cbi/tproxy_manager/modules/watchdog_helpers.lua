@@ -52,6 +52,43 @@ function M.run_watchdog_command(args, env)
   return run_cmd_capture(table.concat(parts, " "))
 end
 
+-- Starts the watchdog script without waiting for it. uhttpd kills a CGI process
+-- at script_timeout (60 s by default), so anything that scales with the number
+-- of links cannot run inside the request: a full check of 55 links takes about
+-- two minutes, and the user got "Bad Gateway - The process did not produce any
+-- response" even though the scan itself completed and wrote every result. The
+-- output goes to the watchdog log the page already displays, and each link's
+-- state file is written as it finishes, so the table fills in on any later load.
+function M.run_watchdog_command_detached(args, env)
+  local parts = {}
+  for key, value in pairs(env or {}) do
+    key = tostring(key or "")
+    if key:match("^[A-Z0-9_]+$") then
+      parts[#parts + 1] = key .. "=" .. utils.shellescape(value)
+    end
+  end
+  parts[#parts + 1] = utils.shellescape(WATCHDOG_SCRIPT)
+  for __, arg in ipairs(args or {}) do
+    parts[#parts + 1] = utils.shellescape(arg)
+  end
+  -- setsid detaches from the CGI process group, so uhttpd reaping the request
+  -- does not take the scan down with it. Output goes to syslog rather than to
+  -- WATCHDOG_LOG_FILE: the script already writes its own progress there, so
+  -- appending stdout as well printed every line twice in the log box. Anything
+  -- the script itself cannot log — a shell-level failure — still ends up in
+  -- logread this way instead of being discarded.
+  local inner = table.concat(parts, " ") .. " 2>&1 | logger -t tproxy-manager-watchdog"
+  return sys.call("setsid sh -c " .. utils.shellescape(inner) .. " >/dev/null 2>&1 &") == 0
+end
+
+-- True when a detached run of the same subcommand is still going. Checked before
+-- starting another one: two concurrent scans would fight over the test ports.
+function M.watchdog_command_running(subcommand)
+  local pattern = "[t]proxy-manager-watchdog.sh " .. tostring(subcommand or "")
+  local out = sys.exec("ps w 2>/dev/null | grep -c " .. utils.shellescape(pattern)) or "0"
+  return (tonumber(out:match("(%d+)") or "0") or 0) > 0
+end
+
 local function read_state_file(path)
   if state_cache[path] ~= nil then
     return state_cache[path]
@@ -227,27 +264,44 @@ function M.save_watchdog_settings(ctx)
   end
   if batch_check_concurrency > batch_check_batch_size then batch_check_concurrency = batch_check_batch_size end
 
+  -- Not every path below has an input in this form. The VLESS outbound and test
+  -- templates are edited through the template selector further down the page
+  -- (watchdog_template_kind + watchdog_template_path), so no field by those
+  -- names is ever submitted — and requiring them here made EVERY settings save
+  -- fail with "Required field is empty: watchdog_template_file", whatever the
+  -- user had actually changed.
+  --
+  -- So the distinction that matters is submitted-and-empty (the user cleared a
+  -- box: an error) versus not-submitted-at-all (this form does not own the
+  -- field: keep what is stored). An absent field falls back to UCI and is only
+  -- reported as missing when nothing is stored either.
+  local function field(key)
+    local submitted = http.formvalue(key)
+    if submitted == nil then return trim(uci:get(PKG, "main", key) or "") end
+    return trim(submitted)
+  end
+
   local text_fields = {
-    watchdog_check_url = trim(http.formvalue("watchdog_check_url")),
-    watchdog_proxy_url = trim(http.formvalue("watchdog_proxy_url")),
-    watchdog_links_file = trim(http.formvalue("watchdog_links_file")),
-    watchdog_template_file = trim(http.formvalue("watchdog_template_file")),
-    watchdog_test_template_file = trim(http.formvalue("watchdog_test_template_file")),
-    watchdog_hysteria_template_file = trim(http.formvalue("watchdog_hysteria_template_file")),
-    watchdog_hysteria_test_template_file = trim(http.formvalue("watchdog_hysteria_test_template_file")),
-    watchdog_outbound_file = trim(http.formvalue("watchdog_outbound_file")),
-    watchdog_vless2json = trim(http.formvalue("watchdog_vless2json")),
-    watchdog_proxy2mihomo = trim(http.formvalue("watchdog_proxy2mihomo")),
-    watchdog_proxy2singbox = trim(http.formvalue("watchdog_proxy2singbox")),
-    watchdog_batch_test_template_file = trim(http.formvalue("watchdog_batch_test_template_file")),
-    watchdog_hysteria_batch_test_template_file = trim(http.formvalue("watchdog_hysteria_batch_test_template_file")),
-    watchdog_mihomo_test_template_file = trim(http.formvalue("watchdog_mihomo_test_template_file")),
-    watchdog_mihomo_batch_test_template_file = trim(http.formvalue("watchdog_mihomo_batch_test_template_file")),
-    watchdog_singbox_test_template_file = trim(http.formvalue("watchdog_singbox_test_template_file")),
-    watchdog_singbox_batch_test_template_file = trim(http.formvalue("watchdog_singbox_batch_test_template_file")),
-    watchdog_subscriptions_file = trim(http.formvalue("watchdog_subscriptions_file")),
-    watchdog_share_file = trim(http.formvalue("watchdog_share_file")),
-    watchdog_happ_capture_log = trim(http.formvalue("watchdog_happ_capture_log")),
+    watchdog_check_url = field("watchdog_check_url"),
+    watchdog_proxy_url = field("watchdog_proxy_url"),
+    watchdog_links_file = field("watchdog_links_file"),
+    watchdog_template_file = field("watchdog_template_file"),
+    watchdog_test_template_file = field("watchdog_test_template_file"),
+    watchdog_hysteria_template_file = field("watchdog_hysteria_template_file"),
+    watchdog_hysteria_test_template_file = field("watchdog_hysteria_test_template_file"),
+    watchdog_outbound_file = field("watchdog_outbound_file"),
+    watchdog_vless2json = field("watchdog_vless2json"),
+    watchdog_proxy2mihomo = field("watchdog_proxy2mihomo"),
+    watchdog_proxy2singbox = field("watchdog_proxy2singbox"),
+    watchdog_batch_test_template_file = field("watchdog_batch_test_template_file"),
+    watchdog_hysteria_batch_test_template_file = field("watchdog_hysteria_batch_test_template_file"),
+    watchdog_mihomo_test_template_file = field("watchdog_mihomo_test_template_file"),
+    watchdog_mihomo_batch_test_template_file = field("watchdog_mihomo_batch_test_template_file"),
+    watchdog_singbox_test_template_file = field("watchdog_singbox_test_template_file"),
+    watchdog_singbox_batch_test_template_file = field("watchdog_singbox_batch_test_template_file"),
+    watchdog_subscriptions_file = field("watchdog_subscriptions_file"),
+    watchdog_share_file = field("watchdog_share_file"),
+    watchdog_happ_capture_log = field("watchdog_happ_capture_log"),
   }
   for key, value in pairs(text_fields) do
     if value == "" then

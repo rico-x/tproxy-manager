@@ -20,7 +20,15 @@
 set -u
 
 BASE="${TPM_TEST_BASE:-/tmp/tpm-state-test}"
-TPROXY=/usr/bin/tproxy-manager.sh
+# Which copy is under test. scripts/test-on-device.sh sets TPM_STAGE_BIN to the
+# staged working tree; without it this falls back to the installed package, which
+# during release preparation can be an OLDER build than the tree being checked —
+# so the resolved path is printed rather than assumed.
+BIN_DIR="${TPM_STAGE_BIN:-/usr/bin}"
+TPROXY="$BIN_DIR/tproxy-manager.sh"
+
+[ -f "$TPROXY" ] || { echo "script under test not found: $TPROXY" >&2; exit 1; }
+printf 'under test: %s\n' "$TPROXY"
 
 pass=0
 fail=0

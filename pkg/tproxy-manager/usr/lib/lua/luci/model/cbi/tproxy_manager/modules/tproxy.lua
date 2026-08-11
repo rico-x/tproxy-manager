@@ -805,9 +805,21 @@ local function render(ctx)
   -- _backup_apply=1 + a guessed backup_token would otherwise bypass the
   -- whole review-before-apply step. Checked against the same
   -- disp.context.authtoken the upload form embeds.
+  -- formvalue() returns a TABLE when a field arrives more than once. Comparing
+  -- that against a string is always false, so a duplicated token would read as
+  -- a forged one; accept it when every submitted copy matches.
   local function backup_csrf_ok()
     local expected = tostring((disp.context and disp.context.authtoken) or "")
-    return expected ~= "" and http.formvalue("token") == expected
+    if expected == "" then return false end
+    local given = http.formvalue("token")
+    if type(given) == "table" then
+      if #given == 0 then return false end
+      for __, v in ipairs(given) do
+        if v ~= expected then return false end
+      end
+      return true
+    end
+    return given == expected
   end
 
   -- Recovery from a transaction that was interrupted mid-apply. The snapshot
@@ -993,12 +1005,14 @@ local function render(ctx)
         end
       end
 
-      -- Both the pending-import id and the LuCI CSRF token travel with the
-      -- Apply/Cancel buttons; backup_csrf_ok() above rejects the POST
-      -- without the latter.
+      -- ONLY the pending-import id. The CSRF token is already emitted by the
+      -- enclosing CBI form, and adding a second field with the same name made
+      -- the browser submit `token` twice: http.formvalue("token") then returns a
+      -- table, LuCI's own check compares it against a string, and every click
+      -- died with "the submitted security token is invalid or already expired".
+      -- curl tests sent a single value and never reproduced it.
       local hidden_token = string.format(
-        "<input type='hidden' name='backup_token' value='%s'><input type='hidden' name='token' value='%s'>",
-        pcdata(token), pcdata(tostring((disp.context and disp.context.authtoken) or "")))
+        "<input type='hidden' name='backup_token' value='%s'>", pcdata(token))
 
       if total == 0 then
         return string.format(
@@ -1054,14 +1068,12 @@ local function render(ctx)
               "<div class='inline-row' style='margin-top:.4rem'>" ..
               "<button class='cbi-button cbi-button-apply' name='_rollback_recover' value='%s'>%s</button>" ..
               "<button class='cbi-button cbi-button-remove' name='_rollback_discard' value='%s'" ..
-              " onclick=\"return confirm('%s')\">%s</button>" ..
-              "<input type='hidden' name='token' value='%s'></div></div>",
+              " onclick=\"return confirm('%s')\">%s</button></div></div>",
               pcdata(_("An earlier change was interrupted before it finished")),
               pcdata(o.dir), pcdata(o.reason or ""), table.concat(files),
               pcdata(o.dir), pcdata(_("Restore the previous state")),
               pcdata(o.dir), pcdata(_("Discard the kept snapshot and keep the current state?")),
-              pcdata(_("Discard")),
-              pcdata(tostring((disp.context and disp.context.authtoken) or "")))
+              pcdata(_("Discard")))
           end
           orphan_html = "<div class='msg err' style='margin-top:.5rem'>" ..
             pcdata(_("These files may be half-written. Restore the previous state, or discard the snapshot to keep what is on disk now.")) ..
@@ -1135,6 +1147,18 @@ local function render(ctx)
 
   -- Save handlers (TPROXY) + DHCP quick add + restart
   local function save_tproxy_main()
+    -- "Cancel changes" must be handled here, next to the other buttons that are
+    -- emitted as raw markup. Routing it through the CBI Button option below
+    -- never worked: that option's render() is disabled, so no `cbid.*` field is
+    -- submitted, CBI's parse never calls its write(), and the POST fell through
+    -- to a plain re-render — which repopulates every input from the request
+    -- body, leaving the edits the user just asked to drop still on screen.
+    -- Redirecting turns the POST into a clean GET that reads UCI again.
+    if http.formvalue("_cancel_tproxy_main") == "1" then
+      set_err(nil); set_info(nil)
+      redirect_here("tproxy"); return
+    end
+
     -- DHCP quick add
     local ip_only  = http.formvalue("_dhcp_add_only")
     local ip_bypass= http.formvalue("_dhcp_add_bypass")
@@ -1390,18 +1414,10 @@ local function render(ctx)
   <button class="cbi-button cbi-button-reset" name="_cancel_tproxy_main" value="1">]] .. pcdata(_("Cancel changes")) .. [[</button>
 </div>]]
     end
-    local b  = ss:option(Button, "_save_tproxy_main"); b.title=""; b.inputtitle="Save"; b.inputstyle="apply"
-    function b.render() end
-    function b.write(self, section)
-      if not http.formvalue("_save_tproxy_main") then return end
-      redirect_here("tproxy")
-    end
-    local cancel = ss:option(Button, "_cancel_tproxy_main"); cancel.title = ""; cancel.inputtitle = "Cancel"; cancel.inputstyle = "reset"
-    function cancel.render() end
-    function cancel.write(self, section)
-      if not http.formvalue("_cancel_tproxy_main") then return end
-      redirect_here("tproxy")
-    end
+    -- Both buttons are the raw markup above and are handled by
+    -- save_tproxy_main(). There used to be CBI Button options here whose write()
+    -- was supposed to do the redirect, but with render() disabled no `cbid.*`
+    -- field reaches the request, so CBI never called them.
   end
 
   -- The shared err/info banner is already rendered by manage.lua at the

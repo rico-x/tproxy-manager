@@ -29,7 +29,11 @@ local cfg = {
   bin_paths = { "/usr/bin/mihomo", "/usr/sbin/mihomo" },
   version_args = { "-v" },
   api_url = "https://api.github.com/repos/MetaCubeX/mihomo/releases?per_page=20",
-  cache_file = "/tmp/tproxy-manager-mihomo-releases.json",
+  -- Inside a root-only directory, not directly in world-writable /tmp: the
+  -- cache supplies the download URL that install() hands to curl.
+  cache_dir = "/tmp/tproxy-manager-mihomo-cache",
+  cache_file = "/tmp/tproxy-manager-mihomo-cache/releases.json",
+  legacy_cache_file = "/tmp/tproxy-manager-mihomo-releases.json",
   backup_dir = "/tmp/tproxy-manager-mihomo-backup",
   backup_file = "/tmp/tproxy-manager-mihomo-backup/mihomo.previous",
   backup_meta = "/tmp/tproxy-manager-mihomo-backup/mihomo.previous.version",
