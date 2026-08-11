@@ -465,7 +465,21 @@ jobs:
           grep -q '25.12/' /tmp/tproxy-root-index.html
 
   pages:
-    needs: smoke
+    # Only a release build publishes the feed.
+    #
+    # actions/deploy-pages identifies a deployment by the COMMIT SHA, and a tag
+    # normally points at a commit that was already pushed to main. Both events
+    # therefore produced a deployment with the same id, the first one won, and
+    # the feed kept the main build's "YYYY.MM.DD~sha" version while the tagged
+    # deployment reported success and changed nothing. Re-running the tag build
+    # could not fix it either, because the id stayed the same.
+    #
+    # Consequence to know about: a push to main no longer touches the feed. Its
+    # packages are still built, validated and attached to the run as artifacts,
+    # so a test build is downloaded from the run (or published by dispatching
+    # this workflow with a tag) rather than picked up from the feed.
+    needs: [meta, smoke]
+    if: needs.meta.outputs.create_release == '1'
     runs-on: ubuntu-latest
     permissions:
       pages: write
