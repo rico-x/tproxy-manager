@@ -109,7 +109,13 @@ local function emit_runtime(links, port, mode)
   local out = {
     "allow-lan: false",
     "bind-address: 127.0.0.1",
-    "mode: global",
+    -- rule, not global: in global mode Mihomo ignores `rules` entirely and sends
+    -- everything through its built-in GLOBAL selector, whose default selection is
+    -- DIRECT. The MATCH,TPROXY-MANAGER rule below was therefore dead, and both the
+    -- probe and the live engine passed traffic straight out instead of through the
+    -- proxy -- which made every link "fail" its check while sites reachable
+    -- directly appeared to work.
+    "mode: rule",
     "log-level: warning",
     "ipv6: true",
   }

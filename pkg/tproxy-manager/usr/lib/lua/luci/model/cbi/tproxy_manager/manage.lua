@@ -243,15 +243,62 @@ do
   local dv = s:option(DummyValue, "_css_base"); dv.rawhtml = true
   function dv.cfgvalue() return [[
 <style>
+/* ----------------------------------------------------------------------------
+   Token layer.
+
+   luci-theme-bootstrap already ships a complete token set and flips every value
+   for the dark scheme through :root[data-darkmode="true"]. This package used to
+   hardcode 28 hex colours instead, which is why a light-background rule such as
+   `th{background:#f9fafb}` left the theme's own text colour on top of it at a
+   contrast of 1.76 on a dark router. Nothing here invents a palette: it names
+   the theme's variables so every module can use them, and overrides only the
+   two values where the theme's own semantic colour does not reach WCAG AA as
+   13px text.
+   ------------------------------------------------------------------------- */
+:root{
+  /* semantic text: the darker variant reads on a light ground */
+  --tpm-ok:var(--success-color-low,#007936);
+  --tpm-bad:var(--error-color-low,#b14946);
+  --tpm-warn:var(--warn-color-low,#8a6412);
+  /* surfaces and lines, straight from the theme */
+  --tpm-surface:var(--background-color-low,#f9fafb);
+  --tpm-line:var(--border-color-medium,#e5e7eb);
+  /* --text-color-medium measures 4.13 on the dark ground and 3.95 on the light
+     one, so secondary text uses the -high step and separates itself by size and
+     weight instead of by contrast */
+  --tpm-muted:var(--text-color-high,#404040);
+  /* tints composed from the theme's rgb triplets, so they follow the ground */
+  --tpm-ok-tint:rgba(var(--success-color-high-rgb,0,166,108),.12);
+  --tpm-bad-tint:rgba(var(--error-color-high-rgb,209,86,83),.12);
+  --tpm-neutral-tint:rgba(127,127,127,.12);
+  /* the service row only needs to be separated, not filled: at .12 the lifted
+     background cost the success badge 0.7 of contrast and pushed it under AA */
+  --tpm-row-tint:rgba(127,127,127,.06);
+  /* spacing scale: replaces 21 ad-hoc steps */
+  --tpm-1:.25rem; --tpm-2:.5rem; --tpm-3:.75rem; --tpm-4:1rem; --tpm-5:1.5rem;
+  /* measures: replaces 560/860/960/1200px scattered across three files */
+  --tpm-measure-form:34rem; --tpm-measure-text:54rem; --tpm-measure-wide:75rem;
+  /* one monospace stack; two different ones stopped digits lining up */
+  --tpm-mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+  --tpm-fs-code:.92em; --tpm-fs-meta:.82em; --tpm-fs-micro:.72em;
+}
+:root[data-darkmode="true"]{
+  /* on the dark ground the light-scheme variants are too dark to read; the
+     theme's own --error-color-high only reaches 3.99 as text, so this one value
+     is lifted within the same hue to clear 4.5 */
+  --tpm-ok:var(--success-color-high,#00ac59);
+  --tpm-bad:#f97066;
+  --tpm-warn:var(--warn-color-high,#efbd0b);
+}
 .cbi-page-actions{display:none!important}
-.cbi-section{margin:.12rem 0}
-.cbi-value{margin:.04rem 0}
+.cbi-section{margin:var(--tpm-1) 0}
+.cbi-value{margin:0}
 /* service status row */
-.svc-row{margin:.02rem 0;padding:.06rem .2rem;border-radius:.2rem;background:rgba(255,255,255,.03)}
+.svc-row{margin:0;padding:.06rem var(--tpm-1);border-radius:.2rem;background:var(--tpm-row-tint)}
 .svc-title{margin:0}
 .svc-badge{font-weight:600}
-.svc-badge.ok{color:#16a34a}
-.svc-badge.err{color:#dc2626}
+.svc-badge.ok{color:var(--tpm-ok)}
+.svc-badge.err{color:var(--tpm-bad)}
 /* service buttons in one line */
 #cbi-tproxy_manager .cbi-value[id*="_start"],
 #cbi-tproxy_manager .cbi-value[id*="_stop"],
@@ -263,19 +310,99 @@ do
 #cbi-tproxy_manager .cbi-value[id*="_stop"] .cbi-value-title,
 #cbi-tproxy_manager .cbi-value[id*="_enable"] .cbi-value-title,
 #cbi-tproxy_manager .cbi-value[id*="_disable"] .cbi-value-title{display:none}
-.msg{padding:.5rem .7rem;border-radius:.5rem;margin:.4rem 0;white-space:pre-wrap}
-.msg.err{border:1px solid #fecaca;background:#fef2f2;color:#b91c1c}
-.msg.info{border:1px solid #bbf7d0;background:#f0fdf4;color:#166534}
-.box{padding:.5rem;border:1px solid #e5e7eb;border-radius:.5rem}
-.inline-row{display:flex;align-items:center;gap:.25rem;flex-wrap:nowrap}
-.editor-wrap{max-width:860px}
-.editor-wide{max-width:1200px}
+/* messages: tinted from the theme, so the text colour is always the theme's */
+.msg{padding:var(--tpm-2) var(--tpm-3);border-radius:.5rem;margin:var(--tpm-2) 0;white-space:pre-wrap;border:1px solid var(--tpm-line)}
+.msg.err{background:var(--tpm-bad-tint);border-color:var(--tpm-bad);color:var(--tpm-bad)}
+.msg.info{background:var(--tpm-ok-tint);border-color:var(--tpm-ok);color:var(--tpm-ok)}
+.box{padding:var(--tpm-2);border:1px solid var(--tpm-line);border-radius:.5rem}
+.inline-row{display:flex;align-items:center;gap:var(--tpm-1);flex-wrap:wrap}
+.editor-wrap{max-width:var(--tpm-measure-text)}
+.editor-wide{max-width:var(--tpm-measure-wide)}
+.editor-wrap textarea,.editor-wide textarea{width:100%;max-width:100%;box-sizing:border-box;font-family:var(--tpm-mono)}
+/* every wide table scrolls inside its own container, never the page */
+.tpm-tablewrap{overflow-x:auto;-webkit-overflow-scrolling:touch;max-width:100%}
+.tpm-num{font-variant-numeric:tabular-nums}
+/* A proxy link is ~400 characters. Printed in full it made every row of the link
+   list several hundred pixels tall, so it is clamped to three lines and expands
+   to the whole value on hover or keyboard focus. The clamp lives on an inner
+   element on purpose: -webkit-box on the <td> itself would stop it being a table
+   cell and collapse the table layout. The full value is also in the cell's title
+   attribute, so the native tooltip works too. */
+.wd-clamp{
+  display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;
+  overflow:hidden;word-break:break-all;
+}
+.wd-code:hover .wd-clamp,
+.wd-code:focus-within .wd-clamp{-webkit-line-clamp:unset;overflow:visible}
+/* the list editor used a hard width:520px with max-width:none, which forced the
+   whole page to scroll sideways on anything narrower than ~540px */
+.tpm-editor{width:100%;max-width:100%;box-sizing:border-box;font-family:var(--tpm-mono);font-size:var(--tpm-fs-code)}
+.tpm-filesel{max-width:min(100%,26rem)}
+/* Per-engine init script path: one line of text plus a pencil. The input and the
+   save row stay out of the layout until something is actually being edited, so the
+   engine block keeps the height it had before the field existed. */
+.tpm-engine-row{display:flex;align-items:center;flex-wrap:wrap;gap:.3rem}
+.tpm-svc-view{font-family:var(--tpm-mono);font-size:var(--tpm-fs-meta)}
+.tpm-svc-edit{
+  border:0;background:transparent;cursor:pointer;padding:0 .2rem;line-height:1;
+  color:var(--tpm-muted);font-size:1em;
+}
+.tpm-svc-edit:hover{color:var(--tpm-ok)}
+.tpm-svc-path{
+  display:none;flex:1 1 18rem;min-width:0;max-width:min(100%,34rem);
+  font-family:var(--tpm-mono);font-size:var(--tpm-fs-meta);
+}
+.tpm-engine-row.editing .tpm-svc-view,
+.tpm-engine-row.editing .tpm-svc-edit{display:none}
+.tpm-engine-row.editing .tpm-svc-path{display:block}
+.tpm-svc-actions{display:none;align-items:center;flex-wrap:wrap;gap:var(--tpm-2);margin-top:var(--tpm-2)}
+.editing-any .tpm-svc-actions{display:flex}
+.tpm-svc-hint{color:var(--tpm-muted);font-size:var(--tpm-fs-meta)}
+/* Shared code-editor chrome. The Xray and sing-box tabs each carried their own
+   copy of this and Mihomo had none at all, so the three engine tabs looked like
+   three different products. Deliberately dark in both schemes: it is a window
+   into a config file, the same way a terminal is. */
+.tpm-codeblock{display:block;width:min(100%,var(--tpm-measure-text));max-width:100%;clear:both}
+.tpm-codebox{
+  position:relative;border:1px solid var(--tpm-line);border-radius:.35rem;
+  background:#0f172a;overflow:hidden;
+}
+.tpm-codebox textarea{
+  display:block;width:100%;box-sizing:border-box;margin:0;padding:.65rem;
+  border:0;outline:0;resize:vertical;background:transparent;color:#d1d5db;
+  font:13px/1.45 var(--tpm-mono);tab-size:2;white-space:pre;overflow:auto;
+}
 .leases-table{ width:100%; border-collapse:collapse }
-.leases-table th, .leases-table td{border:1px solid #e5e7eb; padding:.35rem; vertical-align:top}
-.leases-table th{background:#f9fafb}
+.leases-table th, .leases-table td{border:1px solid var(--tpm-line); padding:.35rem; vertical-align:top}
+.leases-table th{background:var(--tpm-surface); color:inherit}
 /* keep the gap after the extra settings block compact */
-#extra-mods{ margin: .25rem 0 0 0; }
+#extra-mods{ margin: var(--tpm-1) 0 0 0; }
 #extra-mods + .cbi-section{ margin-top: 0 !important; }
+/* ---- narrow screens: tables stop being tables ----------------------------
+   Below this width eight columns get 24-107px each, which turned one row of the
+   link list into 624px of vertical smear and the whole table into 19395px. Rows
+   become cards; the column headings come back as labels from data-th.        */
+@media (max-width:760px){
+  .tpm-cards thead{display:none}
+  .tpm-cards tr{display:block;border:1px solid var(--tpm-line);border-radius:.4rem;margin:0 0 var(--tpm-2);padding:var(--tpm-1) var(--tpm-2)}
+  .tpm-cards td{display:block;border:0!important;padding:.15rem 0!important;width:auto!important}
+  .tpm-cards td[data-th]::before{
+    content:attr(data-th) " ";
+    display:inline-block;min-width:8.5em;
+    color:var(--tpm-muted);font-size:var(--tpm-fs-micro);text-transform:uppercase;letter-spacing:.04em;
+  }
+  .tpm-cards td:empty{display:none}
+  /* A proxy link is ~400 characters; printed in full it took 204px of a 441px
+     card, i.e. almost half the vertical cost of the whole list. Two lines with an
+     ellipsis is enough to recognise a server, and the full value is already in
+     the cell's title attribute. */
+  .tpm-cards .wd-clamp{-webkit-line-clamp:2}
+  /* Tried flowing the short fields inline to save rows; measured on the device it
+     made cards TALLER (266px -> 350px), because inline-block boxes wrap with the
+     label and add line-box gaps. Left as one field per line. */
+  .tpm-cards td[data-th]{line-height:1.35}
+  .wd-grid{grid-template-columns:1fr!important}
+}
 </style>]] end
 end
 

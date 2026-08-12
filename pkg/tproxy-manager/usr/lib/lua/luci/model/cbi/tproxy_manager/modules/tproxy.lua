@@ -84,6 +84,8 @@ local function render(ctx)
       return string.format(_("%s did not come back up"), p.engine)
     elseif p.code == "stack_not_restarted" then
       return string.format(_("could not restart %s"), p.services)
+    elseif p.code == "autostart_not_restored" then
+      return string.format(_("autostart could not be restored for %s: the next reboot may start the wrong engine"), p.services)
     end
     return p.code
   end
@@ -140,6 +142,66 @@ local function render(ctx)
     redirect_here("tproxy")
     return m
   end
+  -- Exactly one engine may start at boot. Offered as a button rather than done
+  -- silently on page load: it changes service state, which is the user's call.
+  if http.formvalue("_fix_engine_autostart") == "1" and engines then
+    local failed = engines.align_autostart(uci, PKG, proxy_engine)
+    if failed == "" then
+      set_err(nil)
+      set_info(string.format(_("Autostart left on for %s only."), engines.def(proxy_engine).label))
+    else
+      set_info(nil)
+      set_err(string.format(_("Could not change autostart for: %s"), failed))
+    end
+    redirect_here("tproxy"); return m
+  end
+
+  -- Per-engine init script paths. Written to the engine's own profile, and to
+  -- the live key as well when that engine is the active one, so the UI and the
+  -- watchdog immediately agree with what was entered.
+  if http.formvalue("_save_engine_paths") == "1" and engines then
+    local changed, failed, invalid = 0, false, nil
+    for __, id in ipairs(engines.ORDER) do
+      local value = trim(http.formvalue("engine_service_path_" .. id) or "")
+      if value ~= "" then
+        if not utils.is_abs_path(value) then
+          invalid = engines.def(id).label
+          break
+        end
+        local current = engines.profile_value(uci, PKG, id, "service_path")
+        if value ~= current then
+          if not utils.uci_stage(uci, PKG, "main", id .. "_profile_service_path", value) then failed = true end
+          if id == proxy_engine then
+            if not utils.uci_stage(uci, PKG, "main", "watchdog_service_path", value) then failed = true end
+          end
+          changed = changed + 1
+        end
+      end
+    end
+    if invalid then
+      uci:revert(PKG)
+      set_info(nil)
+      set_err(string.format(_("Invalid absolute path for %s."), invalid))
+    elseif failed then
+      uci:revert(PKG)
+      set_info(nil)
+      set_err(_("Failed to save settings."))
+    elseif changed == 0 then
+      set_err(nil)
+      set_info(_("Nothing to save: the paths are unchanged."))
+    else
+      local ok_commit, why = utils.commit_uci(uci, PKG)
+      if ok_commit then
+        set_err(nil); set_info(_("Init script paths saved."))
+      elseif why == "permissions" then
+        set_info(nil); set_err(_("Settings saved, but the configuration file permissions could not be secured."))
+      else
+        set_info(nil); set_err(_("Failed to save settings."))
+      end
+    end
+    redirect_here("tproxy"); return m
+  end
+
   if http.formvalue("_activate_proxy_engine") == "1" and engines then
     local target = engines.normalize(http.formvalue("proxy_engine_choice") or proxy_engine)
     local ok, msg, warn, detail = engines.activate(uci, PKG, target)
@@ -221,19 +283,68 @@ local function render(ctx)
             pcdata(_("Install"))
           )
         end
+        -- The init script path stays a single line of text; the input appears only
+        -- when the pencil next to it is clicked. Someone running a differently
+        -- packaged daemon can point the engine at their own script without the
+        -- three editors taking up the block permanently.
         rows[#rows + 1] = string.format(
-          "<div><strong>%s</strong>%s%s</div><div><span class='svc-badge %s'>%s</span> · <span class='svc-badge %s'>%s</span> · <span class='svc-badge %s'>%s</span> · <code>%s</code></div>",
+          "<div><strong>%s</strong>%s%s</div>" ..
+          "<div class='tpm-engine-row'>" ..
+          "<span class='svc-badge %s'>%s</span> · <span class='svc-badge %s'>%s</span> · <span class='svc-badge %s'>%s</span> · " ..
+          "<code class='tpm-svc-view'>%s</code>" ..
+          "<button type='button' class='tpm-svc-edit' title='%s' aria-label='%s'>%s</button>" ..
+          "<input class='tpm-svc-path' id='engine_svc_%s' type='text' name='engine_service_path_%s' value='%s' spellcheck='false' aria-label='%s'>" ..
+          "</div>",
           pcdata(def.label), badge, install_btn,
           installed_cls, pcdata(installed),
           running_cls, pcdata(running),
           enabled_cls, pcdata(enabled),
-          pcdata(st.service_path or "")
+          pcdata(st.service_path or ""),
+          pcdata(_("Edit the init script path")), pcdata(_("Edit the init script path")), "&#9998;",
+          pcdata(id), pcdata(id), pcdata(st.service_path or ""), pcdata(_("init script"))
         )
       end
       rows[#rows + 1] = "</div>"
+      rows[#rows + 1] = "<div class='tpm-svc-actions'>" ..
+        "<button class='cbi-button cbi-button-apply small-btn' name='_save_engine_paths' value='1'>" ..
+        pcdata(_("Save init script paths")) .. "</button>" ..
+        "<span class='tpm-svc-hint'>" ..
+        pcdata(_("Absolute path to the init script that starts this engine.")) .. "</span></div>"
+      rows[#rows + 1] = [==[
+<script>
+(function(){
+  var box = document.currentScript && document.currentScript.parentElement;
+  if (!box) return;
+  box.addEventListener('click', function(e){
+    var btn = e.target.closest && e.target.closest('.tpm-svc-edit');
+    if (!btn) return;
+    var row = btn.closest('.tpm-engine-row');
+    if (!row) return;
+    row.classList.add('editing');
+    box.classList.add('editing-any');
+    var input = row.querySelector('.tpm-svc-path');
+    if (input) { input.focus(); input.select(); }
+  });
+})();
+</script>]==]
+      -- Two engines in autostart means a race for the TPROXY port on the next
+      -- boot, and whichever wins silently decides how traffic is routed.
+      local autostart_on = engines.autostart_conflicts and engines.autostart_conflicts(uci, PKG) or {}
+      if #autostart_on > 1 then
+        local names = {}
+        for __, item in ipairs(autostart_on) do names[#names + 1] = item.label end
+        rows[#rows + 1] = string.format(
+          "<div class='msg err' style='margin-top:.5rem'>%s<div class='inline-row' style='margin-top:.35rem'>" ..
+          "<button class='cbi-button cbi-button-apply small-btn' name='_fix_engine_autostart' value='1'>%s</button></div></div>",
+          pcdata(string.format(
+            _("Autostart is on for more than one engine (%s): after a reboot they compete for the TPROXY port."),
+            table.concat(names, ", "))),
+          pcdata(string.format(_("Leave autostart on for %s only"), engines.def(proxy_engine).label))
+        )
+      end
       local active_status = engines.status(uci, PKG, proxy_engine)
       if not active_status.installed then
-        rows[#rows + 1] = "<div style='margin-top:.55rem;color:#b45309'>" .. pcdata(_("Selected proxy engine binary is not installed.")) .. "</div>"
+        rows[#rows + 1] = "<div style='margin-top:.55rem;color:var(--tpm-warn)'>" .. pcdata(_("Selected proxy engine binary is not installed.")) .. "</div>"
       end
       rows[#rows + 1] = "</div>"
       return table.concat(rows)
@@ -257,7 +368,7 @@ local function render(ctx)
     white-space:nowrap !important;
   }
   .tpx-btn-slim > span{
-    color:#16a34a;
+    color:var(--tpm-ok);
     font-weight:700;
   }
 </style>
@@ -545,7 +656,7 @@ local function render(ctx)
       if sb6   ~= "" then options[#options+1] = {sb6,   "src bypass IPv6", "bypass"} end
 
       if #options == 0 then
-        return "<div class='box editor-wrap' style='color:#6b7280'>" .. _("No list file paths are configured in UCI. Set paths in Additional settings.") .. "</div>"
+        return "<div class='box editor-wrap' style='color:var(--tpm-muted)'>" .. _("No list file paths are configured in UCI. Set paths in Additional settings.") .. "</div>"
       end
 
       local chosen = fval("list_file")
@@ -579,8 +690,8 @@ local function render(ctx)
       elseif chosen == sb6 then desc = _("IPv6 sources that will go directly.") end
 
       local sel = {}
-      sel[#sel+1] = "<div id='unified-editor' class='editor-wrap' style='width:520px; max-width:100%'>"
-      sel[#sel+1] = "<div class='inline-row'><label>" .. _("File to edit") .. ":</label><select name='list_file' style='max-width:260px'>"
+      sel[#sel+1] = "<div id='unified-editor' class='editor-wrap'>"
+      sel[#sel+1] = "<div class='inline-row'><label>" .. _("File to edit") .. ":</label><select name='list_file' class='tpm-filesel'>"
       for __,o in ipairs(options) do
         local path, label, kind = o[1], o[2], o[3]
         local selattr = (path == chosen) and " selected" or ""
@@ -590,12 +701,12 @@ local function render(ctx)
           pcdata(path), pcdata(kind), selattr, style, pcdata(path), pcdata(label))
       end
       sel[#sel+1] = "</select><button class=\"cbi-button cbi-button-apply small-btn\" name=\"_uniedit_save\" value=\"1\">" .. _("Save file") .. "</button></div>"
-      sel[#sel+1] = "<div style='margin:.2rem 0 .5rem 0; color:#6b7280'>" .. pcdata(desc) .. "</div>"
+      sel[#sel+1] = "<div style='margin:.2rem 0 .5rem 0; color:var(--tpm-muted)'>" .. pcdata(desc) .. "</div>"
 
-      sel[#sel+1] = string.format("<textarea name='uniedit_text' rows='16' spellcheck='false' style='width:520px'>%s</textarea>", pcdata(content))
+      sel[#sel+1] = string.format("<textarea name='uniedit_text' rows='16' spellcheck='false' class='tpm-editor'>%s</textarea>", pcdata(content))
 
       sel[#sel+1] = string.format([[
-<div id="uniedit_hint" style="margin-top:.35rem; color:#9ca3af"></div>
+<div id="uniedit_hint" style="margin-top:.35rem; color:var(--tpm-muted)"></div>
 <script>
 (function(){
   function qs(s){ return document.querySelector(s) }
@@ -637,13 +748,13 @@ local function render(ctx)
       if(!ok) bad.push((i+1)+': '+ln);
     }
     if(bad.length){
-      hint.style.color = '#b45309';
+      hint.style.color = 'var(--tpm-warn)';
       hint.innerHTML = (portsMode
         ? ']] .. pcdata(_("Suspicious lines in ports file")) .. [[ ('+bad.length+'):<br><code style="white-space:pre-wrap">'+bad.slice(0,10).join('\\n')+(bad.length>10?'\\n…':'')+'</code><br>]] .. pcdata(_("Expected")) .. [[: <code>80</code>, <code>tcp:443</code>, <code>udp:53</code>, <code>both:123</code>, <code>1000-2000</code>, <code>udp:6000-7000</code>.'
         : ']] .. pcdata(_("Suspicious lines")) .. [[ ('+bad.length+'):<br><code style="white-space:pre-wrap">'+bad.slice(0,10).join('\\n')+(bad.length>10?'\\n…':'')+'</code>');
-      ta.style.outline = '2px solid #f59e0b';
+      ta.style.outline = '2px solid var(--tpm-warn)';
     }else{
-      hint.style.color = '#9ca3af';
+      hint.style.color = 'var(--tpm-muted)';
       hint.textContent = portsMode
         ? ']] .. pcdata(_("Ports format is valid: port/range, optionally prefixed with tcp:/udp:/both:.")) .. [['
         : ']] .. pcdata(_("Looks valid: IPv4/IPv6, optionally CIDR. Lines starting with # or ; are ignored.")) .. [[';
@@ -720,12 +831,12 @@ local function render(ctx)
       sel[#sel+1] = "<details style='margin-top:.6rem'><summary style='cursor:pointer;font-weight:600'>" .. _("DHCP leases (quick add to src only/bypass v4)") .. "</summary>"
       sel[#sel+1] = "<div class='box' style='margin-top:.4rem'>"
       if #leases == 0 then
-        sel[#sel+1] = "<div style='color:#6b7280'>" .. _("No active leases.") .. "</div>"
+        sel[#sel+1] = "<div style='color:var(--tpm-muted)'>" .. _("No active leases.") .. "</div>"
       else
-        sel[#sel+1] = "<table class='leases-table'><colgroup><col class='col-ip'><col class='col-host'><col class='col-mac'><col class='col-act'></colgroup><thead><tr><th>IP</th><th>" .. _("Name") .. "</th><th>MAC</th><th>" .. _("Actions") .. "</th></tr></thead><tbody>"
+        sel[#sel+1] = "<div class='tpm-tablewrap'><table class='leases-table tpm-cards'><colgroup><col class='col-ip'><col class='col-host'><col class='col-mac'><col class='col-act'></colgroup><thead><tr><th>IP</th><th>" .. _("Name") .. "</th><th>MAC</th><th>" .. _("Actions") .. "</th></tr></thead><tbody>"
         for __, r in ipairs(leases) do
           sel[#sel+1] = string.format(
-            "<tr><td><code>%s</code></td><td>%s</td><td><code>%s</code></td>" ..
+            "<tr><td data-th='IP'><code>%s</code></td><td data-th='" .. _("Name") .. "'>%s</td><td data-th='MAC'><code>%s</code></td>" ..
             "<td>" ..
             "<button class='cbi-button cbi-button-apply small-btn' name='_dhcp_add_only' value='%s' onclick='return window.__xray_guard?window.__xray_guard():true'>+ only</button> " ..
             "<button class='cbi-button cbi-button-action small-btn' name='_dhcp_add_bypass' value='%s' onclick='return window.__xray_guard?window.__xray_guard():true'>+ bypass</button>" ..
@@ -733,7 +844,7 @@ local function render(ctx)
             pcdata(r.ip), pcdata(r.host or ""), pcdata(r.mac or ""), pcdata(r.ip), pcdata(r.ip)
           )
         end
-        sel[#sel+1] = "</tbody></table>"
+        sel[#sel+1] = "</tbody></table></div>"
       end
       sel[#sel+1] = "</div></details>"
 
@@ -1099,14 +1210,14 @@ local function render(ctx)
       return orphan_html .. string.format([[<div id="backup-wrap"><details>
         <summary><strong>%s</strong></summary>
         <style>
-          .bkdiff-mod{margin:.3rem 0;padding:.2rem .6rem;border:1px solid #e5e7eb;border-radius:.4rem}
+          .bkdiff-mod{margin:var(--tpm-1) 0;padding:var(--tpm-1) var(--tpm-3);border:1px solid var(--tpm-line);border-radius:.4rem}
           .bkdiff-mod summary{cursor:pointer;font-weight:600}
-          .bkdiff-kv{font-family:monospace;font-size:.85em;margin:.15rem 0}
-          .bkdiff-file{margin:.4rem 0}
-          .bkdiff-file code{font-size:.85em}
-          .bkdiff-lines{font-family:monospace;font-size:.82em;white-space:pre-wrap;background:#f9fafb;border-radius:.3rem;padding:.3rem .5rem;margin-top:.2rem}
-          .bkdiff-add{color:#166534;background:#f0fdf4}
-          .bkdiff-del{color:#b91c1c;background:#fef2f2}
+          .bkdiff-kv{font-family:var(--tpm-mono);font-size:var(--tpm-fs-code);margin:.15rem 0}
+          .bkdiff-file{margin:var(--tpm-2) 0}
+          .bkdiff-file code{font-size:var(--tpm-fs-code)}
+          .bkdiff-lines{font-family:var(--tpm-mono);font-size:var(--tpm-fs-meta);white-space:pre-wrap;background:var(--tpm-neutral-tint);border-radius:.3rem;padding:var(--tpm-1) var(--tpm-2);margin-top:var(--tpm-1)}
+          .bkdiff-add{color:var(--tpm-ok);background:var(--tpm-ok-tint)}
+          .bkdiff-del{color:var(--tpm-bad);background:var(--tpm-bad-tint)}
         </style>
         <div style="padding:.4rem 0">
           <p class="cbi-value-description">%s</p>

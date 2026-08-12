@@ -111,6 +111,10 @@ for engine_version_file in \
     exit 1
   }
 done
+# A CSS comment that closes on prose swallows the rules behind it, with nothing
+# to report it: no error, the styling simply goes missing. `.small-btn` was dead
+# for exactly this reason.
+python3 "$ROOT/scripts/lint-css-comments.py" "$PKG_DIR" || exit 1
 printf 'ok\n'
 
 section "Test suites"

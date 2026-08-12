@@ -157,8 +157,48 @@ function M.status(uci, pkg, id)
   }
 end
 
+-- True when the live (legacy) keys really describe engine `id`. The switch saves
+-- the live keys into the current engine's profile, so if the two ever disagree --
+-- proxy_engine says one engine while watchdog_service_path points at another --
+-- that save writes the WRONG engine's values into the profile. After that the UI
+-- reports a foreign service's state for that engine and an activation "succeeds"
+-- while starting the other engine's service. Observed for real after an external
+-- script set proxy_engine without updating the rest.
+local function legacy_describes(uci, pkg, id)
+  local live = uci:get(pkg, "main", "watchdog_service_path")
+  if live == nil or live == false or live == "" then return true end
+  local def = M.def(id)
+  if not def then return true end
+  -- A user may legitimately point an engine at their own init script, so the
+  -- check accepts the profile's own stored path as well as the built-in ones.
+  local allowed = {
+    def.service_path, def.native_service_path,
+    M.profile_value(uci, pkg, id, "service_path"),
+  }
+  for __, candidate in ipairs(allowed) do
+    if candidate ~= nil and candidate ~= "" and candidate == live then return true end
+  end
+  -- If it matches ANOTHER engine's definition, the live keys are definitely not
+  -- this engine's.
+  for __, other in ipairs(M.ORDER) do
+    if other ~= id then
+      local odef = M.def(other)
+      if odef and (odef.service_path == live or odef.native_service_path == live) then
+        return false
+      end
+    end
+  end
+  return true
+end
+
 function M.save_legacy_to_profile(uci, pkg, id)
   id = M.normalize(id)
+  if not legacy_describes(uci, pkg, id) then
+    -- Keep the existing profile rather than overwriting it with another engine's
+    -- values. Reported as success: there is nothing new worth saving, and failing
+    -- here would block a switch that is otherwise fine.
+    return true
+  end
   local map = {
     watchdog_service_path = "service_path",
     watchdog_test_command = "test_command",
@@ -239,7 +279,9 @@ end
 
 -- The services that must follow the engine switch: TPROXY has to be rebuilt
 -- against the new port, and the watchdog has to probe the new engine.
-local STACK_SERVICES = {
+-- Public for the same reason DEFS is: the activation test points it at stub
+-- init scripts so a suite run cannot restart the live stack.
+M.STACK_SERVICES = {
   { path = "/etc/init.d/tproxy-manager",          label = "tproxy-manager" },
   { path = "/etc/init.d/tproxy-manager-watchdog", label = "tproxy-manager-watchdog" },
 }
@@ -250,7 +292,7 @@ local STACK_SERVICES = {
 -- old port while the UI claims the switch is complete.
 local function restart_stack()
   local failed = {}
-  for _, svc in ipairs(STACK_SERVICES) do
+  for _, svc in ipairs(M.STACK_SERVICES) do
     if service_exists(svc.path) and not service_op(svc.path, "restart") then
       failed[#failed + 1] = svc.label
     end
@@ -289,6 +331,74 @@ function M.stop_inactive_services(uci, pkg, active_id)
     end
   end
   return table.concat(stuck, ", ")
+end
+
+-- Exactly one engine may start at boot. Activation stopped the other engines but
+-- left their rc.d links in place, so after a reboot two engines raced for the
+-- TPROXY port and whichever won decided how traffic was routed. Autostart is
+-- therefore part of the switch: on for the active engine, off for the rest.
+--
+-- Every candidate path is disabled, not just the profile one: an engine may have
+-- both a package init script and a native one, and either could carry the link.
+function M.align_autostart(uci, pkg, active_id)
+  active_id = M.normalize(active_id)
+  local failed = {}
+  for _, id in ipairs(M.ORDER) do
+    local def = M.def(id)
+    local seen = {}
+    local paths = {}
+    for _, path in ipairs({
+      M.profile_value(uci, pkg, id, "service_path"),
+      def.service_path,
+      def.native_service_path,
+    }) do
+      if path ~= nil and path ~= "" and not seen[path] then
+        seen[path] = true
+        paths[#paths + 1] = path
+      end
+    end
+    if id == active_id then
+      -- Only the profile/definition path is enabled: enabling a native script as
+      -- well would start a second instance of the same engine.
+      local target = paths[1]
+      if target and service_exists(target) then
+        service_op(target, "enable")
+        if not M.service_enabled(target) then failed[#failed + 1] = def.label end
+      end
+    else
+      for _, path in ipairs(paths) do
+        if service_exists(path) and M.service_enabled(path) then
+          service_op(path, "disable")
+          if M.service_enabled(path) then failed[#failed + 1] = def.label .. " (" .. path .. ")" end
+        end
+      end
+    end
+  end
+  return table.concat(failed, ", ")
+end
+
+-- Engines whose autostart is on. Used by the UI to report the conflict when the
+-- state predates this check or was changed by hand.
+function M.autostart_conflicts(uci, pkg)
+  local on = {}
+  for _, id in ipairs(M.ORDER) do
+    local def = M.def(id)
+    local seen = {}
+    for _, path in ipairs({
+      M.profile_value(uci, pkg, id, "service_path"),
+      def.service_path,
+      def.native_service_path,
+    }) do
+      if path ~= nil and path ~= "" and not seen[path] then
+        seen[path] = true
+        if service_exists(path) and M.service_enabled(path) then
+          on[#on + 1] = { id = id, label = def.label, path = path }
+          break
+        end
+      end
+    end
+  end
+  return on
 end
 
 -- run_version_script: shells out to a version-manager helper (same helpers
@@ -383,6 +493,14 @@ local function rollback_activation(uci, pkg, current, target_id, target_svc)
     problems[#problems + 1] = { code = "previous_not_up", engine = M.def(current).label }
   end
 
+  -- Boot must follow the engine that is actually running again. This is belt and
+  -- braces: activate() now aligns autostart only after a verified start, but any
+  -- other path into a rollback must not leave the failed engine set to start.
+  local autostart_failed = M.align_autostart(uci, pkg, current)
+  if autostart_failed ~= "" then
+    problems[#problems + 1] = { code = "autostart_not_restored", services = autostart_failed }
+  end
+
   local failed = restart_stack()
   if failed ~= "" then
     problems[#problems + 1] = { code = "stack_not_restarted", services = failed }
@@ -439,6 +557,12 @@ function M.activate(uci, pkg, target_id)
     return false, code, params
   end
 
+  -- Autostart follows the switch, and only once the target is verified up: doing
+  -- it before the start check meant a failed switch rolled back UCI and the
+  -- running process but left the boot pointing at the engine that just refused
+  -- to start, so the next reboot came up on the broken one.
+  local autostart_failed = M.align_autostart(uci, pkg, target_id)
+
   -- The engine is up, but the switch is only complete once TPROXY and the
   -- watchdog follow it. A failure here is not a reason to roll back a working
   -- engine, yet it must reach the user: silently ignoring it left TPROXY
@@ -448,6 +572,11 @@ function M.activate(uci, pkg, target_id)
   -- from the user's side both symptoms are "traffic still goes somewhere else".
   if stuck ~= "" then
     stack_failed = (stack_failed ~= "" and (stack_failed .. ", ") or "") .. stuck .. " (still running)"
+  end
+  -- An engine left in autostart is the same class of problem, just deferred to
+  -- the next boot, so it travels in the same warning rather than staying silent.
+  if autostart_failed ~= "" then
+    stack_failed = (stack_failed ~= "" and (stack_failed .. ", ") or "") .. autostart_failed .. " (autostart)"
   end
 
   local warns = {}

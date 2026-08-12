@@ -1719,3 +1719,48 @@ msgstr "Полная проверка ссылок уже выполняется
 
 msgid "Full link check started in the background; reload the page to see results as they arrive."
 msgstr "Полная проверка ссылок запущена в фоне; обновите страницу, чтобы увидеть результаты по мере готовности."
+
+msgid "Links total"
+msgstr "Всего ссылок"
+
+msgid "init script"
+msgstr "init-скрипт"
+
+msgid "Save init script paths"
+msgstr "Сохранить пути init-скриптов"
+
+msgid "Absolute path to the init script that starts this engine."
+msgstr "Абсолютный путь к init-скрипту, который запускает это ядро."
+
+msgid "Init script paths saved."
+msgstr "Пути init-скриптов сохранены."
+
+msgid "Nothing to save: the paths are unchanged."
+msgstr "Сохранять нечего: пути не изменились."
+
+msgid "Invalid absolute path for %s."
+msgstr "Некорректный абсолютный путь для %s."
+
+msgid "Edit the init script path"
+msgstr "Изменить путь init-скрипта"
+
+msgid "Autostart is on for more than one engine (%s): after a reboot they compete for the TPROXY port."
+msgstr "Автозапуск включён у нескольких ядер (%s): после перезагрузки они будут конкурировать за порт TPROXY."
+
+msgid "Leave autostart on for %s only"
+msgstr "Оставить автозапуск только у %s"
+
+msgid "Autostart left on for %s only."
+msgstr "Автозапуск оставлен только у %s."
+
+msgid "Could not change autostart for: %s"
+msgstr "Не удалось изменить автозапуск для: %s"
+
+msgid "autostart could not be restored for %s: the next reboot may start the wrong engine"
+msgstr "не удалось восстановить автозапуск для %s: следующая перезагрузка может поднять не то ядро"
+
+msgid "Could not save a copy of the current Mihomo config; nothing was replaced."
+msgstr "Не удалось сохранить копию текущего конфига Mihomo, замена отменена."
+
+msgid "Could not put the generated Mihomo config in place."
+msgstr "Не удалось применить сгенерированный конфиг Mihomo."

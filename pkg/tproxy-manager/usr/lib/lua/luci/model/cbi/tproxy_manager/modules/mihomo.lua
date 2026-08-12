@@ -105,8 +105,12 @@ local function build_managed_config(ctx)
   ensure_parent(provider_file)
   local provider_tmp = provider_file .. ".tmp." .. tostring(os.time())
   local config_tmp = config_file .. ".tmp." .. tostring(os.time())
-  local cmd = string.format(
-    "%s -r %s --provider > %s && %s -r %s --runtime --tproxy-port %s > %s && SAFE_PATHS=%s %s -d %s -t -f %s && mv %s %s && mv %s %s",
+
+  -- Build and validate first, promote second. Generation and validation must not
+  -- share a command with the two mv's: the copy taken below has to sit between
+  -- them, and a single `&&` chain leaves nowhere to put it.
+  local build = string.format(
+    "%s -r %s --provider > %s && %s -r %s --runtime --tproxy-port %s > %s && SAFE_PATHS=%s %s -d %s -t -f %s",
     utils.shellescape("/usr/bin/proxy2mihomo.lua"),
     utils.shellescape(links_file),
     utils.shellescape(provider_tmp),
@@ -117,17 +121,54 @@ local function build_managed_config(ctx)
     utils.shellescape(MIHOMO_DIR),
     utils.shellescape(MIHOMO_BIN),
     utils.shellescape(MIHOMO_DIR),
-    utils.shellescape(config_tmp),
+    utils.shellescape(config_tmp)
+  )
+  local rc, out = run_cmd_capture(build)
+  if rc ~= 0 then
+    fs.remove(provider_tmp)
+    fs.remove(config_tmp)
+    return false, out ~= "" and out or "Mihomo managed config build failed."
+  end
+
+  -- Same rule, same dedicated slot and now the same position as the watchdog's
+  -- apply path (see apply_mihomo_generated in watchdog/render_apply.sh): a config
+  -- this package did not generate is the user's own profile and is copied aside
+  -- once before being replaced. Generated ones carry MATCH,TPROXY-MANAGER and are
+  -- reproducible, so they are not worth a copy.
+  --
+  -- The copy is taken only once a replacement is actually about to happen. Taken
+  -- earlier, a run that failed to generate would still have spent the slot, and
+  -- every edit the user made afterwards would have been replaced with the slot
+  -- already holding the older version.
+  local backup = config_file .. ".pre-managed"
+  local backup_created = false
+  do
+    local existing = utils.read_file(config_file)
+    if existing ~= "" and not fs.access(backup)
+      and not existing:find("MATCH,TPROXY-MANAGER", 1, true) then
+      if not utils.write_file(backup, existing) then
+        fs.remove(provider_tmp)
+        fs.remove(config_tmp)
+        return false, _("Could not save a copy of the current Mihomo config; nothing was replaced.")
+      end
+      backup_created = true
+    end
+  end
+
+  local promote = string.format("mv %s %s && mv %s %s",
     utils.shellescape(provider_tmp),
     utils.shellescape(provider_file),
     utils.shellescape(config_tmp),
     utils.shellescape(config_file)
   )
-  local rc, out = run_cmd_capture(cmd)
+  rc, out = run_cmd_capture(promote)
   if rc ~= 0 then
+    -- Nothing replaced the live config, so the slot must not stay spent: the next
+    -- attempt has to be free to copy whatever the user has there by then.
+    if backup_created then fs.remove(backup) end
     fs.remove(provider_tmp)
     fs.remove(config_tmp)
-    return false, out ~= "" and out or "Mihomo managed config build failed."
+    return false, out ~= "" and out or _("Could not put the generated Mihomo config in place.")
   end
   return true, config_file
 end
@@ -239,7 +280,7 @@ local function render(ctx)
       local list_rc, list_out = run_mihomo_version({ "list" })
       local versions = list_rc == 0 and parse_tsv_versions(list_out) or {}
       local color = status.STATUS_COLOR or "gray"
-      local css_color = color == "green" and "#16a34a" or color == "blue" and "#2563eb" or color == "orange" and "#d97706" or "#6b7280"
+      local css_color = color == "green" and "var(--tpm-ok)" or color == "blue" and "var(--primary-color-medium,#2563eb)" or color == "orange" and "var(--tpm-warn)" or "var(--tpm-muted)"
       local rows = {}
       rows[#rows + 1] = "<details><summary><strong>" .. _("Mihomo version") .. "</strong></summary>"
       rows[#rows + 1] = "<div class='box editor-wrap editor-680' style='margin-top:.5rem'>"
@@ -264,7 +305,7 @@ local function render(ctx)
         pcdata(status.ASSET or "")
       )
       if status.ERROR and status.ERROR ~= "" then
-        rows[#rows + 1] = "<div style='margin-top:.5rem;color:#dc2626'>" .. pcdata(status.ERROR) .. "</div>"
+        rows[#rows + 1] = "<div style='margin-top:.5rem;color:var(--tpm-bad)'>" .. pcdata(status.ERROR) .. "</div>"
       end
       rows[#rows + 1] = "<div style='margin-top:.6rem'>"
       rows[#rows + 1] = "<button class='cbi-button cbi-button-action' name='_mihomo_version_refresh' value='1'>" .. _("Refresh versions") .. "</button> "
@@ -284,7 +325,7 @@ local function render(ctx)
       rows[#rows + 1] = "<div style='margin-top:.7rem'>"
       rows[#rows + 1] = "<button class='cbi-button cbi-button-action' name='_mihomo_build_managed' value='1'>" .. _("Generate managed Mihomo config from Watchdog links") .. "</button>"
       rows[#rows + 1] = "</div>"
-      if status_rc ~= 0 then rows[#rows + 1] = "<pre style='white-space:pre-wrap;color:#dc2626'>" .. pcdata(status_out) .. "</pre>" end
+      if status_rc ~= 0 then rows[#rows + 1] = "<pre style='white-space:pre-wrap;color:var(--tpm-bad)'>" .. pcdata(status_out) .. "</pre>" end
       rows[#rows + 1] = "</div></details>"
       return table.concat(rows, "\n")
     end
@@ -378,8 +419,8 @@ local function render(ctx)
         <input type="text" name="new_mihomo_name" placeholder="config.yaml" style="width:200px">
         <button class="cbi-button cbi-button-apply" name="_mihomo_create" value="1" onclick="return window.__xray_guard?window.__xray_guard():true">%s</button>
     </div>
-    <div style="color:#6b7280;margin-top:.2rem">%s <code>*.yaml</code>, %s.</div>
-    <hr style="border:none;border-top:1px solid #e5e7eb;margin:.5rem 0"/>]],
+    <div style="color:var(--tpm-muted);margin-top:.2rem">%s <code>*.yaml</code>, %s.</div>
+    <hr style="border:none;border-top:1px solid var(--tpm-line);margin:.5rem 0"/>]],
         pcdata(_("New file")),
         pcdata(_("Create")),
         pcdata(_("The name must match")),
@@ -445,8 +486,16 @@ local function render(ctx)
       local cedit = sx:option(DummyValue, "_mihomo_area"); cedit.rawhtml = true
       function cedit.cfgvalue()
         local content = read_file(MIHOMO_DIR .. "/" .. chosen)
+        -- Same editor chrome as the Xray and sing-box tabs: a dark code panel is
+        -- deliberately single-scheme (it is a window into a config file), and it
+        -- was the only engine tab without one. No syntax overlay here: the
+        -- highlighter on those tabs parses JSON, and this file is YAML.
         return [[
-<textarea name="mihomo_text" rows="22" style="width:650px" spellcheck="false">]] .. pcdata(content) .. [[</textarea>
+<div class="tpm-codeblock">
+  <div class="tpm-codebox">
+    <textarea name="mihomo_text" rows="22" spellcheck="false">]] .. pcdata(content) .. [[</textarea>
+  </div>
+</div>
 <div style="height:5px"></div>]]
       end
 

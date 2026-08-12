@@ -232,7 +232,37 @@ apply_mihomo_generated() {
             log_msg "ошибка: generated Mihomo config не прошёл проверку"
             return 1
         fi
-        mv "$provider_tmp" "$provider_file" && mv "$config_tmp" "$config_file" || return 1
+        # A config this package did not generate is somebody's own profile:
+        # providers, sniffer, GEOSITE rules. Replacing it without a copy destroyed
+        # it silently on the first applied link, with no way back. Generated
+        # configs carry the MATCH,TPROXY-MANAGER signature and are reproducible,
+        # so only foreign ones are copied.
+        #
+        # The copy has ONE dedicated name rather than a dated .bak.*: this must not
+        # be suppressed by unrelated backups the editor or the operator left in the
+        # directory, and it must not accumulate a file per applied link. Written
+        # once, then left alone -- it holds the last content that was not ours.
+        config_backup="$config_file.pre-managed"
+        backup_created=""
+        if [ -s "$config_file" ] && [ ! -e "$config_backup" ] \
+            && ! grep -q 'MATCH,TPROXY-MANAGER' "$config_file"; then
+            if cp "$config_file" "$config_backup" 2>/dev/null; then
+                backup_created=1
+                log_msg "сохранена копия пользовательского конфига Mihomo перед заменой: $config_backup"
+            else
+                log_msg "ошибка: не удалось сохранить копию конфига Mihomo, замена отменена"
+                rm -f "$provider_tmp" "$config_tmp"
+                return 1
+            fi
+        fi
+        if ! { mv "$provider_tmp" "$provider_file" && mv "$config_tmp" "$config_file"; }; then
+            # The live config was not replaced, so the slot must not stay spent:
+            # the next attempt has to be free to copy whatever is there by then.
+            [ -n "$backup_created" ] && rm -f "$config_backup"
+            rm -f "$provider_tmp" "$config_tmp"
+            log_msg "ошибка: не удалось применить сгенерированный конфиг Mihomo"
+            return 1
+        fi
     else
         rm -f "$provider_tmp" "$config_tmp"
         log_msg "ошибка: не удалось сгенерировать managed-конфиг Mihomo"
@@ -273,7 +303,35 @@ apply_singbox_generated() {
             log_msg "ошибка: generated sing-box config не прошёл проверку"
             return 1
         fi
-        mv "$outbounds_tmp" "$outbounds_file" && mv "$config_tmp" "$config_file" || return 1
+        # Same hazard as Mihomo above: this path is the managed config BY
+        # CONVENTION, not by proof -- nothing stops an operator from writing it by
+        # hand, and the first applied link would replace their work with no way
+        # back.
+        #
+        # sing-box rejects unknown JSON fields, so the generated config cannot
+        # carry a marker of its own; what identifies it is the inbound pair the
+        # generator always emits. A hand-written config that copies both of those
+        # tags is read as ours and loses its copy -- the same outcome as before
+        # this check, and the only case it does not improve.
+        config_backup="$config_file.pre-managed"
+        backup_created=""
+        if [ -s "$config_file" ] && [ ! -e "$config_backup" ] \
+            && ! { grep -q '"mixed-in"' "$config_file" && grep -q '"tproxy-in"' "$config_file"; }; then
+            if cp "$config_file" "$config_backup" 2>/dev/null; then
+                backup_created=1
+                log_msg "сохранена копия пользовательского конфига sing-box перед заменой: $config_backup"
+            else
+                log_msg "ошибка: не удалось сохранить копию конфига sing-box, замена отменена"
+                rm -f "$outbounds_tmp" "$config_tmp"
+                return 1
+            fi
+        fi
+        if ! { mv "$outbounds_tmp" "$outbounds_file" && mv "$config_tmp" "$config_file"; }; then
+            [ -n "$backup_created" ] && rm -f "$config_backup"
+            rm -f "$outbounds_tmp" "$config_tmp"
+            log_msg "ошибка: не удалось применить сгенерированный конфиг sing-box"
+            return 1
+        fi
     else
         rm -f "$outbounds_tmp" "$config_tmp"
         log_msg "ошибка: не удалось сгенерировать managed-конфиг sing-box"

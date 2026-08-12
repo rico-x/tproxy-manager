@@ -7,15 +7,16 @@
 # The suites need nixio and the LuCI Lua tree, so they cannot run on a
 # developer machine; they run on a router. What they must NOT do is test
 # whatever happens to be installed there, so this script stages the working
-# tree — the LuCI modules, the shared tproxy_manager libraries AND the usr/bin
-# scripts — into a temporary directory on the target, points package.path at it
-# and tells the suites where the staged executables are. The installed package is
+# tree — the LuCI modules, the shared tproxy_manager libraries, the usr/bin
+# scripts AND the watchdog's libexec helpers — into a temporary directory on the
+# target, points package.path at it and tells the suites where the staged
+# executables are. The installed package is
 # never written to, and nothing outside the staging directory and the suite's own
 # temp root is touched — which is what makes this safe to run against a live
 # router.
 #
-# Shell suites resolve their scripts through TPM_STAGE_BIN, falling back to
-# /usr/bin when it is unset. That fallback is why a suite run by hand still says
+# Shell suites resolve their scripts through TPM_STAGE_BIN and
+# TPM_STAGE_LIBEXEC, falling back to the installed paths when those are unset. That fallback is why a suite run by hand still says
 # which file it exercised: without the variable it checks the INSTALLED package,
 # which can be an older release than the tree being prepared.
 #
@@ -27,6 +28,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 MODULE_DIR="$ROOT/pkg/tproxy-manager/usr/lib/lua/luci/model/cbi/tproxy_manager"
 LIB_DIR="$ROOT/pkg/tproxy-manager/usr/lib/lua/tproxy_manager"
 BIN_DIR="$ROOT/pkg/tproxy-manager/usr/bin"
+LIBEXEC_DIR="$ROOT/pkg/tproxy-manager/usr/libexec/tproxy-manager/watchdog"
+DEFAULTS_FILE="$ROOT/pkg/tproxy-manager/etc/uci-defaults/90_tproxy_manager"
 TESTS_DIR="$ROOT/tests"
 STAGE="/tmp/tpm-test-stage"
 
@@ -57,10 +60,17 @@ run() { ssh ${SSH_ARGS[@]+"${SSH_ARGS[@]}"} "$TARGET" "$@"; }
 copy() { scp ${SCP_ARGS[@]+"${SCP_ARGS[@]}"} -q "$@"; }
 
 echo "== staging the working tree on $TARGET =="
-run "rm -rf $STAGE && mkdir -p $STAGE/lua/luci/model/cbi/tproxy_manager $STAGE/lua/tproxy_manager $STAGE/bin $STAGE/tests"
+run "rm -rf $STAGE && mkdir -p $STAGE/lua/luci/model/cbi/tproxy_manager/modules $STAGE/lua/tproxy_manager $STAGE/bin $STAGE/libexec $STAGE/tests"
 copy "$MODULE_DIR"/*.lua "$TARGET:$STAGE/lua/luci/model/cbi/tproxy_manager/"
+# The per-tab modules are a subdirectory, so the glob above does not reach them;
+# without this a suite checking one of them would silently read the INSTALLED copy.
+copy "$MODULE_DIR"/modules/*.lua "$TARGET:$STAGE/lua/luci/model/cbi/tproxy_manager/modules/"
 copy "$LIB_DIR"/*.lua "$TARGET:$STAGE/lua/tproxy_manager/"
 copy "$BIN_DIR"/* "$TARGET:$STAGE/bin/"
+copy "$LIBEXEC_DIR"/* "$TARGET:$STAGE/libexec/"
+# Staged, never run: the suite lifts one function out of it. Executing this file
+# would rewrite the router's own configuration.
+copy "$DEFAULTS_FILE" "$TARGET:$STAGE/uci-defaults"
 copy "$TESTS_DIR"/*.lua "$TESTS_DIR"/*.sh "$TARGET:$STAGE/tests/"
 # scp does not carry the executable bit unless asked; the suites run these
 # directly.
@@ -89,7 +99,7 @@ for suite in "$TESTS_DIR"/*.lua "$TESTS_DIR"/*.sh; do
       # libraries rather than the installed ones — otherwise a suite could pass
       # against a release that is already on the router while the change being
       # prepared is untested.
-      if ! run "LUA_PATH='$STAGED_LUA_PATH' TPM_STAGE_BIN=$STAGE/bin TPM_TEST_BASE=/tmp/tpm-test-run-sh sh $STAGE/tests/$name"; then
+      if ! run "LUA_PATH='$STAGED_LUA_PATH' TPM_STAGE_BIN=$STAGE/bin TPM_STAGE_LIBEXEC=$STAGE/libexec TPM_STAGE_DEFAULTS=$STAGE/uci-defaults TPM_STAGE_MODULES=$STAGE/lua/luci/model/cbi/tproxy_manager/modules TPM_TEST_BASE=/tmp/tpm-test-run-sh sh $STAGE/tests/$name"; then
         status=1
       fi
       ;;

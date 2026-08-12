@@ -1561,26 +1561,55 @@ local function render(ctx)
     function dv.cfgvalue()
       return [[
 <style>
-.wd-grid{display:grid;grid-template-columns:minmax(220px,340px) 1fr;gap:.35rem .6rem;align-items:center;max-width:960px}
-.wd-grid input[type="text"], .wd-grid input[type="number"], .wd-grid select{width:100%}
+.wd-grid{display:grid;grid-template-columns:minmax(200px,320px) 1fr;gap:var(--tpm-1) var(--tpm-3);align-items:center;max-width:var(--tpm-measure-wide)}
+.wd-grid input[type="text"], .wd-grid input[type="number"], .wd-grid select{width:100%;min-width:0}
 .wd-table{width:100%;border-collapse:collapse;table-layout:fixed;word-break:break-word}
-.wd-table th,.wd-table td{border:1px solid #e5e7eb;padding:.35rem;vertical-align:top}
-.wd-table th{background:#f9fafb}
-.wd-table tr.wd-active-row td{background:#ecfdf5!important;border-color:#86efac}
-.wd-table tr.wd-excluded-row td{background:#f3f4f6!important;color:#6b7280}
-.wd-table tr.wd-excluded-row .wd-code{color:#9ca3af}
-.wd-table .actions .cbi-button{margin:0 .2rem .2rem 0}
-.wd-code{font-family:monospace;font-size:.92em}
-.wd-details{margin-top:.6rem}
+.wd-table th,.wd-table td{border:1px solid var(--tpm-line);padding:.35rem;vertical-align:top}
+.wd-table th{background:var(--tpm-surface);color:inherit}
+/* State is carried by a stripe plus a tint composed from the theme's own colour,
+   not by a fixed light fill: #ecfdf5 under the theme's text measured 1.75. */
+.wd-table tr.wd-active-row td{background:var(--tpm-ok-tint)}
+.wd-table tr.wd-active-row td:first-child{box-shadow:inset 3px 0 0 var(--tpm-ok)}
+.wd-table tr.wd-excluded-row td{background:var(--tpm-neutral-tint);color:var(--tpm-muted)}
+.wd-table tr.wd-excluded-row .wd-code{color:var(--tpm-muted)}
+.wd-table .actions .cbi-button{margin:0 var(--tpm-1) var(--tpm-1) 0}
+.wd-table .tpm-num{font-variant-numeric:tabular-nums}
+.wd-code{font-family:var(--tpm-mono);font-size:var(--tpm-fs-code)}
+/* Status cell: the badge, then the timing on its own line, then the cooldown.
+   Inline after the badge the 8%-wide column broke the value away from its unit
+   ("OK · 700" / "ms"), which is what made the column look ragged. Each part is
+   unbreakable inside itself; the wrapping happens only between parts. */
+.wd-status{display:flex;flex-direction:column;align-items:flex-start;gap:.1rem}
+.wd-speed{
+  color:var(--tpm-muted);font-size:var(--tpm-fs-meta);
+  white-space:nowrap;font-variant-numeric:tabular-nums;
+}
+/* Label, date and time each on their own line, none of them breakable: a date
+   split across lines is unreadable, and in a 8-10% wide column that is exactly
+   what happened. */
+.wd-cooldown{display:flex;flex-direction:column;color:var(--tpm-muted);font-size:var(--tpm-fs-meta)}
+.wd-cooldown > span{white-space:nowrap}
+.wd-when{white-space:normal}
+.wd-when .d,.wd-when .t{display:block;white-space:nowrap;font-variant-numeric:tabular-nums}
+.wd-when .t{color:var(--tpm-muted);font-size:var(--tpm-fs-meta)}
+.wd-details{margin-top:var(--tpm-3)}
 .wd-details summary{cursor:pointer;font-weight:600}
-.wd-textarea{width:100%;font-family:monospace;font-size:.92em}
-.wd-active-badge{display:inline-block;margin-left:.25rem;padding:.05rem .32rem;border-radius:.3rem;background:#16a34a;color:#fff;font-size:.78em;font-weight:700}
-.happ-decrypt-actions{margin-top:.6rem;display:flex;gap:.35rem;flex-wrap:wrap}
-.wd-subblock{border:1px solid #e5e7eb;border-radius:.45rem;padding:.75rem;margin:.75rem 0}
+.wd-textarea{width:100%;max-width:100%;box-sizing:border-box;font-family:var(--tpm-mono);font-size:var(--tpm-fs-code)}
+.wd-active-badge{display:inline-block;margin-left:var(--tpm-1);padding:.05rem .32rem;border-radius:.3rem;background:var(--tpm-ok);color:var(--background-color-high,#fff);font-size:var(--tpm-fs-micro);font-weight:700}
+.happ-decrypt-actions{margin-top:var(--tpm-3);display:flex;gap:var(--tpm-1);flex-wrap:wrap}
+.wd-subblock{border:1px solid var(--tpm-line);border-radius:.45rem;padding:var(--tpm-3);margin:var(--tpm-3) 0}
 .wd-subblock h4{margin-top:0}
-.wd-share-url{display:flex;gap:.35rem}
-.wd-share-url input{width:100%}
-.wd-share-url button{min-width:2.4rem;padding-left:.45rem;padding-right:.45rem}
+/* the URL field must keep room to show the URL; min-width:0 lets flex shrink the
+   input instead of collapsing it to 60px next to the copy button */
+.wd-share-url{display:flex;gap:var(--tpm-1);flex-wrap:wrap}
+.wd-share-url input{flex:1 1 16rem;min-width:0}
+.wd-share-url button{flex:0 0 auto;min-width:2.4rem;padding-left:.45rem;padding-right:.45rem}
+/* summary above the link list: the numbers exist in the watchdog state already */
+.wd-summary{display:flex;flex-wrap:wrap;gap:var(--tpm-1) var(--tpm-3);align-items:baseline;margin:0 0 var(--tpm-2)}
+.wd-summary .n{font-family:var(--tpm-mono);font-variant-numeric:tabular-nums;font-weight:700;font-size:1.15em}
+.wd-summary .lbl{color:var(--tpm-muted);font-size:var(--tpm-fs-meta)}
+.wd-summary .ok .n{color:var(--tpm-ok)}
+.wd-summary .bad .n{color:var(--tpm-bad)}
 </style>
 ]]
     end
@@ -1681,7 +1710,7 @@ local function render(ctx)
       rows[#rows + 1] = "<div class='box'>"
       rows[#rows + 1] = "<details class='wd-details'" .. happ_open .. "><summary>Happ</summary>"
       rows[#rows + 1] = "<div class='wd-subblock'><h4>Happ capture</h4>"
-      rows[#rows + 1] = "<div style='color:#6b7280;margin-bottom:.5rem'>" .. _("Click Start capture, copy the link and open it from the phone in the app/browser that performs the subscription request. The router will save headers and body of the last request, then they can be used to fill the Happ subscription form.") .. "</div>"
+      rows[#rows + 1] = "<div style='color:var(--tpm-muted);margin-bottom:.5rem'>" .. _("Click Start capture, copy the link and open it from the phone in the app/browser that performs the subscription request. The router will save headers and body of the last request, then they can be used to fill the Happ subscription form.") .. "</div>"
       rows[#rows + 1] = string.format([[
 <div class="wd-grid">
   <label>%s</label><div>%s, %s: %s</div>
@@ -1723,7 +1752,7 @@ local function render(ctx)
         if last_request ~= "" then
           rows[#rows + 1] = "<details class='wd-details' open><summary>" .. _("Last capture request") .. "</summary><pre style='white-space:pre-wrap;max-height:18rem;overflow:auto;margin-top:.5rem'>" .. pcdata(last_request) .. "</pre></details>"
         else
-          rows[#rows + 1] = "<div style='margin-top:.5rem;color:#6b7280'>" .. _("No capture request has been saved yet.") .. "</div>"
+          rows[#rows + 1] = "<div style='margin-top:.5rem;color:var(--tpm-muted)'>" .. _("No capture request has been saved yet.") .. "</div>"
         end
       end
       rows[#rows + 1] = "</div>"
@@ -1731,7 +1760,7 @@ local function render(ctx)
       rows[#rows + 1] = string.format([[
 <div class="wd-subblock">
   <h4>Happ decrypt</h4>
-  <div style="color:#6b7280;margin-bottom:.5rem">
+  <div style="color:var(--tpm-muted);margin-bottom:.5rem">
     %s
     %s
   </div>
@@ -1754,9 +1783,9 @@ local function render(ctx)
         pcdata(happ_decrypt_output))
 
       rows[#rows + 1] = "<h4>" .. _("Subscription list") .. "</h4>"
-      rows[#rows + 1] = "<table class='wd-table'><thead><tr><th style='width:8%'>" .. _("Type") .. "</th><th style='width:6%'>ID</th><th style='width:16%'>" .. _("Name") .. "</th><th style='width:28%'>URL</th><th style='width:8%'>" .. _("Enabled") .. "</th><th style='width:10%'>" .. _("Timer") .. "</th><th style='width:12%'>" .. _("Status") .. "</th><th style='width:12%'>" .. _("Action") .. "</th></tr></thead><tbody>"
+      rows[#rows + 1] = "<div class='tpm-tablewrap'><table class='wd-table tpm-cards'><thead><tr><th style='width:8%'>" .. _("Type") .. "</th><th style='width:6%'>ID</th><th style='width:16%'>" .. _("Name") .. "</th><th style='width:28%'>URL</th><th style='width:8%'>" .. _("Enabled") .. "</th><th style='width:10%'>" .. _("Timer") .. "</th><th style='width:12%'>" .. _("Status") .. "</th><th style='width:12%'>" .. _("Action") .. "</th></tr></thead><tbody>"
       if #sub_db.subscriptions == 0 then
-        rows[#rows + 1] = "<tr><td colspan='8' style='color:#6b7280'>" .. _("No subscriptions configured") .. "</td></tr>"
+        rows[#rows + 1] = "<tr><td colspan='8' style='color:var(--tpm-muted)'>" .. _("No subscriptions configured") .. "</td></tr>"
       end
       for __, sub in ipairs(sub_db.subscriptions) do
         local st = sub.last_status or "never"
@@ -1766,16 +1795,16 @@ local function render(ctx)
         if is_active_sub then
           st_html = st_html .. " <span class='wd-active-badge'>ACTIVE</span>"
         end
-        local detail = sub.last_error and sub.last_error ~= "" and ("<div style='color:#b91c1c'>" .. pcdata(sub.last_error) .. "</div>") or ""
+        local detail = sub.last_error and sub.last_error ~= "" and ("<div style='color:var(--tpm-bad)'>" .. pcdata(sub.last_error) .. "</div>") or ""
         rows[#rows + 1] = string.format([[
 <tr%s>
-  <td>%s</td>
-  <td>%s</td>
-  <td>%s</td>
-  <td class="wd-code" title="%s">%s</td>
-  <td>%s</td>
-  <td>%s %s</td>
-  <td>%s<div style="color:#6b7280">links: %s<br>%s</div>%s</td>
+  <td data-th="]] .. pcdata(_("Type")) .. [[">%s</td>
+  <td data-th="ID" class="tpm-num">%s</td>
+  <td data-th="]] .. pcdata(_("Name")) .. [[">%s</td>
+  <td data-th="URL" class="wd-code" title="%s">%s</td>
+  <td data-th="]] .. pcdata(_("Enabled")) .. [[">%s</td>
+  <td data-th="]] .. pcdata(_("Timer")) .. [[" class="tpm-num">%s %s</td>
+  <td data-th="]] .. pcdata(_("Status")) .. [[">%s<div style="color:var(--tpm-muted)">links: %s<br>%s</div>%s</td>
   <td class="actions">
     <button class="cbi-button cbi-button-action" name="_sub_fetch" value="%s">%s</button>
     <button class="cbi-button cbi-button-action" name="_sub_edit_start" value="%s">%s</button>
@@ -1799,7 +1828,7 @@ local function render(ctx)
           pcdata(sub.id or ""), pcdata(_("Edit")),
           pcdata(sub.id or ""), pcdata(_("Delete subscription and its links?")), pcdata(_("Delete")))
       end
-      rows[#rows + 1] = "</tbody></table>"
+      rows[#rows + 1] = "</tbody></table></div>"
       rows[#rows + 1] = "<div style='margin-top:.5rem'><button class='cbi-button cbi-button-action' name='_sub_fetch_all' value='1'>" .. _("Update all subscriptions") .. "</button></div>"
 
       rows[#rows + 1] = string.format([[
@@ -1830,14 +1859,14 @@ local function render(ctx)
         <label>X-Real-Ip</label><input type="text" name="sub_h_real_ip" value="%s">
         <label>X-Forwarded-For</label><input type="text" name="sub_h_forwarded_for" value="%s">
       </div>
-      <div style="margin-top:.5rem;color:#6b7280">%s</div>
+      <div style="margin-top:.5rem;color:var(--tpm-muted)">%s</div>
       <textarea class="wd-textarea" name="sub_extra_headers" rows="4" spellcheck="false">%s</textarea>
     </details>
     <div style="margin-top:.6rem">
       <button class="cbi-button cbi-button-apply" name="_sub_save" value="1">%s</button>
       <button class="cbi-button cbi-button-reset" name="_sub_edit_cancel" value="1">%s</button>
     </div>
-    <div style="margin-top:.5rem;color:#6b7280">%s</div>
+    <div style="margin-top:.5rem;color:var(--tpm-muted)">%s</div>
   </div>
 </details>]],
         (edit_sub or capture_defaults) and "open" or "",
@@ -1898,9 +1927,28 @@ local function render(ctx)
           disabled)
       end
       rows[#rows + 1] = "<div class='box'>"
-      rows[#rows + 1] = "<table class='wd-table'><thead><tr><th style='width:9%'>" .. _("Source") .. "</th><th style='width:7%'>" .. _("Protocol") .. "</th><th style='width:8%'>" .. _("Shared") .. "</th><th style='width:13%'>" .. _("Comment") .. "</th><th style='width:31%'>" .. _("Proxy link") .. "</th><th style='width:9%'>" .. _("Status") .. "</th><th style='width:10%'>" .. _("Last check") .. "</th><th style='width:13%'>" .. _("Action") .. "</th></tr></thead><tbody>"
+      -- Summary before detail: 55 rows of table cannot be scanned for "how many
+      -- links actually work". The three numbers come from the same per-link state
+      -- files the table itself renders, so they cannot disagree with the rows.
+      do
+        local n_ok, n_bad, n_excluded = 0, 0, 0
+        for __, entry in ipairs(links or {}) do
+          local st = entry.state and entry.state.LAST_STATUS or ""
+          if st == "alive" then n_ok = n_ok + 1
+          elseif st == "dead" then n_bad = n_bad + 1 end
+          if entry.excluded then n_excluded = n_excluded + 1 end
+        end
+        rows[#rows + 1] = string.format([[
+<div class="wd-summary">
+  <span class="ok"><span class="n">%d</span> <span class="lbl">OK</span></span>
+  <span class="bad"><span class="n">%d</span> <span class="lbl">Error</span></span>
+  <span><span class="n">%d</span> <span class="lbl">%s</span></span>
+  <span class="lbl">%s: <span class="n">%d</span></span>
+</div>]], n_ok, n_bad, n_excluded, pcdata(_("Excluded")), pcdata(_("Links total")), #(links or {}))
+      end
+      rows[#rows + 1] = "<div class='tpm-tablewrap'><table class='wd-table tpm-cards'><thead><tr><th style='width:8%'>" .. _("Source") .. "</th><th style='width:6%'>" .. _("Protocol") .. "</th><th style='width:6%'>" .. _("Shared") .. "</th><th style='width:12%'>" .. _("Comment") .. "</th><th style='width:28%'>" .. _("Proxy link") .. "</th><th style='width:8%'>" .. _("Status") .. "</th><th style='width:10%'>" .. _("Last check") .. "</th><th style='width:22%'>" .. _("Action") .. "</th></tr></thead><tbody>"
       if #links == 0 then
-        rows[#rows + 1] = "<tr><td colspan='8' style='color:#6b7280'>" .. _("Link list is empty") .. "</td></tr>"
+        rows[#rows + 1] = "<tr><td colspan='8' style='color:var(--tpm-muted)'>" .. _("Link list is empty") .. "</td></tr>"
       end
       for i, entry in ipairs(links) do
         local label, checked = helpers.status_label(entry, pcdata)
@@ -1924,7 +1972,7 @@ local function render(ctx)
   <td>%s</td>
   <td><span class="svc-badge">%s</span></td>
   <td style="text-align:center">%s</td>
-  <td><input type="hidden" name="wd_edit_hash" value="%s"><div style="color:#6b7280">%s</div></td>
+  <td><input type="hidden" name="wd_edit_hash" value="%s"><div style="color:var(--tpm-muted)">%s</div></td>
   <td><input type="text" name="wd_edit_link" value="%s" style="width:100%%"></td>
   <td>%s</td>
   <td>%s</td>
@@ -1933,7 +1981,7 @@ local function render(ctx)
     <button class="cbi-button cbi-button-reset" name="_wd_edit_cancel" value="1">%s</button>
   </td>
 </tr>]],
-            row_class, source_html, pcdata(entry.protocol_label or "-"), share_checkbox(entry), pcdata(entry.hash), pcdata(entry.comment or "—"), pcdata(entry.raw_link or ""), label, pcdata(checked),
+            row_class, source_html, pcdata(entry.protocol_label or "-"), share_checkbox(entry), pcdata(entry.hash), pcdata(entry.comment or "—"), pcdata(entry.raw_link or ""), label, helpers.when_html(checked, pcdata),
             pcdata(_("Save")), pcdata(_("Cancel")))
         else
           local action_buttons
@@ -1976,13 +2024,13 @@ local function render(ctx)
           end
           rows[#rows + 1] = string.format([[
 <tr%s>
-  <td>%s</td>
-  <td><span class="svc-badge">%s</span></td>
-  <td style="text-align:center">%s</td>
-  <td>%s</td>
-  <td class="wd-code" title="%s">%s</td>
-  <td>%s</td>
-  <td>%s</td>
+  <td data-th="]] .. pcdata(_("Source")) .. [[">%s</td>
+  <td data-th="]] .. pcdata(_("Protocol")) .. [["><span class="svc-badge">%s</span></td>
+  <td data-th="]] .. pcdata(_("Shared")) .. [[" style="text-align:center">%s</td>
+  <td data-th="]] .. pcdata(_("Comment")) .. [[">%s</td>
+  <td data-th="]] .. pcdata(_("Proxy link")) .. [[" class="wd-code" title="%s"><span class="wd-clamp">%s</span></td>
+  <td data-th="]] .. pcdata(_("Status")) .. [["><span class="wd-status">%s</span></td>
+  <td data-th="]] .. pcdata(_("Last check")) .. [[" class="tpm-num wd-when">%s</td>
   <td class="actions">
 %s
   </td>
@@ -1995,7 +2043,7 @@ local function render(ctx)
             pcdata(entry.raw_link or ""),
             pcdata(entry.link or ""),
             label,
-            pcdata(checked),
+            helpers.when_html(checked, pcdata),
             action_buttons)
         end
       end
@@ -2003,16 +2051,16 @@ local function render(ctx)
 <tr>
   <td><span class="svc-badge">local</span></td>
   <td><span class="svc-badge">-</span></td>
-  <td style="color:#6b7280;text-align:center">—</td>
-  <td style="color:#6b7280">]] .. pcdata(_("New link file line")) .. [[</td>
+  <td style="color:var(--tpm-muted);text-align:center">—</td>
+  <td style="color:var(--tpm-muted)">]] .. pcdata(_("New link file line")) .. [[</td>
   <td><input type="text" name="wd_add_link" placeholder="vless:// or hysteria2://..." style="width:100%"></td>
-  <td colspan="2" style="color:#6b7280">]] .. pcdata(_("Comment will be taken from the part after # inside the link")) .. [[</td>
+  <td colspan="2" style="color:var(--tpm-muted)">]] .. pcdata(_("Comment will be taken from the part after # inside the link")) .. [[</td>
   <td class="actions"><button class="cbi-button cbi-button-apply" name="_wd_add" value="1">]] .. pcdata(_("Add")) .. [[</button></td>
 </tr>]]
-      rows[#rows + 1] = "</tbody></table>"
+      rows[#rows + 1] = "</tbody></table></div>"
       rows[#rows + 1] = "<details class='wd-details'><summary>" .. _("LINKS_FILE editor") .. "</summary><div class='box editor-wrap editor-wide' style='margin-top:.5rem'>"
       rows[#rows + 1] = string.format("<div class='wd-grid'><label>LINKS_FILE</label><input type='text' name='watchdog_links_file' value='%s'></div>", pcdata(links_path))
-      rows[#rows + 1] = "<div style='margin:.5rem 0;color:#6b7280'>" .. _("For bulk paste: one proxy link per line. Empty lines and lines starting with # are allowed.") .. "</div>"
+      rows[#rows + 1] = "<div style='margin:.5rem 0;color:var(--tpm-muted)'>" .. _("For bulk paste: one proxy link per line. Empty lines and lines starting with # are allowed.") .. "</div>"
       rows[#rows + 1] = string.format("<textarea class='wd-textarea' name='watchdog_links_text' rows='12' spellcheck='false'>%s</textarea>", pcdata(read_file(links_path)))
       rows[#rows + 1] = "<div style='margin-top:.5rem'><button class='cbi-button cbi-button-apply' name='_watchdog_save_links_text' value='1'>" .. _("Save LINKS_FILE") .. "</button></div>"
       rows[#rows + 1] = "</div></details></div>"
@@ -2039,14 +2087,14 @@ local function render(ctx)
       rows[#rows + 1] = "<details class='wd-details'><summary>" .. _("Shared router subscription") .. "</summary><div class='box' style='margin-top:.5rem'>"
       if share_auth_mode == "token" then
         if share_token == "" then
-          rows[#rows + 1] = "<div style='color:#b45309;margin-bottom:.6rem'>" ..
+          rows[#rows + 1] = "<div style='color:var(--tpm-warn);margin-bottom:.6rem'>" ..
             _("Token mode is selected but no token has been generated yet - the URLs below will not work until you generate one.") .. "</div>"
         else
-          rows[#rows + 1] = "<div style='color:#166534;margin-bottom:.6rem'>" ..
+          rows[#rows + 1] = "<div style='color:var(--tpm-ok);margin-bottom:.6rem'>" ..
             _("These URLs only work with the current token. Rotating the token immediately invalidates any link shared before.") .. "</div>"
         end
       else
-        rows[#rows + 1] = "<div style='color:#b45309;margin-bottom:.6rem'>" ..
+        rows[#rows + 1] = "<div style='color:var(--tpm-warn);margin-bottom:.6rem'>" ..
           _("These subscription URLs are public. Anyone who knows the URL can download the exported proxy list.") .. "</div>"
       end
       rows[#rows + 1] = string.format([[
@@ -2098,7 +2146,7 @@ local function render(ctx)
       end
 
       rows[#rows + 1] = string.format([[
-<table class="wd-table" style="margin-top:.7rem">
+<div class="tpm-tablewrap"><table class="wd-table tpm-cards" style="margin-top:var(--tpm-3)">
   <thead><tr><th style="width:16%%">%s</th><th style="width:84%%">URL</th></tr></thead>
   <tbody>
     <tr>
@@ -2110,8 +2158,8 @@ local function render(ctx)
       <td><div class="wd-share-url"><input id="share_url_base64" type="text" readonly value="%s" onclick="this.select()"><button type="button" class="cbi-button cbi-button-action" title="%s" onclick="var e=document.getElementById('share_url_base64');e.select();if(navigator.clipboard){navigator.clipboard.writeText(e.value);}else{document.execCommand('copy');}">📋</button></div></td>
     </tr>
   </tbody>
-</table>
-<div style="margin-top:.5rem;color:#6b7280">%s</div>]],
+</table></div>
+<div style="margin-top:.5rem;color:var(--tpm-muted)">%s</div>]],
         pcdata(_("Format")),
         pcdata(plain_url),
         pcdata(_("Copy")),
@@ -2329,7 +2377,7 @@ local function render(ctx)
       </select>
       <label>]] .. pcdata(_("Template file")) .. [[</label><input type="text" name="watchdog_template_path" value="]] .. pcdata(current_path) .. [[">
     </div>
-    <div style="margin-bottom:.4rem;color:#6b7280">]] .. pcdata(_("Choose a VLESS or Hysteria 2 template, edit it and save it back to its own file. The active path is also stored in UCI settings.")) .. [[</div>
+    <div style="margin-bottom:.4rem;color:var(--tpm-muted)">]] .. pcdata(_("Choose a VLESS or Hysteria 2 template, edit it and save it back to its own file. The active path is also stored in UCI settings.")) .. [[</div>
     <textarea class="wd-textarea" name="watchdog_template_text" rows="18" spellcheck="false">]] .. pcdata(template_data[selected.id] and template_data[selected.id].text or "") .. [[</textarea>
     <div style="height:5px"></div>
     <div class="box editor-wrap editor-680" id="watchdog-template-status-box">
@@ -2449,10 +2497,10 @@ local function render(ctx)
     try {
       JSON.parse(normalizeTemplateJsonc(stripJsonComments(ta.value)));
       badge.textContent = ']] .. pcdata(_("Template JSONC is valid")) .. [[';
-      badge.style.color = '#16a34a';
+      badge.style.color = 'var(--tpm-ok)';
     } catch(e) {
       badge.textContent = '';
-      badge.style.color = '#dc2626';
+      badge.style.color = 'var(--tpm-bad)';
       badge.appendChild(document.createTextNode(']] .. pcdata(_("JSONC error:").." ") .. [[' + e.message + ' '));
       var m = String(e.message || '').match(/position (\d+)/);
       if (m) {
@@ -2516,7 +2564,7 @@ local function render(ctx)
       return table.concat(out, "\n")
     end
     function dv.cfgvalue()
-      return [[<details class="wd-details"><summary><strong>]] .. pcdata(_("Watchdog log")) .. [[</strong></summary><div class="box editor-wrap" style="margin-top:.5rem"><div style="margin-bottom:.5rem"><button class="cbi-button cbi-button-remove" name="_watchdog_clear_log" value="1">]] .. pcdata(_("Clear log")) .. [[</button></div><style>.wd-log-heartbeat{color:#9ca3af}</style><pre style="white-space:pre-wrap;max-height:30rem;overflow:auto">]] ..
+      return [[<details class="wd-details"><summary><strong>]] .. pcdata(_("Watchdog log")) .. [[</strong></summary><div class="box editor-wrap" style="margin-top:.5rem"><div style="margin-bottom:.5rem"><button class="cbi-button cbi-button-remove" name="_watchdog_clear_log" value="1">]] .. pcdata(_("Clear log")) .. [[</button></div><style>.wd-log-heartbeat{color:var(--tpm-muted)}</style><pre style="white-space:pre-wrap;max-height:30rem;overflow:auto">]] ..
              render_log_lines(helpers.watchdog_log()) .. [[</pre></div></details>]]
     end
   end

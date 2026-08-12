@@ -262,16 +262,42 @@ local function render_backup_upload_form(err_msg)
     local msg_html = ""
     if err_msg and err_msg ~= "" then
         msg_html = "<div style='padding:.6rem 1rem;margin-bottom:1rem;border:1px solid #fecaca;" ..
-            "background:#fef2f2;color:#b91c1c;border-radius:.4rem'>" .. pcdata(err_msg) .. "</div>"
+            "background:var(--page-surface);color:var(--page-fg);border-left:3px solid #d1564f;border-radius:.4rem'>" .. pcdata(err_msg) .. "</div>"
     end
     http.write(([[<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>%s</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
-body{font-family:sans-serif;max-width:560px;margin:3rem auto;padding:0 1rem;color:#111}
-.cbi-button{padding:.45rem 1rem;border-radius:.4rem;border:1px solid #999;background:#f3f4f6;cursor:pointer;font-size:1rem}
-input[type=file]{margin:1rem 0;display:block}
-a{color:#2563eb}
+/* This page builds its own <head>, so it gets none of the LuCI theme. It used to
+   set color:#111 with no background, which meant the browser's white sheet in the
+   middle of a dark admin panel. color-scheme makes the browser paint the correct
+   canvas, and the colours follow the same scheme rather than assuming light. */
+:root{
+  color-scheme:light dark;
+  --page-fg:#111318; --page-bg:#ffffff; --page-muted:#4a5261;
+  --page-line:#c9ced6; --page-surface:#f2f4f7; --page-link:#0b6fa4;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --page-fg:#e6e9ee; --page-bg:#222222; --page-muted:#b3b9c2;
+    --page-line:#454545; --page-surface:#2c2c2c; --page-link:#4da1c0;
+  }
+}
+body{
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;
+  max-width:34rem;margin:3rem auto;padding:0 1rem;
+  color:var(--page-fg);background:var(--page-bg);
+}
+h3{margin-top:0}
+p{color:var(--page-muted)}
+.cbi-button{
+  padding:.45rem 1rem;border-radius:.4rem;border:1px solid var(--page-line);
+  background:var(--page-surface);color:var(--page-fg);cursor:pointer;font-size:1rem;
+}
+.cbi-button:hover{border-color:var(--page-link)}
+input[type=file]{margin:1rem 0;display:block;max-width:100%%;color:var(--page-fg)}
+a{color:var(--page-link)}
+:focus-visible{outline:2px solid var(--page-link);outline-offset:2px}
 </style></head>
 <body>
 <h3>%s</h3>

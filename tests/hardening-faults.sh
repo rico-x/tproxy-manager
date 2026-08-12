@@ -298,6 +298,271 @@ else
 fi
 
 ##########################################################################
+group "MANAGED CONFIG APPLY: a profile we did not write is never lost"
+##########################################################################
+# Observed for real: a hand-written /etc/mihomo/tproxy-manager.yaml (providers,
+# sniffer, GEOSITE rules) was replaced by the generated managed config on the
+# first applied link. The `mv` had no copy behind it, so 108 lines of somebody's
+# own configuration were gone with nothing to restore from.
+#
+# The copy goes to ONE dedicated name, <config>.pre-managed: it must not be
+# suppressed by unrelated .bak.* files sitting in the same directory (there were
+# such files on the router where this happened, so an `ls .bak.*` test would
+# still have lost the profile), and it must not grow a file per applied link.
+#
+# These cases call the real apply function with stub converters, so the guard is
+# exercised where it lives rather than re-implemented here.
+RA="${TPM_STAGE_LIBEXEC:-/usr/libexec/tproxy-manager/watchdog}/render_apply.sh"
+if [ -f "$RA" ]; then
+  printf '  (apply path under test: %s)\n' "$RA"
+  MW="$BASE/apply"
+  mkdir -p "$MW"
+  cat > "$MW/conv-mihomo" <<'CONV'
+#!/bin/sh
+for a in "$@"; do
+  [ "$a" = "--provider" ] && { printf 'proxies: []\n'; exit 0; }
+done
+printf 'mixed-port: 7890\nmode: rule\nrules:\n  - MATCH,DIRECT\n'
+CONV
+  cat > "$MW/conv-singbox" <<'CONV'
+#!/bin/sh
+for a in "$@"; do
+  [ "$a" = "--outbounds" ] && { printf '[]\n'; exit 0; }
+done
+printf '{ "log": { "level": "warn" }, "inbounds": [ { "type": "mixed", "tag": "mixed-in", "listen": "127.0.0.1", "listen_port": 10808 } ], "outbounds": [ { "type": "direct", "tag": "direct" } ], "route": { "final": "direct" } }\n'
+CONV
+  chmod +x "$MW/conv-mihomo" "$MW/conv-singbox"
+  printf '#!/bin/sh\nexit 0\n' > "$MW/svc"
+  chmod +x "$MW/svc"
+
+  # apply_<engine>_generated in a subshell: only the paths below are touched, and
+  # the service it "restarts" is the no-op stub above.
+  apply_as() { # apply_as <engine> <config_file>
+    (
+      set -u
+      LOG_FILE="$MW/log"; OUTBOUND_FILE="$MW/out"; TPROXY_PORT=61219
+      SERVICE_PATH="$MW/svc"; RESTART_CMD=restart
+      PROXY2MIHOMO="$MW/conv-mihomo"; PROXY2SINGBOX="$MW/conv-singbox"
+      MIHOMO_PROVIDER_FILE="$MW/provider.yaml"; MIHOMO_CONFIG_FILE="$2"
+      SINGBOX_OUTBOUNDS_FILE="$MW/outbounds.json"; SINGBOX_CONFIG_FILE="$2"
+      log_msg() { printf '%s\n' "$*" >> "$MW/log"; }
+      # shellcheck source=/dev/null
+      . "$RA"
+      : > "$MW/links"
+      "apply_${1}_generated" "$MW/links" >/dev/null 2>&1
+      printf '%s' "$?"
+    )
+  }
+
+  # 1. foreign config, empty slot -> copied aside, then replaced
+  C="$MW/foreign.yaml"
+  printf 'proxy-providers:\n  mine: {}\n# hand written\n' > "$C"
+  ORIG="$(cat "$C")"
+  check "mihomo: apply succeeded" "$(apply_as mihomo "$C")" "0"
+  check "mihomo: the profile was copied aside" "$(cat "$C.pre-managed" 2>/dev/null)" "$ORIG"
+  check "mihomo: the live config was replaced" \
+    "$(grep -c 'mixed-port' "$C")" "1"
+
+  # 2. an unrelated .bak.* must not suppress the copy -- the hole that lost the
+  #    real profile, since the directory already had backups from an earlier save
+  C="$MW/with-bak.yaml"
+  printf 'proxy-providers:\n  mine: {}\n' > "$C"
+  ORIG="$(cat "$C")"
+  printf 'unrelated\n' > "$C.bak.20260802-000000"
+  check "mihomo: apply succeeded" "$(apply_as mihomo "$C")" "0"
+  check "mihomo: an old .bak.* does not suppress the copy" \
+    "$(cat "$C.pre-managed" 2>/dev/null)" "$ORIG"
+
+  # 3. the slot is written once: a second apply must not overwrite the original
+  C="$MW/twice.yaml"
+  printf 'first: version\n' > "$C"
+  apply_as mihomo "$C" >/dev/null
+  printf 'second: version\n' > "$C"
+  apply_as mihomo "$C" >/dev/null
+  check "mihomo: the slot still holds the FIRST foreign content" \
+    "$(cat "$C.pre-managed" 2>/dev/null)" "first: version"
+
+  # 4. our own generated config is reproducible, so it is not worth a copy
+  C="$MW/generated.yaml"
+  printf 'mode: rule\nrules:\n  - MATCH,TPROXY-MANAGER\n' > "$C"
+  apply_as mihomo "$C" >/dev/null
+  check "mihomo: a generated config is not copied" \
+    "$([ -e "$C.pre-managed" ] && echo yes || echo no)" "no"
+
+  # 5. sing-box has the same convention-only path. It cannot carry a marker
+  #    (unknown JSON fields are rejected), so the generator's inbound pair is
+  #    what identifies our own output.
+  C="$MW/foreign.json"
+  printf '{ "outbounds": [ { "type": "direct", "tag": "direct" } ], "route": { "final": "direct" } }\n' > "$C"
+  ORIG="$(cat "$C")"
+  check "sing-box: apply succeeded" "$(apply_as singbox "$C")" "0"
+  check "sing-box: the profile was copied aside" "$(cat "$C.pre-managed" 2>/dev/null)" "$ORIG"
+
+  C="$MW/generated.json"
+  printf '{ "inbounds": [ { "type": "mixed", "tag": "mixed-in" }, { "type": "tproxy", "tag": "tproxy-in" } ], "outbounds": [ { "type": "direct", "tag": "direct" } ], "route": { "final": "direct" } }\n' > "$C"
+  apply_as singbox "$C" >/dev/null
+  check "sing-box: a generated config is not copied" \
+    "$([ -e "$C.pre-managed" ] && echo yes || echo no)" "no"
+
+  # 6. ORDERING: a run that generates nothing must not spend the slot. Taking the
+  #    copy before generation meant a failed build burned it on version A; the
+  #    user then fixed their config to version B, the next build succeeded, and B
+  #    was replaced with the slot still holding A.
+  C="$MW/failed-build.yaml"
+  printf 'version: A\n' > "$C"
+  BROKEN="$MW/conv-broken"
+  printf '#!/bin/sh\nexit 1\n' > "$BROKEN"
+  chmod +x "$BROKEN"
+  (
+    set -u
+    LOG_FILE="$MW/log"; OUTBOUND_FILE="$MW/out"; TPROXY_PORT=61219
+    SERVICE_PATH="$MW/svc"; RESTART_CMD=restart
+    PROXY2MIHOMO="$BROKEN"; PROXY2SINGBOX="$BROKEN"
+    MIHOMO_PROVIDER_FILE="$MW/provider.yaml"; MIHOMO_CONFIG_FILE="$C"
+    log_msg() { printf '%s\n' "$*" >> "$MW/log"; }
+    # shellcheck source=/dev/null
+    . "$RA"
+    : > "$MW/links"
+    apply_mihomo_generated "$MW/links" >/dev/null 2>&1
+  )
+  check "mihomo: a failed build does not spend the slot" \
+    "$([ -e "$C.pre-managed" ] && echo yes || echo no)" "no"
+  check "  and the live config is untouched" "$(cat "$C")" "version: A"
+  # The user then edits, and the next successful apply must copy THAT version.
+  printf 'version: B\n' > "$C"
+  apply_as mihomo "$C" >/dev/null
+  check "  the copy holds the version that was actually replaced" \
+    "$(cat "$C.pre-managed" 2>/dev/null)" "version: B"
+
+  # 7. ORDERING: a promotion that fails must release the slot again.
+  #    `mv` is shadowed rather than given a hostile target: `mv file dir` succeeds
+  #    by moving the file INSIDE dir, so a directory injects nothing.
+  C="$MW/failed-promote.yaml"
+  printf 'version: A\n' > "$C"
+  mkdir -p "$MW/failbin"
+  printf '#!/bin/sh\nexit 1\n' > "$MW/failbin/mv"
+  chmod +x "$MW/failbin/mv"
+  (
+    set -u
+    PATH="$MW/failbin:$PATH"
+    LOG_FILE="$MW/log"; OUTBOUND_FILE="$MW/out"; TPROXY_PORT=61219
+    SERVICE_PATH="$MW/svc"; RESTART_CMD=restart
+    PROXY2MIHOMO="$MW/conv-mihomo"; PROXY2SINGBOX="$MW/conv-singbox"
+    MIHOMO_PROVIDER_FILE="$MW/provider.yaml"; MIHOMO_CONFIG_FILE="$C"
+    log_msg() { printf '%s\n' "$*" >> "$MW/log"; }
+    # shellcheck source=/dev/null
+    . "$RA"
+    : > "$MW/links"
+    apply_mihomo_generated "$MW/links" >/dev/null 2>&1
+  )
+  check "mihomo: a failed promotion releases the slot" \
+    "$([ -e "$C.pre-managed" ] && echo yes || echo no)" "no"
+  check "  and leaves the live config alone" "$(cat "$C")" "version: A"
+  check "  and leaves no temp file behind" \
+    "$(find "$MW" -name '*.tmp.*' | wc -l | tr -d ' ')" "0"
+
+  # The LuCI-side builder must take the copy in the same place, between the
+  # validation and the mv, not before the generation.
+  MOD="${TPM_STAGE_MODULES:-/usr/lib/lua/luci/model/cbi/tproxy_manager/modules}/mihomo.lua"
+  if [ -f "$MOD" ]; then
+    BUILDER="$BASE/builder.lua"
+    awk '/^local function build_managed_config/,/^end$/' "$MOD" > "$BUILDER"
+    VALIDATED="$(grep -n 'run_cmd_capture(build)' "$BUILDER" | head -1 | cut -d: -f1)"
+    COPIED="$(grep -n '\.pre-managed' "$BUILDER" | head -1 | cut -d: -f1)"
+    check "the builder validates before it copies" \
+      "$([ -n "$VALIDATED" ] && [ -n "$COPIED" ] && [ "$VALIDATED" -lt "$COPIED" ] && echo yes || echo no)" "yes"
+    check "  and promotes only after copying" \
+      "$([ -n "$COPIED" ] && [ "$COPIED" -lt "$(grep -n 'run_cmd_capture(promote)' "$BUILDER" | head -1 | cut -d: -f1)" ] && echo yes || echo no)" "yes"
+    check "  and releases the slot if the promotion fails" \
+      "$(grep -c 'if backup_created then fs.remove(backup) end' "$BUILDER")" "1"
+  fi
+
+else
+  printf '  (render_apply.sh is not installed on this system; skipped)\n'
+fi
+
+##########################################################################
+group "MIHOMO MODE MIGRATION: an upgrade must not leave managed rules dead"
+##########################################################################
+# The generated Mihomo config shipped `mode: global`, under which mihomo ignores
+# `rules` entirely and routes through the built-in GLOBAL selector -- so every
+# managed rule was dead and every link probe measured DIRECT connectivity (2 of
+# 63 links "alive" against Xray's 43 of 53 on the same list). The generator was
+# fixed, but uci-defaults keeps an existing config (`[ ! -s ... ]`), so an
+# upgrade would have left users on the broken mode.
+#
+# The migration must rewrite the key ONLY in configs this package generated, and
+# only the top-level key -- a nested `mode: global` inside somebody's proxy group
+# is theirs, not ours.
+DEFAULTS="${TPM_STAGE_DEFAULTS:-/etc/uci-defaults/90_tproxy_manager}"
+[ -f "$DEFAULTS" ] || DEFAULTS=/rom/etc/uci-defaults/90_tproxy_manager
+if [ -f "$DEFAULTS" ]; then
+  printf '  (migration under test: %s)\n' "$DEFAULTS"
+  MIG="$BASE/migrate"
+  mkdir -p "$MIG"
+  # The function is lifted out of the script: the rest of that file writes UCI at
+  # load time and cannot be sourced.
+  eval "$(awk '/^migrate_mihomo_mode\(\) \{$/,/^\}$/' "$DEFAULTS")"
+
+  mode_of() { sed -n 's/^mode:[[:space:]]*\(.*[^[:space:]]\)[[:space:]]*$/\1/p' "$1" | sed -n 1p; }
+
+  # 1. our own generated config: MATCH,TPROXY-MANAGER is the signature
+  F="$MIG/generated.yaml"
+  printf 'mode: global\nrules:\n  - MATCH,TPROXY-MANAGER\n' > "$F"
+  migrate_mihomo_mode "$F" >/dev/null 2>&1
+  check "a generated config is migrated to rule" "$(mode_of "$F")" "rule"
+  check "  its rules survived" "$(grep -c 'MATCH,TPROXY-MANAGER' "$F")" "1"
+
+  # 2. the placeholder uci-defaults writes on a fresh install
+  F="$MIG/placeholder.yaml"
+  printf 'mode: global\nproxy-groups:\n  - name: TPROXY-MANAGER\nrules:\n  - MATCH,DIRECT\n' > "$F"
+  migrate_mihomo_mode "$F" >/dev/null 2>&1
+  check "the shipped placeholder is migrated too" "$(mode_of "$F")" "rule"
+
+  # 3. already correct: nothing to do, and no backup litter
+  F="$MIG/already.yaml"
+  printf 'mode: rule\nrules:\n  - MATCH,TPROXY-MANAGER\n' > "$F"
+  BEFORE="$(cat "$F")"
+  migrate_mihomo_mode "$F" >/dev/null 2>&1
+  check "a config already on rule is untouched" "$(cat "$F")" "$BEFORE"
+  check "  and no backup was made" "$(ls "$MIG" | grep -c 'already.yaml.bak')" "0"
+
+  # 4. somebody else's config keeps the mode they chose
+  F="$MIG/foreign.yaml"
+  printf 'mode: global\nproxy-providers:\n  mine: {}\nrules:\n  - MATCH,proxy\n' > "$F"
+  BEFORE="$(cat "$F")"
+  migrate_mihomo_mode "$F" >/dev/null 2>&1
+  check "a foreign config is left as its owner wrote it" "$(cat "$F")" "$BEFORE"
+
+  # 5. a nested key is not a top-level mode
+  F="$MIG/nested.yaml"
+  printf 'mode: rule\nproxy-groups:\n  - name: TPROXY-MANAGER\n    mode: global\nrules:\n  - MATCH,TPROXY-MANAGER\n' > "$F"
+  migrate_mihomo_mode "$F" >/dev/null 2>&1
+  check "a nested mode: global is not rewritten" "$(grep -c '    mode: global' "$F")" "1"
+
+  # 6. the original is recoverable
+  F="$MIG/backup.yaml"
+  printf 'mode: global\nrules:\n  - MATCH,TPROXY-MANAGER\n' > "$F"
+  migrate_mihomo_mode "$F" >/dev/null 2>&1
+  check "the pre-migration config is kept" \
+    "$(cat "$MIG"/backup.yaml.bak.* 2>/dev/null | grep -c '^mode: global$')" "1"
+
+  # 7. an absent config is not created
+  F="$MIG/absent.yaml"
+  migrate_mihomo_mode "$F" >/dev/null 2>&1
+  check "an absent config is not created" "$([ -e "$F" ] && echo yes || echo no)" "no"
+
+  # And the generator itself must no longer emit the broken mode.
+  P2M="$BIN_DIR/proxy2mihomo.lua"
+  if [ -f "$P2M" ]; then
+    check "the generator emits mode: rule" "$(grep -c '"mode: rule"' "$P2M")" "1"
+    check "  and no longer emits mode: global" "$(grep -c '"mode: global"' "$P2M")" "0"
+  fi
+else
+  printf '  (uci-defaults not present on this system; skipped)\n'
+fi
+
+##########################################################################
 cd /
 rm -rf "$BASE"
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

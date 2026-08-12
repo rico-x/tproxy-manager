@@ -171,6 +171,16 @@ function M.find_entry_index(entries, hash)
   return nil
 end
 
+-- "2026-08-12 08:51:19" in a 10%-wide column wrapped at the space, which is
+-- readable by luck rather than by design. Date and time become two explicit
+-- unbreakable lines instead.
+function M.when_html(value, pcdata)
+  local text = tostring(value or "-")
+  local d, t = text:match("^(%S+)%s+(%S+)$")
+  if not d then return "<span class='d'>" .. pcdata(text) .. "</span>" end
+  return "<span class='d'>" .. pcdata(d) .. "</span><span class='t'>" .. pcdata(t) .. "</span>"
+end
+
 function M.status_label(entry, pcdata)
   local state = entry.state or {}
   local status = state.LAST_STATUS or "unknown"
@@ -183,18 +193,30 @@ function M.status_label(entry, pcdata)
   end
   local speed = ""
   if request_text ~= "" and request_text ~= "-" then
-    speed = " <span style='color:#6b7280'>· " .. pcdata(request_text) .. "</span>"
+    -- Own line, and never broken inside: inline after the badge the narrow Status
+    -- column split the value from its unit ("OK · 700" / "ms").
+    speed = "<span class='wd-speed'>" .. pcdata(request_text) .. "</span>"
   end
   if status == "alive" then
     return "<span class='svc-badge ok'>OK</span>" .. speed, checked
   elseif status == "dead" then
     local suffix = ""
     if cooldown ~= "" and cooldown ~= "-" then
-      suffix = " <span style='color:#9ca3af'>(" .. _("excluded until") .. " " .. pcdata(cooldown) .. ")</span>"
+      -- "excluded until 2026-08-12 14:52:31" in a narrow column broke wherever the
+      -- line happened to end, splitting the date itself. Label, date and time are
+      -- separate unbreakable lines instead.
+      local cd_date, cd_time = tostring(cooldown):match("^(%S+)%s+(%S+)$")
+      if cd_date then
+        suffix = "<span class='wd-cooldown'><span>" .. _("excluded until") .. "</span>" ..
+                 "<span>" .. pcdata(cd_date) .. "</span><span>" .. pcdata(cd_time) .. "</span></span>"
+      else
+        suffix = "<span class='wd-cooldown'><span>" .. _("excluded until") .. "</span>" ..
+                 "<span>" .. pcdata(cooldown) .. "</span></span>"
+      end
     end
     return "<span class='svc-badge err'>Error</span>" .. speed .. suffix, checked
   end
-  return "<span style='color:#6b7280'>" .. _("Not checked") .. "</span>", "-"
+  return "<span style='color:var(--tpm-muted)'>" .. _("Not checked") .. "</span>", "-"
 end
 
 function M.watchdog_log()

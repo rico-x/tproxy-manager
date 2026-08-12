@@ -2,7 +2,7 @@
 # Current runtime generates this structure through /usr/bin/proxy2mihomo.lua.
 allow-lan: false
 bind-address: 127.0.0.1
-mode: global
+mode: rule
 log-level: warning
 ipv6: true
 mixed-port: __TEST_PORT__

@@ -516,31 +516,22 @@ local function render(ctx)
     function css.cfgvalue()
       return [[
 <style>
-/* boxes and containers */
-.box{padding:.5rem;border:1px solid #e5e7eb;border-radius:.5rem}
-.editor-wrap{max-width:860px}
-.editor-wrap textarea{width:100%!important;font-family:monospace}
-.editor-wide{max-width:1200px}
-
-/* small buttons and inline forms */
-.small-btn{padding:.25rem .55rem}
-.inline-edit{display:flex;gap:.6rem;align-items:center;flex-wrap:wrap;margin:.6rem 0}
+/* Only what is specific to this tab. The shared box, editor, message and
+   inline-row rules live in the token layer in manage.lua; they used to be
+   declared here as well, with their own hardcoded colours, so the two copies
+   could drift apart. (Do not write an editor-* wildcard here: the star-slash
+   would close this comment early and swallow the first rule below.) */
+.small-btn{padding:var(--tpm-1) .55rem}
+.inline-edit{display:flex;gap:var(--tpm-3);align-items:center;flex-wrap:wrap;margin:var(--tpm-3) 0}
 .inline-edit input[type="text"]{width:28%;min-width:180px}
-.inline-row{display:flex;align-items:center;gap:.25rem;flex-wrap:nowrap}
-.btn-green{background:#16a34a!important;border-color:#16a34a!important;color:#fff!important;font-weight:700!important}
-
+.btn-green{background:var(--tpm-ok)!important;border-color:var(--tpm-ok)!important;color:var(--background-color-high,#fff)!important;font-weight:700!important}
 /* GEO source table */
 table.geo-table{width:100%;border-collapse:collapse; table-layout:fixed; word-break:break-all}
-table.geo-table th, table.geo-table td{border:1px solid #e5e7eb;padding:.35rem;text-align:left;vertical-align:top}
-table.geo-table th{background:#f9fafb}
+table.geo-table th, table.geo-table td{border:1px solid var(--tpm-line);padding:.35rem;text-align:left;vertical-align:top}
+table.geo-table th{background:var(--tpm-surface); color:inherit}
 table.geo-table.geo-upd{ table-layout:auto }
 table.geo-table.geo-upd col.col-idx{ width:auto }
 table.geo-table.geo-upd th:first-child, table.geo-table.geo-upd td:first-child{ white-space:nowrap }
-
-/* messages */
-.msg{padding:.5rem .7rem;border-radius:.5rem;margin:.4rem 0;white-space:pre-wrap}
-.msg.err{border:1px solid #fecaca;background:#fef2f2;color:#b91c1c}
-.msg.info{border:1px solid #bbf7d0;background:#f0fdf4;color:#166534}
 </style>]]
     end
   end
@@ -555,10 +546,12 @@ table.geo-table.geo-upd th:first-child, table.geo-table.geo-upd td:first-child{ 
     local list = sec:option(DummyValue, "_geo_list"); list.rawhtml = true
     function list.cfgvalue()
       local rows = {}
-      rows[#rows+1] = "<table class='geo-table geo-upd'><colgroup><col class='col-idx'><col><col><col><col><col></colgroup><thead><tr><th>#</th><th>" .. _("Name") .. "</th><th>URL</th><th>" .. _("Path") .. "</th><th>" .. _("Updated at") .. "</th><th>" .. _("Actions") .. "</th></tr></thead><tbody>"
+      rows[#rows+1] = "<div class='tpm-tablewrap'><table class='geo-table geo-upd tpm-cards'><colgroup><col class='col-idx'><col><col><col><col><col></colgroup><thead><tr><th>#</th><th>" .. _("Name") .. "</th><th>URL</th><th>" .. _("Path") .. "</th><th>" .. _("Updated at") .. "</th><th>" .. _("Actions") .. "</th></tr></thead><tbody>"
       for i, r in ipairs(cfg) do
         rows[#rows+1] = string.format(
-          "<tr><td>%s</td><td>%s</td><td><code>%s</code></td><td><code>%s</code></td><td>%s</td>" ..
+          "<tr><td data-th='#' class='tpm-num'>%s</td><td data-th='" .. _("Name") .. "'>%s</td>" ..
+          "<td data-th='URL'><code>%s</code></td><td data-th='" .. _("Path") .. "'><code>%s</code></td>" ..
+          "<td data-th='" .. _("Updated at") .. "'>%s</td>" ..
           "<td>" ..
           "<button class='cbi-button cbi-button-apply btn-green small-btn' name='_geo_update_one' value='%s'>" .. _("Update") .. "</button> " ..
           "<button class='cbi-button cbi-button-action small-btn' name='_geo_edit' value='%s'>" .. _("Edit") .. "</button> " ..
@@ -573,7 +566,7 @@ table.geo-table.geo-upd th:first-child, table.geo-table.geo-upd td:first-child{ 
         )
       end
       if #cfg == 0 then
-        rows[#rows+1] = "<tr><td colspan='6' style='color:#6b7280'>" .. _("List is empty") .. "</td></tr>"
+        rows[#rows+1] = "<tr><td colspan='6' style='color:var(--tpm-muted)'>" .. _("List is empty") .. "</td></tr>"
       end
 
       local spec = current_cron_spec() or ""
@@ -596,8 +589,8 @@ table.geo-table.geo-upd th:first-child, table.geo-table.geo-upd td:first-child{ 
       <button class="cbi-button cbi-button-apply small-btn" name="_geo_install_cron" value="1">%s</button>
       <button class="cbi-button cbi-button-remove small-btn" name="_geo_remove_cron" value="1">%s</button>
     </div>
-    <div style='margin-top:.2rem; color:#6b7280'>%s</div>
-    <div style='margin-top:.1rem; color:#9ca3af'>%s: <code>min hour dom month dow</code>, %s: <code>0 5 * * *</code> (%s), <code>30 4 * * 0</code> (%s)</div>
+    <div style='margin-top:.2rem; color:var(--tpm-muted)'>%s</div>
+    <div style='margin-top:.1rem; color:var(--tpm-muted)'>%s: <code>min hour dom month dow</code>, %s: <code>0 5 * * *</code> (%s), <code>30 4 * * 0</code> (%s)</div>
     <script>
       (function(){
         var sel = document.getElementById('geo_cron_presets');
@@ -630,7 +623,7 @@ table.geo-table.geo-upd th:first-child, table.geo-table.geo-upd td:first-child{ 
         pcdata(_("Update all"))
       )
 
-      rows[#rows+1] = "</tbody></table>"
+      rows[#rows+1] = "</tbody></table></div>"
       return table.concat(rows, "\n")
     end
   end
@@ -691,7 +684,7 @@ table.geo-table.geo-upd th:first-child, table.geo-table.geo-upd td:first-child{ 
     <div class="inline-row" style="margin-top:.4rem">
       <button class="cbi-button cbi-button-apply"  name="_geo_save" value="1">]] .. pcdata(_("Save list")) .. [[</button>
       <button class="cbi-button cbi-button-action" name="_geo_write_script" value="1">]] .. pcdata(_("Recreate script")) .. [[</button>
-      <span style="color:#6b7280">]] .. pcdata(_("Source list")) .. [[: <code>]] .. pcdata(GEO_CFG) .. [[</code> · ]] .. pcdata(_("Script")) .. [[: <code>]] .. pcdata(GEO_SCRIPT) .. [[</code></span>
+      <span style="color:var(--tpm-muted)">]] .. pcdata(_("Source list")) .. [[: <code>]] .. pcdata(GEO_CFG) .. [[</code> · ]] .. pcdata(_("Script")) .. [[: <code>]] .. pcdata(GEO_SCRIPT) .. [[</code></span>
     </div>
   </div>
 </details>

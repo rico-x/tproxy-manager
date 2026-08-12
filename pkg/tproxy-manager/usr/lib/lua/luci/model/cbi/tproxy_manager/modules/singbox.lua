@@ -211,7 +211,7 @@ local function render(ctx)
       local list_rc, list_out = run_singbox_version({ "list" })
       local versions = list_rc == 0 and parse_tsv_versions(list_out) or {}
       local color = status.STATUS_COLOR or "gray"
-      local css_color = color == "green" and "#16a34a" or color == "blue" and "#2563eb" or color == "orange" and "#d97706" or "#6b7280"
+      local css_color = color == "green" and "var(--tpm-ok)" or color == "blue" and "var(--primary-color-medium,#2563eb)" or color == "orange" and "var(--tpm-warn)" or "var(--tpm-muted)"
       local rows = {}
       rows[#rows + 1] = "<details><summary><strong>" .. _("sing-box version") .. "</strong></summary>"
       rows[#rows + 1] = "<div class='box editor-wrap editor-680' style='margin-top:.5rem'>"
@@ -236,7 +236,7 @@ local function render(ctx)
         pcdata(status.ASSET or "")
       )
       if status.ERROR and status.ERROR ~= "" then
-        rows[#rows + 1] = "<div style='margin-top:.5rem;color:#dc2626'>" .. pcdata(status.ERROR) .. "</div>"
+        rows[#rows + 1] = "<div style='margin-top:.5rem;color:var(--tpm-bad)'>" .. pcdata(status.ERROR) .. "</div>"
       end
       rows[#rows + 1] = "<div style='margin-top:.6rem'>"
       rows[#rows + 1] = "<button class='cbi-button cbi-button-action' name='_singbox_version_refresh' value='1'>" .. _("Refresh versions") .. "</button> "
@@ -253,7 +253,7 @@ local function render(ctx)
       rows[#rows + 1] = "</select> "
       rows[#rows + 1] = "<button class='cbi-button cbi-button-apply' name='_singbox_install_version' value='1' onclick=\"return confirm('" .. pcdata(_("Install selected sing-box version?")) .. "')\">" .. _("Install selected version") .. "</button>"
       rows[#rows + 1] = "</div>"
-      if status_rc ~= 0 then rows[#rows + 1] = "<pre style='white-space:pre-wrap;color:#dc2626'>" .. pcdata(status_out) .. "</pre>" end
+      if status_rc ~= 0 then rows[#rows + 1] = "<pre style='white-space:pre-wrap;color:var(--tpm-bad)'>" .. pcdata(status_out) .. "</pre>" end
       rows[#rows + 1] = "</div></details>"
       return table.concat(rows, "\n")
     end
@@ -343,8 +343,8 @@ local function render(ctx)
     <input type="text" name="new_singbox_name" placeholder="config.json" style="width:200px">
     <button class="cbi-button cbi-button-apply" name="_singbox_create" value="1" onclick="return window.__xray_guard?window.__xray_guard():true">%s</button>
   </div>
-  <div style="color:#6b7280;margin-top:.2rem">%s <code>*.json</code>, %s.</div>
-  <hr style="border:none;border-top:1px solid #e5e7eb;margin:.5rem 0"/>]],
+  <div style="color:var(--tpm-muted);margin-top:.2rem">%s <code>*.json</code>, %s.</div>
+  <hr style="border:none;border-top:1px solid var(--tpm-line);margin:.5rem 0"/>]],
         pcdata(_("New file")),
         pcdata(_("Create")),
         pcdata(_("The name must match")),
@@ -477,7 +477,7 @@ local function render(ctx)
   function syncHighlight(){ if(!ta||!hi)return; hi.innerHTML=highlightJsonc(ta.value)+'\n'; hi.scrollTop=ta.scrollTop; hi.scrollLeft=ta.scrollLeft; }
   function showJsonError(badge, ta, hi, prefix, message){
     badge.textContent = '';
-    badge.style.color = '#dc2626';
+    badge.style.color = 'var(--tpm-bad)';
     badge.appendChild(document.createTextNode(prefix + message + ' '));
     var m = String(message || '').match(/position (\d+)/);
     if (!m) return;
@@ -497,7 +497,7 @@ local function render(ctx)
     };
     badge.appendChild(jump);
   }
-  function validate(){ if(!ta||!badge)return; try{ JSON.parse(stripJsonComments(ta.value)); badge.textContent=']] .. pcdata(_("JSONC is valid (comments allowed)")) .. [['; badge.style.color='#16a34a'; }catch(e){ showJsonError(badge, ta, hi, ']] .. pcdata(_("JSON error:").." ") .. [[', e.message); } }
+  function validate(){ if(!ta||!badge)return; try{ JSON.parse(stripJsonComments(ta.value)); badge.textContent=']] .. pcdata(_("JSONC is valid (comments allowed)")) .. [['; badge.style.color='var(--tpm-ok)'; }catch(e){ showJsonError(badge, ta, hi, ']] .. pcdata(_("JSON error:").." ") .. [[', e.message); } }
   var validateDebounced = debounce(validate,250);
   if(ta){
     ta.addEventListener('input', function(){ syncHighlight(); validateDebounced(); });
