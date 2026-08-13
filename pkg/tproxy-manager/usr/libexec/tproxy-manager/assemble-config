@@ -1,0 +1,155 @@
+#!/bin/sh
+#
+# Приводит конфиг активного ядра к тому виду, который это ядро умеет читать.
+#
+# Каталог с фрагментами по ролям — общая модель для всех трёх ядер, но читают его
+# они по-разному:
+#
+#   xray      -confdir <каталог>            умеет сам
+#   sing-box  -C <каталог>                  умеет сам
+#   mihomo    -f <один файл>                каталога не умеет, собираем мы
+#
+# Поэтому для mihomo фрагменты склеиваются в один файл, а для Xray и sing-box
+# каталог проверяется их собственным ядром. Режим --check выполняет тот же
+# полный pre-flight, но не заменяет рабочий assembled-файл.
+#
+# Usage: assemble-config <engine> [--check]
+#   --check  только проверить фрагменты, ничего не записывать
+
+set -u
+
+PKG="tproxy-manager"
+ENGINE="${1:-}"
+MODE="${2:-}"
+
+[ -n "$ENGINE" ] || { echo "usage: $(basename "$0") <engine> [--check]" >&2; exit 2; }
+[ -z "$MODE" ] || [ "$MODE" = "--check" ] || {
+    echo "usage: $(basename "$0") <engine> [--check]" >&2
+    exit 2
+}
+
+uci_get() {
+    v="$(uci -q get "$PKG.main.$1" 2>/dev/null)"
+    [ -n "$v" ] && printf '%s\n' "$v"
+}
+
+log() { logger -t "$PKG-assemble" "$*"; printf '%s\n' "$*"; }
+
+case "$ENGINE" in
+    sing-box|sing_box) ENGINE=singbox ;;
+esac
+
+CONFIG_DIR="${TPM_CONFIG_DIR_OVERRIDE:-$(uci_get "${ENGINE}_profile_config_dir")}"
+ASSEMBLED="${TPM_ASSEMBLED_OVERRIDE:-$(uci_get "${ENGINE}_profile_assembled_file")}"
+
+case "$ENGINE" in
+    xray)    : "${CONFIG_DIR:=/etc/xray}" ;;
+    mihomo)  : "${CONFIG_DIR:=/etc/mihomo/tproxy-manager.d}"
+             : "${ASSEMBLED:=/etc/mihomo/tproxy-manager.yaml}" ;;
+    singbox) : "${CONFIG_DIR:=/etc/sing-box/tproxy-manager.d}" ;;
+    *) log "неизвестное ядро: $ENGINE"; exit 2 ;;
+esac
+
+[ -d "$CONFIG_DIR" ] || { log "каталог конфигов отсутствует: $CONFIG_DIR"; exit 1; }
+
+# Верхнеуровневые ключи фрагментов не должны пересекаться. При склейке YAML
+# победил бы последний, и роль, объявленная дважды, потеряла бы половину
+# содержимого молча -- например пользовательские прокси, если и они, и
+# управляемые пришли под ключом `proxies:`.
+duplicate_keys() {
+    # shellcheck disable=SC2086
+    grep -hE '^[a-z][a-z0-9_-]*:' $1 2>/dev/null | sed 's/:.*/:/' | sort | uniq -d
+}
+
+case "$ENGINE" in
+    xray)
+        n="$(find "$CONFIG_DIR" -maxdepth 1 -name '*.json' 2>/dev/null | wc -l)"
+        [ "$n" -gt 0 ] || { log "в $CONFIG_DIR нет фрагментов *.json"; exit 1; }
+        bin="$(command -v xray 2>/dev/null || true)"
+        [ -x "$bin" ] || { log "не найден исполняемый файл xray"; exit 1; }
+        if ! out="$("$bin" -test -format json -confdir "$CONFIG_DIR" 2>&1)"; then
+            log "ошибка: каталог конфигов отвергнут Xray: $(printf '%s' "$out" | tail -1)"
+            exit 1
+        fi
+        exit 0
+        ;;
+    singbox)
+        n="$(find "$CONFIG_DIR" -maxdepth 1 -name '*.json' 2>/dev/null | wc -l)"
+        [ "$n" -gt 0 ] || { log "в $CONFIG_DIR нет фрагментов *.json"; exit 1; }
+        bin="$(command -v sing-box 2>/dev/null || true)"
+        [ -x "$bin" ] || { log "не найден исполняемый файл sing-box"; exit 1; }
+        if ! out="$("$bin" check -C "$CONFIG_DIR" 2>&1)"; then
+            log "ошибка: каталог конфигов отвергнут sing-box: $(printf '%s' "$out" | tail -1)"
+            exit 1
+        fi
+        exit 0
+        ;;
+esac
+
+# Дальше только mihomo.
+set -- "$CONFIG_DIR"/*.yaml
+[ -e "$1" ] || { log "в $CONFIG_DIR нет фрагментов *.yaml"; exit 1; }
+
+dups="$(duplicate_keys "$CONFIG_DIR/*.yaml")"
+if [ -n "$dups" ]; then
+    log "ошибка: одинаковые ключи в нескольких фрагментах $CONFIG_DIR: $(printf '%s' "$dups" | tr '\n' ' ')"
+    exit 1
+fi
+
+tmp="$ASSEMBLED.tmp.$$"
+cleanup() { rm -f "$tmp"; }
+trap cleanup EXIT HUP INT TERM
+{
+    printf '# Собран из %s скриптом assemble-config. Правьте фрагменты, не этот файл.\n' "$CONFIG_DIR"
+    cat "$CONFIG_DIR"/*.yaml
+} > "$tmp" || { rm -f "$tmp"; log "не удалось записать $tmp"; exit 1; }
+
+# Watchdog validates a freshly generated provider before it replaces the live
+# one. For that pre-flight only, point the package-owned provider entry at the
+# candidate. Refuse the check unless exactly one managed path was replaced: a
+# successful test against the old provider would be a dangerous false positive.
+if [ -n "${TPM_MIHOMO_MANAGED_CANDIDATE:-}" ]; then
+    candidate="$TPM_MIHOMO_MANAGED_CANDIDATE"
+    case "$candidate" in
+        /*) ;;
+        *) log "кандидат managed provider должен иметь абсолютный путь"; exit 1 ;;
+    esac
+    case "$candidate" in
+        *"'"*) log "путь кандидата managed provider содержит неподдерживаемый апостроф"; exit 1 ;;
+    esac
+    rewritten="$tmp.provider"
+    if ! awk -v candidate="$candidate" '
+        /^[^[:space:]]/ { in_providers = ($0 ~ /^proxy-providers:/); in_managed = 0 }
+        in_providers && /^  tproxy-manager:[[:space:]]*$/ { in_managed = 1; print; next }
+        in_managed && /^  [^[:space:]][^:]*:[[:space:]]*$/ { in_managed = 0 }
+        in_managed && /^    path:[[:space:]]*/ {
+            print "    path: '\''" candidate "'\''"
+            replaced++
+            next
+        }
+        { print }
+        END { if (replaced != 1) exit 42 }
+    ' "$tmp" > "$rewritten"; then
+        rm -f "$rewritten"
+        log "не найден единственный путь package-owned provider tproxy-manager"
+        exit 1
+    fi
+    mv "$rewritten" "$tmp" || { rm -f "$rewritten"; log "не удалось подготовить provider-кандидат"; exit 1; }
+fi
+
+# Проверяем собранное самим ядром до подмены: сломанный фрагмент не должен
+# оставить ядро без рабочего конфига.
+bin="$(command -v mihomo 2>/dev/null || true)"
+workdir="${TPM_MIHOMO_WORKDIR_OVERRIDE:-${ASSEMBLED%/*}}"
+[ -x "$bin" ] || { log "не найден исполняемый файл mihomo"; exit 1; }
+if ! out="$("$bin" -d "$workdir" -t -f "$tmp" 2>&1)"; then
+    log "ошибка: собранный конфиг отвергнут mihomo: $(printf '%s' "$out" | grep -v 'level=info' | tail -1)"
+    exit 1
+fi
+
+[ "$MODE" = "--check" ] && exit 0
+
+chmod 0600 "$tmp" 2>/dev/null
+mv "$tmp" "$ASSEMBLED" || { log "не удалось заменить $ASSEMBLED"; exit 1; }
+trap - EXIT HUP INT TERM
+exit 0

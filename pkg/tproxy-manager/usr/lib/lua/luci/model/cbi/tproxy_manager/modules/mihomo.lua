@@ -63,9 +63,24 @@ local function basename(path, fallback)
   return name ~= "" and name or fallback
 end
 
-local function validate_mihomo_text(text)
+local function validate_mihomo_text(text, edit_dir, filename)
+  if edit_dir ~= MIHOMO_DIR then
+    local shadow = utils.private_dir("/tmp", "tpm-mihomo-check")
+    if not shadow then return false end
+    local copied = sys.call(string.format("cp -a %s/. %s/ >/dev/null 2>&1",
+      utils.shellescape(edit_dir), utils.shellescape(shadow))) == 0
+    local wrote = copied and write_file(shadow .. "/" .. filename, text or "")
+    local assembled = shadow .. "/assembled.yaml"
+    local cmd = string.format(
+      "TPM_CONFIG_DIR_OVERRIDE=%s TPM_ASSEMBLED_OVERRIDE=%s TPM_MIHOMO_WORKDIR_OVERRIDE=%s %s mihomo --check >%s 2>&1",
+      utils.shellescape(shadow), utils.shellescape(assembled), utils.shellescape(MIHOMO_DIR),
+      utils.shellescape("/usr/libexec/tproxy-manager/assemble-config"), utils.shellescape(MIHOMO_TEST_LOG))
+    local ok = wrote and sys.call(cmd) == 0
+    sys.call("rm -rf " .. utils.shellescape(shadow) .. " >/dev/null 2>&1")
+    return ok
+  end
   local tmp = string.format("/tmp/tproxy-manager-mihomo-check.%d.yaml", math.random(1, 10^9))
-  write_file(tmp, text or "")
+  if not write_file(tmp, text or "") then return false end
   local cmd = string.format(
     "SAFE_PATHS=%q %s -d %q -t -f %q >%s 2>&1",
     MIHOMO_DIR,
@@ -98,79 +113,67 @@ end
 
 local function build_managed_config(ctx)
   local links_file = ctx.uci:get(ctx.PKG, "main", "watchdog_links_file") or "/etc/tproxy-manager/watchdog.links"
-  local config_file = ctx.uci:get(ctx.PKG, "main", "mihomo_profile_config_file") or "/etc/mihomo/tproxy-manager.yaml"
-  local provider_file = ctx.uci:get(ctx.PKG, "main", "mihomo_profile_managed_provider_file") or "/etc/mihomo/tproxy-manager-proxies.yaml"
-  local tproxy_port = ctx.uci:get(ctx.PKG, "main", "tproxy_port") or ctx.uci:get(ctx.PKG, "main", "mihomo_profile_tproxy_port") or "61219"
-  ensure_parent(config_file)
-  ensure_parent(provider_file)
-  local provider_tmp = provider_file .. ".tmp." .. tostring(os.time())
-  local config_tmp = config_file .. ".tmp." .. tostring(os.time())
+  -- This is the package's only writable Mihomo file. Older releases replaced
+  -- the whole profile and could destroy a hand-written configuration; role
+  -- fragments keep every user-owned file outside this write path.
+  local managed_file = ctx.uci:get(ctx.PKG, "main", "mihomo_profile_managed_file")
+    or ctx.uci:get(ctx.PKG, "main", "mihomo_profile_managed_provider_file")
+    or "/etc/mihomo/tproxy-manager-proxies.yaml"
+  ensure_parent(managed_file)
+  local managed_tmp = managed_file .. ".tmp." .. tostring(os.time())
+  local vless_template = ctx.uci:get(ctx.PKG, "main", "watchdog_mihomo_vless_outbound_template_file")
+    or "/etc/tproxy-manager/watchdog-mihomo-vless-outbound.template.yaml"
+  local hy2_template = ctx.uci:get(ctx.PKG, "main", "watchdog_mihomo_hysteria_outbound_template_file")
+    or "/etc/tproxy-manager/watchdog-mihomo-hysteria-outbound.template.yaml"
 
-  -- Build and validate first, promote second. Generation and validation must not
-  -- share a command with the two mv's: the copy taken below has to sit between
-  -- them, and a single `&&` chain leaves nowhere to put it.
-  local build = string.format(
-    "%s -r %s --provider > %s && %s -r %s --runtime --tproxy-port %s > %s && SAFE_PATHS=%s %s -d %s -t -f %s",
+  local rc, out = run_cmd_capture(string.format(
+    "%s -r %s --provider --vless-template %s --hy2-template %s > %s",
     utils.shellescape("/usr/bin/proxy2mihomo.lua"),
     utils.shellescape(links_file),
-    utils.shellescape(provider_tmp),
-    utils.shellescape("/usr/bin/proxy2mihomo.lua"),
-    utils.shellescape(links_file),
-    utils.shellescape(tostring(tproxy_port)),
-    utils.shellescape(config_tmp),
-    utils.shellescape(MIHOMO_DIR),
-    utils.shellescape(MIHOMO_BIN),
-    utils.shellescape(MIHOMO_DIR),
-    utils.shellescape(config_tmp)
-  )
-  local rc, out = run_cmd_capture(build)
+    utils.shellescape(vless_template),
+    utils.shellescape(hy2_template),
+    utils.shellescape(managed_tmp)))
   if rc ~= 0 then
-    fs.remove(provider_tmp)
-    fs.remove(config_tmp)
+    fs.remove(managed_tmp)
     return false, out ~= "" and out or "Mihomo managed config build failed."
   end
 
-  -- Same rule, same dedicated slot and now the same position as the watchdog's
-  -- apply path (see apply_mihomo_generated in watchdog/render_apply.sh): a config
-  -- this package did not generate is the user's own profile and is copied aside
-  -- once before being replaced. Generated ones carry MATCH,TPROXY-MANAGER and are
-  -- reproducible, so they are not worth a copy.
-  --
-  -- The copy is taken only once a replacement is actually about to happen. Taken
-  -- earlier, a run that failed to generate would still have spent the slot, and
-  -- every edit the user made afterwards would have been replaced with the slot
-  -- already holding the older version.
-  local backup = config_file .. ".pre-managed"
-  local backup_created = false
-  do
-    local existing = utils.read_file(config_file)
-    if existing ~= "" and not fs.access(backup)
-      and not existing:find("MATCH,TPROXY-MANAGER", 1, true) then
-      if not utils.write_file(backup, existing) then
-        fs.remove(provider_tmp)
-        fs.remove(config_tmp)
-        return false, _("Could not save a copy of the current Mihomo config; nothing was replaced.")
-      end
-      backup_created = true
-    end
+  local assembler = "/usr/libexec/tproxy-manager/assemble-config"
+  if not fs.access(assembler) then
+    fs.remove(managed_tmp)
+    return false, _("Could not assemble the Mihomo config directory.")
+  end
+  rc, out = run_cmd_capture(string.format(
+    "TPM_MIHOMO_MANAGED_CANDIDATE=%s %s mihomo --check",
+    utils.shellescape(managed_tmp), utils.shellescape(assembler)))
+  if rc ~= 0 then
+    fs.remove(managed_tmp)
+    return false, out ~= "" and out or _("Generated Mihomo config failed validation.")
   end
 
-  local promote = string.format("mv %s %s && mv %s %s",
-    utils.shellescape(provider_tmp),
-    utils.shellescape(provider_file),
-    utils.shellescape(config_tmp),
-    utils.shellescape(config_file)
-  )
-  rc, out = run_cmd_capture(promote)
+  local rollback = managed_file .. ".rollback." .. tostring(os.time())
+  local existed = fs.access(managed_file)
+  if existed then
+    local copy_rc = run_cmd_capture(string.format("cp -p %s %s",
+      utils.shellescape(managed_file), utils.shellescape(rollback)))
+    if copy_rc ~= 0 then
+      fs.remove(managed_tmp)
+      return false, _("Could not preserve the current Mihomo managed config.")
+    end
+  end
+  rc, out = run_cmd_capture(string.format("mv %s %s",
+    utils.shellescape(managed_tmp), utils.shellescape(managed_file)))
+  if rc == 0 then
+    rc, out = run_cmd_capture(utils.shellescape(assembler) .. " mihomo")
+  end
   if rc ~= 0 then
-    -- Nothing replaced the live config, so the slot must not stay spent: the next
-    -- attempt has to be free to copy whatever the user has there by then.
-    if backup_created then fs.remove(backup) end
-    fs.remove(provider_tmp)
-    fs.remove(config_tmp)
+    if existed then fs.rename(rollback, managed_file) else fs.remove(managed_file) end
+    run_cmd_capture(utils.shellescape(assembler) .. " mihomo")
+    fs.remove(managed_tmp); fs.remove(rollback)
     return false, out ~= "" and out or _("Could not put the generated Mihomo config in place.")
   end
-  return true, config_file
+  fs.remove(rollback)
+  return true, managed_file
 end
 
 -- ensure Mihomo dir exists
@@ -186,6 +189,11 @@ local function render(ctx)
   local combined_log, set_err, get_err, set_info, get_info =
     ctx.combined_log, ctx.set_err, ctx.get_err, ctx.set_info, ctx.get_info
   local service_block = ctx.service_block
+  local profile_dir = ctx.uci:get(ctx.PKG, "main", "mihomo_profile_config_dir")
+    or "/etc/mihomo/tproxy-manager.d"
+  local profile_stat = fs.stat(profile_dir)
+  local edit_dir = profile_stat and (profile_stat.type == "dir" or profile_stat.type == "directory")
+    and profile_dir or MIHOMO_DIR
 
   -- Toolbar handlers
   if http.formvalue("_refreshlog_mihomo") then set_err(nil); redirect_here("mihomo"); return m end
@@ -200,18 +208,18 @@ local function render(ctx)
     redirect_here("mihomo"); return m
   end
   if http.formvalue("_test_mihomo") then
-    local default_config = basename(ctx.uci:get(ctx.PKG, "main", "mihomo_profile_config_file"), "tproxy-manager.yaml")
-    local config_file = fval_last("mihomo_file_selected")
-    if config_file == "" then config_file = fval_last("mihomo_file") end
-    if config_file == "" or config_file:find("[/\\]") then config_file = default_config end
-    sys.call(string.format(
-      "SAFE_PATHS=%q %s -d %q -t -f %q >%s 2>&1",
-      MIHOMO_DIR,
-      MIHOMO_BIN,
-      MIHOMO_DIR,
-      MIHOMO_DIR.."/"..config_file,
-      MIHOMO_TEST_LOG
-    ))
+    if edit_dir ~= MIHOMO_DIR then
+      sys.call(string.format("%s mihomo --check >%s 2>&1",
+        utils.shellescape("/usr/libexec/tproxy-manager/assemble-config"), utils.shellescape(MIHOMO_TEST_LOG)))
+    else
+      local default_config = basename(ctx.uci:get(ctx.PKG, "main", "mihomo_profile_config_file"), "tproxy-manager.yaml")
+      local config_file = fval_last("mihomo_file_selected")
+      if config_file == "" then config_file = fval_last("mihomo_file") end
+      if config_file == "" or config_file:find("[/\\]") then config_file = default_config end
+      sys.call(string.format(
+        "SAFE_PATHS=%q %s -d %q -t -f %q >%s 2>&1",
+        MIHOMO_DIR, MIHOMO_BIN, MIHOMO_DIR, MIHOMO_DIR.."/"..config_file, MIHOMO_TEST_LOG))
+    end
     set_err(nil); redirect_here("mihomo"); return m
   end
   if http.formvalue("_clearlog_mihomo_config") then
@@ -347,10 +355,15 @@ local function render(ctx)
 
   -- Mihomo config editor
   do
-    local sx = m:section(SimpleSection, _("Mihomo (configuration files in /etc/mihomo)"))
+    local sx = m:section(SimpleSection, _("Mihomo configuration files") .. " (" .. edit_dir .. ")")
 
-    local config_files = list_yaml(MIHOMO_DIR)
-    local default_config = basename(ctx.uci:get(ctx.PKG, "main", "mihomo_profile_config_file"), "tproxy-manager.yaml")
+    local config_files = list_yaml(edit_dir)
+    local default_config
+    if edit_dir ~= MIHOMO_DIR then
+      default_config = basename(ctx.uci:get(ctx.PKG, "main", "mihomo_profile_user_file"), "03-proxies-user.yaml")
+    else
+      default_config = basename(ctx.uci:get(ctx.PKG, "main", "mihomo_profile_config_file"), "tproxy-manager.yaml")
+    end
     local chosen = fval("mihomo_file")
     if chosen == "" then chosen = default_config end
     local found=false; for __,f in ipairs(config_files) do if f==chosen then found=true; break end end
@@ -369,7 +382,7 @@ local function render(ctx)
     if http.formvalue("_mihomo_create") == "1" then
       local name = (http.formvalue("new_mihomo_name") or ""):gsub("^%s+",""):gsub("%s+$","")
       if name ~= "" and not name:find("[/\\]") and name:match("%.yaml$") then
-        local path = MIHOMO_DIR .. "/" .. name
+        local path = edit_dir .. "/" .. name
         if not fs.access(path) then
           -- Creation is checked: redirecting to an editor for a file that
           -- was never created (and clearing the error on the way) left the
@@ -400,7 +413,7 @@ local function render(ctx)
     if http.formvalue("_mihomo_delete") == "1" then
       local cf = fval_last("mihomo_file") or ""
       if is_known_yaml_file(cf) then
-        fs.remove(MIHOMO_DIR .. "/" .. cf)
+        fs.remove(edit_dir .. "/" .. cf)
         set_err(nil)
       else
         set_err(_("Invalid file name. Expected *.yaml without slashes."))
@@ -485,7 +498,7 @@ local function render(ctx)
     if chosen then
       local cedit = sx:option(DummyValue, "_mihomo_area"); cedit.rawhtml = true
       function cedit.cfgvalue()
-        local content = read_file(MIHOMO_DIR .. "/" .. chosen)
+        local content = read_file(edit_dir .. "/" .. chosen)
         -- Same editor chrome as the Xray and sing-box tabs: a dark code panel is
         -- deliberately single-scheme (it is a window into a config file), and it
         -- was the only engine tab without one. No syntax overlay here: the
@@ -513,15 +526,24 @@ local function render(ctx)
           http.redirect(self_url({ tab = "mihomo" }))
           return
         end
-        if not validate_mihomo_text(new) then
+        if not validate_mihomo_text(new, edit_dir, cf) then
           set_err(_("Invalid Mihomo configuration. File was not saved."))
           set_info(nil)
           http.redirect(self_url({ tab = "mihomo", mihomo_file = cf }))
           return
         end
-        local wrote, wwhy = write_file(MIHOMO_DIR .. "/" .. cf, new)
+        local wrote, wwhy = write_file(edit_dir .. "/" .. cf, new)
         if wrote then
-          set_err(nil); set_info(_("Mihomo config saved:").." "..cf)
+          if edit_dir ~= MIHOMO_DIR then
+            local arc, aout = run_cmd_capture(utils.shellescape("/usr/libexec/tproxy-manager/assemble-config") .. " mihomo")
+            if arc ~= 0 then
+              set_info(nil); set_err(aout ~= "" and aout or _("Could not assemble the Mihomo config directory."))
+            else
+              set_err(nil); set_info(_("Mihomo config saved:").." "..cf)
+            end
+          else
+            set_err(nil); set_info(_("Mihomo config saved:").." "..cf)
+          end
         elseif wwhy == "permissions" then
           set_info(nil); set_err(_("Settings saved, but the configuration file permissions could not be secured."))
         else

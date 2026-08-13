@@ -299,6 +299,7 @@ do
 .svc-badge{font-weight:600}
 .svc-badge.ok{color:var(--tpm-ok)}
 .svc-badge.err{color:var(--tpm-bad)}
+.svc-badge.warn{color:var(--tpm-warn)}
 /* service buttons in one line */
 #cbi-tproxy_manager .cbi-value[id*="_start"],
 #cbi-tproxy_manager .cbi-value[id*="_stop"],
@@ -419,7 +420,7 @@ do
   window.__xray_dirty = false;
   document.addEventListener('input', function(e){
     var n = e && e.target && e.target.name;
-    if (n === 'uniedit_text' || n === 'json_text' || n === 'clash_text' || n === 'mihomo_text' || n === 'singbox_text' || n === 'geo_sources' || n === 'watchdog_template_text' || n === 'watchdog_template_path' || n === 'watchdog_test_template_text' || n === 'watchdog_links_text' || n === 'watchdog_proxy2mihomo' || n === 'watchdog_proxy2singbox' || n === 'watchdog_batch_test_template_file' || n === 'watchdog_hysteria_template_file' || n === 'watchdog_hysteria_test_template_file' || n === 'watchdog_hysteria_batch_test_template_file' || n === 'watchdog_mihomo_test_template_file' || n === 'watchdog_mihomo_batch_test_template_file' || n === 'watchdog_singbox_test_template_file' || n === 'watchdog_singbox_batch_test_template_file' || n === 'watchdog_batch_check_port_start' || n === 'watchdog_batch_check_batch_size' || n === 'watchdog_batch_check_concurrency' || n === 'wd_add_link' || n === 'wd_edit_link' || n === 'watchdog_happ_capture_ttl' || n === 'watchdog_happ_capture_port' || n === 'watchdog_happ_capture_log' || n === 'happ_capture_start_ttl' || n === 'happ_capture_start_port' || n === 'happ_capture_start_log' || (n && n.indexOf('sub_') === 0)) window.__xray_dirty = true;
+    if (n === 'uniedit_text' || n === 'json_text' || n === 'clash_text' || n === 'mihomo_text' || n === 'singbox_text' || n === 'geo_sources' || n === 'watchdog_template_text' || n === 'watchdog_template_path' || n === 'watchdog_links_text' || n === 'watchdog_proxy2mihomo' || n === 'watchdog_proxy2singbox' || n === 'watchdog_batch_check_port_start' || n === 'watchdog_batch_check_batch_size' || n === 'watchdog_batch_check_concurrency' || n === 'wd_add_link' || n === 'wd_edit_link' || n === 'watchdog_happ_capture_ttl' || n === 'watchdog_happ_capture_port' || n === 'watchdog_happ_capture_log' || n === 'happ_capture_start_ttl' || n === 'happ_capture_start_port' || n === 'happ_capture_start_log' || (n && n.indexOf('sub_') === 0)) window.__xray_dirty = true;
   }, true);
   window.__xray_guard = function(){ return (!window.__xray_dirty) || confirm(']] .. pcdata(_("There are unsaved changes. Leave without saving?")) .. [['); };
   setTimeout(function(){

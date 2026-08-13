@@ -1,5 +1,13 @@
-# Reference template for future Mihomo batch probe configs.
-# Current runtime falls back to individual Mihomo checks.
+# Layout of the Mihomo batch probe config: one listener per link, each pinned to
+# its own proxy, all in one process. The three placeholders below are filled by
+# proxy2mihomo.lua --batch.
+#
+# Do not name a placeholder anywhere else in this file, not even in a comment:
+# substitution is literal and would paste a whole YAML block into the prose.
+#
+# Keep the rules a DIRECT default: a listener whose proxy binding is not honoured
+# then fails its probe instead of quietly measuring a direct connection and
+# reporting the link alive.
 allow-lan: false
 bind-address: 127.0.0.1
 mode: rule

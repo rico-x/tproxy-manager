@@ -1,0 +1,9 @@
+# Native Mihomo proxy block for one Hysteria 2 link. Keep the leading two
+# spaces: the rendered block is inserted below the provider's proxies key.
+  - name: __NAME__
+    type: hysteria2
+    server: __ADDRESS__
+    port: __PORT__
+    password: __PASSWORD__
+    udp: true
+__OPTIONAL__

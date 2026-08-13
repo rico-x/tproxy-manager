@@ -117,6 +117,14 @@ done
 python3 "$ROOT/scripts/lint-css-comments.py" "$PKG_DIR" || exit 1
 printf 'ok\n'
 
+section "Template placeholders"
+# A token named in a comment is substituted there too. The Mihomo batch template
+# documented its own placeholders and every run pasted the listeners block into
+# that sentence: invalid YAML, mihomo up without proxies, all 53 links dead.
+python3 "$ROOT/scripts/lint-template-placeholders.py" \
+  "$PKG_DIR"/usr/share/tproxy-manager/*.template.* || exit 1
+printf 'ok\n'
+
 section "Test suites"
 # The suites under tests/ exercise the rollback subsystem with injected faults
 # (unreadable source, unwritable MANIFEST/KEEP/STAGE, failing chmod, rollback,

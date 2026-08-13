@@ -1,0 +1,2 @@
+# Роль: логирование. Соответствует xray 01_logs.json.
+log-level: error

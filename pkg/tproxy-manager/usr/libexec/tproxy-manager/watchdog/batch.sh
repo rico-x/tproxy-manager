@@ -144,6 +144,96 @@ build_batch_config() {
     render_batch_test_config "$inbounds_json" "$outbounds_json" "$rules_json" "$config_file" "$protocol"
 }
 
+# The converter builds the whole chunk config: one listener per link, each pinned
+# to its own outbound. Mihomo and sing-box both do this in a single process, so
+# batch mode is no longer something only Xray gets.
+build_batch_config_converter() {
+    chunk_file="$1"
+    config_file="$2"
+    probe_map="$3"
+    converter="$4"
+    template="$5"
+    label="$6"
+
+    ports_file="$TEST_DIR/ports.tsv"
+    : > "$ports_file"
+    : > "$probe_map"
+    idx=0
+    while IFS="$(printf '\t')" read -r hash link comment lineno; do
+        [ -n "$hash" ] || continue
+        port=$((BATCH_CHECK_PORT_START + idx))
+        idx=$((idx + 1))
+        if [ "$port" -gt 65535 ]; then
+            mark_link_dead "$hash" "000" "0" "port-overflow"
+            continue
+        fi
+        printf '%s\t%s\n' "$port" "$link" >> "$ports_file"
+        printf '%s\t%s\t%s\n' "$hash" "$port" "probe-$port" >> "$probe_map"
+    done < "$chunk_file"
+
+    if [ ! -s "$ports_file" ]; then
+        log_msg "batch: нет ссылок в пачке"
+        return 1
+    fi
+
+    set -- --batch --ports "$ports_file"
+    if [ -n "$template" ] && [ -f "$template" ]; then
+        set -- "$@" --template "$template"
+    fi
+    case "$PROBE_KIND" in
+        mihomo)
+            [ -f "$MIHOMO_VLESS_OUTBOUND_TEMPLATE_FILE" ] \
+                && set -- "$@" --vless-template "$MIHOMO_VLESS_OUTBOUND_TEMPLATE_FILE"
+            [ -f "$MIHOMO_HY2_OUTBOUND_TEMPLATE_FILE" ] \
+                && set -- "$@" --hy2-template "$MIHOMO_HY2_OUTBOUND_TEMPLATE_FILE"
+            ;;
+        singbox)
+            [ -f "$SINGBOX_VLESS_OUTBOUND_TEMPLATE_FILE" ] \
+                && set -- "$@" --vless-template "$SINGBOX_VLESS_OUTBOUND_TEMPLATE_FILE"
+            [ -f "$SINGBOX_HY2_OUTBOUND_TEMPLATE_FILE" ] \
+                && set -- "$@" --hy2-template "$SINGBOX_HY2_OUTBOUND_TEMPLATE_FILE"
+            ;;
+    esac
+    err_file="$TEST_DIR/converter.err"
+    "$converter" "$@" > "$config_file" 2>"$err_file"
+    rc=$?
+    [ -s "$err_file" ] && cat "$err_file" >> "$LOG_FILE"
+
+    # Links the engine cannot run are named by port. They are reported as
+    # unsupported and dropped from the map, so the rest of the chunk still gets
+    # measured -- one XHTTP link used to be enough to fail a whole chunk.
+    if [ -s "$err_file" ]; then
+        while IFS= read -r line; do
+            case "$line" in
+                "unsupported-port: "*)
+                    rest="${line#unsupported-port: }"
+                    bad_port="${rest%% *}"
+                    reason="${rest#* }"
+                    bad_hash="$(awk -F '\t' -v p="$bad_port" '$2 == p { print $1; exit }' "$probe_map")"
+                    if [ -n "$bad_hash" ]; then
+                        mark_link_unsupported "$bad_hash" "$reason"
+                        grep -v "^$bad_hash	" "$probe_map" > "$probe_map.keep" 2>/dev/null
+                        mv "$probe_map.keep" "$probe_map"
+                    fi
+                    ;;
+            esac
+        done < "$err_file"
+    fi
+
+    if [ "$rc" -eq 3 ]; then
+        # Every link in the chunk was already reported unsupported above; there is
+        # nothing left to probe, and that is not a failure of the batch run.
+        : > "$probe_map"
+        return 0
+    fi
+    if [ "$rc" -ne 0 ]; then
+        log_msg "batch: не удалось сгенерировать конфиг $label"
+        return 1
+    fi
+    [ -s "$config_file" ] || return 1
+    return 0
+}
+
 probe_batch_chunk() {
     chunk_file="$1"
     chunk_no="$2"
@@ -152,13 +242,36 @@ probe_batch_chunk() {
     TEST_DIR="$BATCH_DIR/run-$chunk_no"
     mkdir -p "$TEST_DIR" || return 1
 
-    config_file="$TEST_DIR/batch-test-config.json"
+    config_file="$TEST_DIR/batch-test-config.${PROBE_CONFIG_EXT:-json}"
     probe_map="$TEST_DIR/probe-map.tsv"
-    log_file="$TEST_DIR/batch-test.log"
+    log_file="$TEST_DIR/${PROBE_LOG_NAME:-batch-test.log}"
     result_dir="$TEST_DIR/results"
     mkdir -p "$result_dir" || return 1
 
-    build_batch_config "$chunk_file" "$config_file" "$probe_map" "$protocol" || return 1
+    case "$PROBE_KIND" in
+        mihomo)
+            build_batch_config_converter "$chunk_file" "$config_file" "$probe_map" \
+                "$PROXY2MIHOMO" "$(probe_template_for mihomo batch)" "Mihomo" || return 1
+            ;;
+        singbox)
+            build_batch_config_converter "$chunk_file" "$config_file" "$probe_map" \
+                "$PROXY2SINGBOX" "$(probe_template_for singbox batch)" "sing-box" || return 1
+            ;;
+        template)
+            build_batch_config "$chunk_file" "$config_file" "$probe_map" "$protocol" || return 1
+            ;;
+        *)
+            log_msg "batch: неизвестный способ проверки '$PROBE_KIND'"
+            return 1
+            ;;
+    esac
+    # Every link in the chunk turned out to be unsupported by this engine. They are
+    # already recorded as such, so starting an engine with nothing to probe would
+    # only waste a process.
+    if [ ! -s "$probe_map" ]; then
+        BATCH_CHUNK_ALIVE=0
+        return 0
+    fi
     start_test_instance "$config_file" "$log_file" || return 1
 
     running=0
@@ -257,12 +370,22 @@ probe_links_batch_runtime() {
     BATCH_CHUNKS=0
 
     [ "$BATCH_CHECK_ENABLED" = "1" ] || return 1
-    if [ "$PROXY_ENGINE" != "xray" ]; then
-        log_msg "batch: для engine=$PROXY_ENGINE используется fallback на индивидуальную проверку"
+    # Whether one process can probe many links at once is a property of the engine,
+    # not a privilege of Xray. Every engine that says it can, does; the sequential
+    # fallback is for one that says it cannot.
+    if [ "$PROBE_BATCH" != "1" ]; then
+        log_msg "batch: ядро $PROBE_LABEL не поддерживает пакетную проверку, используется индивидуальная"
         return 1
     fi
-    [ -x "$VLESS2JSON" ] || return 1
-    [ -f "$BATCH_TEST_TEMPLATE_FILE" ] || return 1
+    case "$PROBE_KIND" in
+        template)
+            [ -x "$VLESS2JSON" ] || return 1
+            [ -f "$BATCH_TEST_TEMPLATE_FILE" ] || return 1
+            ;;
+        mihomo) [ -x "$PROXY2MIHOMO" ] || return 1 ;;
+        singbox) [ -x "$PROXY2SINGBOX" ] || return 1 ;;
+        *) return 1 ;;
+    esac
 
     BATCH_DIR="$(mktemp -d /tmp/tproxy-manager-watchdog-batch.XXXXXX 2>/dev/null || printf '')"
     if [ -z "$BATCH_DIR" ] || [ ! -d "$BATCH_DIR" ]; then
@@ -270,27 +393,39 @@ probe_links_batch_runtime() {
         return 1
     fi
 
-    vless_input="$BATCH_DIR/input-vless.tsv"
-    hy2_input="$BATCH_DIR/input-hy2.tsv"
-    : > "$vless_input"
-    : > "$hy2_input"
-
-    while IFS="$(printf '\t')" read -r hash link comment lineno; do
-        [ -n "$hash" ] || continue
-        case "$(link_protocol "$link")" in
-            hy2) printf '%s\t%s\t%s\t%s\n' "$hash" "$link" "$comment" "$lineno" >> "$hy2_input" ;;
-            *) printf '%s\t%s\t%s\t%s\n' "$hash" "$link" "$comment" "$lineno" >> "$vless_input" ;;
-        esac
-    done < "$input_file"
-
+    # Splitting by protocol is an Xray requirement, not a general one: there
+    # Hysteria 2 is a stream transport and needs its own template, so the two
+    # protocols cannot share a config. Mihomo and sing-box take both as ordinary
+    # outbounds and probe them together -- splitting would just double the number
+    # of engine processes for no reason.
     started="$(now_ts)"
-    for protocol in vless hy2; do
-        protocol_input="$BATCH_DIR/input-$protocol.tsv"
-        if ! probe_links_batch_protocol_runtime "$protocol" "$protocol_input"; then
+    if [ "$PROBE_KIND" = "template" ]; then
+        vless_input="$BATCH_DIR/input-vless.tsv"
+        hy2_input="$BATCH_DIR/input-hy2.tsv"
+        : > "$vless_input"
+        : > "$hy2_input"
+
+        while IFS="$(printf '\t')" read -r hash link comment lineno; do
+            [ -n "$hash" ] || continue
+            case "$(link_protocol "$link")" in
+                hy2) printf '%s\t%s\t%s\t%s\n' "$hash" "$link" "$comment" "$lineno" >> "$hy2_input" ;;
+                *) printf '%s\t%s\t%s\t%s\n' "$hash" "$link" "$comment" "$lineno" >> "$vless_input" ;;
+            esac
+        done < "$input_file"
+
+        for protocol in vless hy2; do
+            protocol_input="$BATCH_DIR/input-$protocol.tsv"
+            if ! probe_links_batch_protocol_runtime "$protocol" "$protocol_input"; then
+                rm -rf "$BATCH_DIR"
+                return 1
+            fi
+        done
+    else
+        if ! probe_links_batch_protocol_runtime "mixed" "$input_file"; then
             rm -rf "$BATCH_DIR"
             return 1
         fi
-    done
+    fi
 
     finished="$(now_ts)"
     duration=$((finished - started))

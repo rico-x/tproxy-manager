@@ -1,0 +1,81 @@
+{
+  // Роль 05 — маршрутизация. Порядок правил значим: решает первое совпавшее.
+  //
+  // Последнее правило обязательно должно быть завершающим и отправлять остаток в
+  // управляемое подключение. Без него Xray отправит несовпавший трафик в первый
+  // outbound собранного массива, а это может оказаться ваш собственный прокси из
+  // роли 03: она загружается раньше роли 04.
+  "routing": {
+    "rules": [
+      // Блокировка — уязвимые UDP-порты
+      {
+        "type": "field",
+        "inboundTag": ["redirect", "tproxy"],
+        "network": "udp",
+        "port": "135, 137, 138, 139",
+        "outboundTag": "block"
+      },
+      // Блокировка — реклама и аналитика
+      {
+        "type": "field",
+        "inboundTag": ["redirect", "tproxy"],
+        "domain": ["geosite:category-ads-all", "geosite:category-public-tracker"],
+        "outboundTag": "block"
+      },
+      // Пример: отдельные домены через ваш собственный прокси из роли 03
+      {
+        "type": "field",
+        "inboundTag": ["redirect", "tproxy"],
+        "domain": ["domain:example.ru"],
+        "outboundTag": "proxy-ru"
+      },
+      // Напрямую — адреса
+      {
+        "type": "field",
+        "inboundTag": ["redirect", "tproxy"],
+        "ip": ["geoip:private", "geoip:ru", "geoip:by", "geoip:cn"],
+        "outboundTag": "direct"
+      },
+      // Напрямую — доменные зоны и известные сервисы
+      {
+        "type": "field",
+        "inboundTag": ["redirect", "tproxy"],
+        "domain": [
+          "regexp:^([\\w\\-\\.]+\\.)ru$",
+          "regexp:^([\\w\\-\\.]+\\.)su$",
+          "regexp:^([\\w\\-\\.]+\\.)by$",
+          "regexp:^([\\w\\-\\.]+\\.)xn--p1ai$",
+          "geosite:category-gov-ru",
+          "geosite:private",
+          "geosite:yandex",
+          "geosite:vk",
+          "geosite:mailru",
+          "geosite:steam",
+          "geosite:category-games"
+        ],
+        "outboundTag": "direct"
+      },
+      // Напрямую — торрент
+      {
+        "type": "field",
+        "inboundTag": ["redirect", "tproxy"],
+        "protocol": ["bittorrent"],
+        "outboundTag": "direct"
+      },
+      // Напрямую — игровой UDP
+      {
+        "type": "field",
+        "inboundTag": ["redirect", "tproxy"],
+        "network": "udp",
+        "port": "3478-3497,4379-4380,27000-27200",
+        "outboundTag": "direct"
+      },
+      // Завершающее правило: всё остальное — в управляемое подключение
+      {
+        "type": "field",
+        "inboundTag": ["redirect", "tproxy"],
+        "outboundTag": "proxy"
+      }
+    ]
+  }
+}

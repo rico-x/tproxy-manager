@@ -99,7 +99,20 @@ local function render(ctx)
     elseif code == "commit_failed" then
       return _("Failed to save the engine selection - no services were restarted.")
     elseif code == "did_not_start_reverted" then
-      return string.format(_("%s did not start; reverted to %s."), p.target or "", p.previous or "")
+      local msg = string.format(_("%s did not start; reverted to %s."), p.target or "", p.previous or "")
+      -- The init script's own verdict, when it has one. "Did not start" on its own
+      -- sends the user to look at the engine, while the answer is usually the init
+      -- script they pointed us to: absent, or shipped disabled in its own config.
+      if p.reason == "no_init_script" then
+        msg = msg .. " " .. string.format(_("There is no executable init script at %s."), p.service_path or "")
+      elseif p.reason == "no_instances" then
+        msg = msg .. " " .. string.format(
+          _("%s ran but started nothing: that service is disabled in its own configuration. Point the engine at the init script shipped with this package, or enable the service."),
+          p.service_path or "")
+      elseif p.reason == "start_failed" then
+        msg = msg .. " " .. string.format(_("The start command %s returned an error."), p.service_path or "")
+      end
+      return msg
     elseif code == "rollback_incomplete" then
       local parts = {}
       for _idx, problem in ipairs(p.problems or {}) do parts[#parts + 1] = engine_problem(problem) end
@@ -152,6 +165,24 @@ local function render(ctx)
     else
       set_info(nil)
       set_err(string.format(_("Could not change autostart for: %s"), failed))
+    end
+    redirect_here("tproxy"); return m
+  end
+
+  -- Put the live check command back in step with the active engine. A button and
+  -- not an automatic repair: the stored value may be a deliberate customisation
+  -- of the OTHER engine that a switch is about to restore.
+  if http.formvalue("_fix_test_command") == "1" and engines then
+    local want = engines.profile_value(uci, PKG, proxy_engine, "test_command")
+    if want == "" then
+      set_info(nil)
+      set_err(_("The active engine has no check command of its own."))
+    elseif utils.uci_stage(uci, PKG, "main", "watchdog_test_command", want) and uci:commit(PKG) then
+      set_err(nil)
+      set_info(string.format(_("Check command set to %s."), want))
+    else
+      set_info(nil)
+      set_err(_("Could not save the check command."))
     end
     redirect_here("tproxy"); return m
   end
@@ -341,6 +372,26 @@ local function render(ctx)
             table.concat(names, ", "))),
           pcdata(string.format(_("Leave autostart on for %s only"), engines.def(proxy_engine).label))
         )
+      end
+      -- The watchdog's live test command can fall out of step with the active
+      -- engine: an install that never switched, a restored backup, a hand edit.
+      -- The probe now prefers the engine's own profile, so links keep being
+      -- measured correctly -- but the stored value is still wrong and the next
+      -- reader of it may not be as forgiving, so it is reported rather than
+      -- silently repaired.
+      do
+        local want = engines.profile_value(uci, PKG, proxy_engine, "test_command")
+        local live = trim(uci:get(PKG, "main", "watchdog_test_command") or "")
+        if want ~= "" and live ~= "" and live ~= want then
+          rows[#rows + 1] = string.format(
+            "<div class='msg err' style='margin-top:.5rem'>%s<div class='inline-row' style='margin-top:.35rem'>" ..
+            "<button class='cbi-button cbi-button-apply small-btn' name='_fix_test_command' value='1'>%s</button></div></div>",
+            pcdata(string.format(
+              _("The watchdog check command (%s) does not belong to the active engine %s. Links are being checked with %s."),
+              live, engines.def(proxy_engine).label, want)),
+            pcdata(_("Use the active engine's command"))
+          )
+        end
       end
       local active_status = engines.status(uci, PKG, proxy_engine)
       if not active_status.installed then

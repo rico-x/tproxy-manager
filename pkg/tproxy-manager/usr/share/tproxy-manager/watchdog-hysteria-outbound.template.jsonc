@@ -1,6 +1,8 @@
 {
   // Base template for Hysteria 2 links rendered through Xray.
-  // The converter replaces __HY2_STREAM_SETTINGS__ with a JSON object.
+  // The converter replaces the streamSettings placeholder below with a JSON
+  // object. Naming it here as well would substitute it into this comment too;
+  // harmless only as long as the object stays on one line.
   "remarks": "__REMARKS__",
   "outbounds": [
     {

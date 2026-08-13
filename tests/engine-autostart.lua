@@ -305,6 +305,257 @@ do
   check("xray still running", live(), "xray")
 end
 
+-- Saving the watchdog form must not destroy the active engine's stored command.
+-- Reported scenario: Mihomo active, mihomo_profile_test_command correct, the live
+-- watchdog_test_command wrongly holding Xray's -- and an ordinary save copied the
+-- live key over the profile, losing the only correct copy.
+do
+  print("\n-- a stale live check command does not overwrite the profile --")
+  local uci = reset("mihomo")
+  local RIGHT = "/usr/bin/mihomo -f {config}"
+  local STALE = "/usr/bin/xray -c {config}"
+  uci:set(PKG, "main", "mihomo_profile_test_command", RIGHT)
+  uci:set(PKG, "main", "watchdog_test_command", STALE)
+  uci:set(PKG, "main", "watchdog_outbound_file", BASE .. "/synced.out")
+  uci:commit(PKG)
+
+  -- An ordinary save: the command field was not touched.
+  check("the save succeeds", engines.save_legacy_to_profile(uci, PKG, "mihomo",
+    { edited = { watchdog_test_command = false } }), true)
+  uci:commit(PKG)
+  local fresh = uci_mod.cursor()
+  check("  the Mihomo profile keeps its own command",
+    fresh:get(PKG, "main", "mihomo_profile_test_command"), RIGHT)
+  check("  and every other field still syncs",
+    fresh:get(PKG, "main", "mihomo_profile_outbound_file"), BASE .. "/synced.out")
+
+  -- No intent at all is how the engine switch and the TPROXY form call this. A
+  -- value that describes another engine must be refused there too.
+  uci:set(PKG, "main", "watchdog_outbound_file", BASE .. "/switch.out")
+  uci:commit(PKG)
+  check("a caller with no stated intent is just as safe",
+    engines.save_legacy_to_profile(uci, PKG, "mihomo"), true)
+  uci:commit(PKG)
+  fresh = uci_mod.cursor()
+  check("  profile command still untouched",
+    fresh:get(PKG, "main", "mihomo_profile_test_command"), RIGHT)
+  check("  and the rest still syncs",
+    fresh:get(PKG, "main", "mihomo_profile_outbound_file"), BASE .. "/switch.out")
+
+  -- An edited command belongs in both places.
+  local EDITED = "/usr/bin/mihomo -f {config} -d /etc/mihomo"
+  uci:set(PKG, "main", "watchdog_test_command", EDITED)
+  uci:commit(PKG)
+  check("an edited command reaches the profile", engines.save_legacy_to_profile(uci, PKG, "mihomo",
+    { edited = { watchdog_test_command = true } }), true)
+  uci:commit(PKG)
+  fresh = uci_mod.cursor()
+  check("  the profile has the edit", fresh:get(PKG, "main", "mihomo_profile_test_command"), EDITED)
+  check("  and the live key has it too", fresh:get(PKG, "main", "watchdog_test_command"), EDITED)
+
+  -- An edit is the user's decision even when it names another engine: it is stored,
+  -- and the watchdog reports the disagreement when it loads rather than silently
+  -- overriding what was asked for.
+  uci:set(PKG, "main", "watchdog_test_command", STALE)
+  uci:commit(PKG)
+  check("an explicit edit to another engine's command is honoured",
+    engines.save_legacy_to_profile(uci, PKG, "mihomo", { edited = { watchdog_test_command = true } }), true)
+  uci:commit(PKG)
+  check("  stored as asked", uci_mod.cursor():get(PKG, "main", "mihomo_profile_test_command"), STALE)
+
+  -- The same guard for a THIRD engine's command, recognised by the program it runs
+  -- rather than by an exact built-in string. Through the heuristic path, since that
+  -- is what the recognition is for.
+  local uci2 = reset("mihomo")
+  uci2:set(PKG, "main", "mihomo_profile_test_command", RIGHT)
+  uci2:set(PKG, "main", "watchdog_test_command", "/usr/bin/sing-box run -c /tmp/x.json --disable-color")
+  uci2:commit(PKG)
+  engines.save_legacy_to_profile(uci2, PKG, "mihomo")
+  uci2:commit(PKG)
+  check("another engine's command is recognised by its binary",
+    uci_mod.cursor():get(PKG, "main", "mihomo_profile_test_command"), RIGHT)
+
+  -- The next three pin how PRECISE the heuristic is, so they go through the path
+  -- that still uses it: a caller with no stated intent. With an explicit
+  -- edited = false nothing is copied at all, which would prove nothing about the
+  -- heuristic either way.
+  --
+  -- The engine's OWN command must always get through, however it is written.
+  local uci3 = reset("xray")
+  uci3:set(PKG, "main", "watchdog_test_command", "/usr/bin/xray -c {config} -format json")
+  uci3:commit(PKG)
+  engines.save_legacy_to_profile(uci3, PKG, "xray")
+  uci3:commit(PKG)
+  check("the active engine's own command is never mistaken for a foreign one",
+    uci_mod.cursor():get(PKG, "main", "xray_profile_test_command"),
+    "/usr/bin/xray -c {config} -format json")
+
+  -- Another engine's name inside a PATH is not the program being run. Matching it
+  -- anywhere in the string would drop a command that is perfectly correct.
+  local uci4 = reset("mihomo")
+  local WITH_PATH = "/usr/bin/mihomo -f /etc/xray/shared.yaml"
+  uci4:set(PKG, "main", "watchdog_test_command", WITH_PATH)
+  uci4:commit(PKG)
+  engines.save_legacy_to_profile(uci4, PKG, "mihomo")
+  uci4:commit(PKG)
+  check("another engine's name in a config path is not the program",
+    uci_mod.cursor():get(PKG, "main", "mihomo_profile_test_command"), WITH_PATH)
+
+  -- A foreign command written without a full path is recognised the same way.
+  local uci5 = reset("mihomo")
+  uci5:set(PKG, "main", "mihomo_profile_test_command", RIGHT)
+  uci5:set(PKG, "main", "watchdog_test_command", "xray -c /tmp/probe.json")
+  uci5:commit(PKG)
+  engines.save_legacy_to_profile(uci5, PKG, "mihomo")
+  uci5:commit(PKG)
+  check("a bare binary name is recognised too",
+    uci_mod.cursor():get(PKG, "main", "mihomo_profile_test_command"), RIGHT)
+end
+
+-- A wrapper script is the case no text heuristic can catch: "/opt/bin/xray-wrapper"
+-- names no known engine, so it read as "not another engine's" and was copied over
+-- the correct Mihomo command. When the caller states the field was not edited, the
+-- live value must not be copied AT ALL -- its text proves nothing either way.
+do
+  print("\n-- an untouched command is never copied, whatever it looks like --")
+  local RIGHT = "/usr/bin/mihomo -f {config}"
+  local WRAPPER = "/opt/bin/xray-wrapper -c {config}"
+
+  -- edited = false: skipped outright, and the rest of the profile still syncs.
+  local uci = reset("mihomo")
+  uci:set(PKG, "main", "mihomo_profile_test_command", RIGHT)
+  uci:set(PKG, "main", "watchdog_test_command", WRAPPER)
+  uci:set(PKG, "main", "watchdog_outbound_file", BASE .. "/wrapper-sync.out")
+  uci:set(PKG, "main", "watchdog_proxy_url", "socks5h://127.0.0.1:10999")
+  uci:commit(PKG)
+  check("the save succeeds", engines.save_legacy_to_profile(uci, PKG, "mihomo",
+    { edited = { watchdog_test_command = false } }), true)
+  uci:commit(PKG)
+  local fresh = uci_mod.cursor()
+  check("  a wrapper for another engine does not reach the profile",
+    fresh:get(PKG, "main", "mihomo_profile_test_command"), RIGHT)
+  check("  the outbound file still syncs",
+    fresh:get(PKG, "main", "mihomo_profile_outbound_file"), BASE .. "/wrapper-sync.out")
+  check("  and so does the proxy url",
+    fresh:get(PKG, "main", "mihomo_profile_proxy_url"), "socks5h://127.0.0.1:10999")
+
+  -- An untouched command is skipped even when it IS the active engine's own: there
+  -- is nothing to save, since the profile is where it came from.
+  uci:set(PKG, "main", "watchdog_test_command", RIGHT .. " -d /etc/mihomo")
+  uci:commit(PKG)
+  engines.save_legacy_to_profile(uci, PKG, "mihomo", { edited = { watchdog_test_command = false } })
+  uci:commit(PKG)
+  check("an untouched command is skipped even when it is this engine's",
+    uci_mod.cursor():get(PKG, "main", "mihomo_profile_test_command"), RIGHT)
+
+  -- edited = true: a wrapper the user typed on purpose is stored.
+  local uci2 = reset("mihomo")
+  uci2:set(PKG, "main", "mihomo_profile_test_command", RIGHT)
+  uci2:set(PKG, "main", "watchdog_test_command", "/opt/bin/mihomo-wrapper -f {config}")
+  uci2:commit(PKG)
+  engines.save_legacy_to_profile(uci2, PKG, "mihomo", { edited = { watchdog_test_command = true } })
+  uci2:commit(PKG)
+  check("a wrapper entered on purpose is stored",
+    uci_mod.cursor():get(PKG, "main", "mihomo_profile_test_command"),
+    "/opt/bin/mihomo-wrapper -f {config}")
+
+  -- Even one naming another engine: an explicit edit is the user's call, and the
+  -- watchdog reports the disagreement when it loads rather than overriding it.
+  local uci3 = reset("mihomo")
+  uci3:set(PKG, "main", "watchdog_test_command", WRAPPER)
+  uci3:commit(PKG)
+  engines.save_legacy_to_profile(uci3, PKG, "mihomo", { edited = { watchdog_test_command = true } })
+  uci3:commit(PKG)
+  check("  including a wrapper named after another engine",
+    uci_mod.cursor():get(PKG, "main", "mihomo_profile_test_command"), WRAPPER)
+
+  -- No opts at all -- the engine switch and the TPROXY form -- keeps the heuristic:
+  -- a recognisable foreign command is refused, and anything else is copied, wrapper
+  -- included. Unchanged behaviour, pinned so it cannot drift.
+  local uci4 = reset("mihomo")
+  uci4:set(PKG, "main", "mihomo_profile_test_command", RIGHT)
+  uci4:set(PKG, "main", "watchdog_test_command", "/usr/bin/xray -c {config}")
+  uci4:commit(PKG)
+  engines.save_legacy_to_profile(uci4, PKG, "mihomo")
+  uci4:commit(PKG)
+  check("with no opts a recognisable foreign command is still refused",
+    uci_mod.cursor():get(PKG, "main", "mihomo_profile_test_command"), RIGHT)
+
+  local uci5 = reset("mihomo")
+  uci5:set(PKG, "main", "mihomo_profile_test_command", RIGHT)
+  uci5:set(PKG, "main", "watchdog_test_command", "/opt/bin/mihomo-wrapper -f {config}")
+  uci5:commit(PKG)
+  engines.save_legacy_to_profile(uci5, PKG, "mihomo")
+  uci5:commit(PKG)
+  check("  and this engine's own wrapper still gets through",
+    uci_mod.cursor():get(PKG, "main", "mihomo_profile_test_command"),
+    "/opt/bin/mihomo-wrapper -f {config}")
+end
+
+-- procd answers "active with no instances" when an init script ran and started
+-- nothing, which is what a service disabled in its OWN config does. Flattened into
+-- "not running" it reached the user as "the engine did not start" and sent them
+-- looking at the binary; observed for real with a sing-box profile pointing at the
+-- native /etc/init.d/sing-box, shipped disabled.
+do
+  print("\n-- the init script's own verdict is distinguished --")
+  local function stub(name, body)
+    local path = BASE .. "/" .. name
+    fs.writefile(path, "#!/bin/sh\n" .. body .. "\n")
+    sys.call("chmod +x " .. path)
+    return path
+  end
+  local running = stub("svc-running", 'echo "running"')
+  local stopped = stub("svc-stopped", 'echo "inactive"')
+  -- Exits non-zero as procd does here: the existence test must not be folded into
+  -- the status call, or a present script reads as missing.
+  local noinst  = stub("svc-noinstances", 'echo "active with no instances"; exit 1')
+  local notrun  = stub("svc-notrunning", 'echo "not running"')
+
+  check("running", engines.service_state(running), "running")
+  check("stopped", engines.service_state(stopped), "stopped")
+  check("not running", engines.service_state(notrun), "stopped")
+  check("active with no instances", engines.service_state(noinst), "no_instances")
+  check("  and it is not treated as running", engines.service_running(noinst), false)
+  check("absent path", engines.service_state(BASE .. "/svc-does-not-exist"), "missing")
+  check("empty path", engines.service_state(""), "missing")
+  -- A non-zero status must not be mistaken for a missing script.
+  check("a present script with failing status is not missing",
+    engines.service_state(noinst) ~= "missing", true)
+end
+
+-- A switch must drop "unsupported" results and nothing else. That status describes
+-- the engine that was active when the link was last checked, so carried across a
+-- switch it keeps claiming a link is unusable when the engine now running handles
+-- it perfectly well. alive and dead were measured against a real server and stay.
+do
+  print("\n-- unsupported results do not survive a switch --")
+  local dir = BASE .. "/link-states"
+  fs.mkdirr(dir)
+  local function state(name, status, extra)
+    fs.writefile(dir .. "/" .. name .. ".state",
+      "LINK_HASH=" .. name .. "\nLAST_STATUS=" .. status .. "\n" .. (extra or ""))
+  end
+  state("aaa", "alive")
+  state("bbb", "dead")
+  state("ccc", "unsupported", "LAST_REQUEST_TIME_TEXT=unsupported sing-box VLESS transport: xhttp\n")
+  state("ddd", "unsupported")
+  -- A reason mentioning the word must not be mistaken for the status itself.
+  state("eee", "alive", "LAST_REQUEST_TIME_TEXT=was unsupported earlier\n")
+
+  local cleared = engines.clear_unsupported_link_states(dir)
+  check("two unsupported results cleared", cleared, 2)
+  check("  alive kept", fs.access(dir .. "/aaa.state") and true or false, true)
+  check("  dead kept", fs.access(dir .. "/bbb.state") and true or false, true)
+  check("  unsupported with a reason removed", fs.access(dir .. "/ccc.state") and true or false, false)
+  check("  bare unsupported removed", fs.access(dir .. "/ddd.state") and true or false, false)
+  check("  the word inside a reason is not the status", fs.access(dir .. "/eee.state") and true or false, true)
+
+  -- A missing directory is the normal case before the first scan.
+  check("a missing state directory is not an error",
+    engines.clear_unsupported_link_states(BASE .. "/nope"), 0)
+end
+
 --------------------------------------------------------------------------------
 
 sys.call("rm -rf " .. BASE)

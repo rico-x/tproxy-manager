@@ -1,0 +1,23 @@
+{
+  // Роль 03 — ваши собственные подключения. Пакет этот файл НЕ ПИШЕТ никогда.
+  //
+  // sing-box сливает массивы из всех фрагментов каталога, поэтому эти outbound
+  // добавляются к управляемому, а не заменяют его. Ссылаться на них из правил
+  // маршрутизации (роль 05) можно по тегу.
+  "outbounds": [
+    {
+      "type": "vless",
+      "tag": "proxy-ru",
+      "server": "192.0.2.10",
+      "server_port": 443,
+      "uuid": "00000000-0000-0000-0000-000000000000",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "example.com",
+        "utls": { "enabled": true, "fingerprint": "chrome" },
+        "reality": { "enabled": true, "public_key": "gkxLlrezdTjW03joL4PVcYM2GSNLrafqUiyyYTPmszU", "short_id": "0123456789abcdef" }
+      }
+    }
+  ]
+}

@@ -31,6 +31,8 @@ BIN_DIR="$ROOT/pkg/tproxy-manager/usr/bin"
 LIBEXEC_DIR="$ROOT/pkg/tproxy-manager/usr/libexec/tproxy-manager/watchdog"
 DEFAULTS_FILE="$ROOT/pkg/tproxy-manager/etc/uci-defaults/90_tproxy_manager"
 TESTS_DIR="$ROOT/tests"
+SHARE_DIR="$ROOT/pkg/tproxy-manager/usr/share/tproxy-manager"
+EXAMPLES_DIR="$ROOT/docs/config-examples"
 STAGE="/tmp/tpm-test-stage"
 
 if [ "$#" -lt 1 ]; then
@@ -60,7 +62,7 @@ run() { ssh ${SSH_ARGS[@]+"${SSH_ARGS[@]}"} "$TARGET" "$@"; }
 copy() { scp ${SCP_ARGS[@]+"${SCP_ARGS[@]}"} -q "$@"; }
 
 echo "== staging the working tree on $TARGET =="
-run "rm -rf $STAGE && mkdir -p $STAGE/lua/luci/model/cbi/tproxy_manager/modules $STAGE/lua/tproxy_manager $STAGE/bin $STAGE/libexec $STAGE/tests"
+run "rm -rf $STAGE && mkdir -p $STAGE/lua/luci/model/cbi/tproxy_manager/modules $STAGE/lua/tproxy_manager $STAGE/bin $STAGE/libexec $STAGE/share $STAGE/tests"
 copy "$MODULE_DIR"/*.lua "$TARGET:$STAGE/lua/luci/model/cbi/tproxy_manager/"
 # The per-tab modules are a subdirectory, so the glob above does not reach them;
 # without this a suite checking one of them would silently read the INSTALLED copy.
@@ -68,13 +70,28 @@ copy "$MODULE_DIR"/modules/*.lua "$TARGET:$STAGE/lua/luci/model/cbi/tproxy_manag
 copy "$LIB_DIR"/*.lua "$TARGET:$STAGE/lua/tproxy_manager/"
 copy "$BIN_DIR"/* "$TARGET:$STAGE/bin/"
 copy "$LIBEXEC_DIR"/* "$TARGET:$STAGE/libexec/"
+copy "$ROOT/pkg/tproxy-manager/usr/libexec/tproxy-manager/engine-probe-info" "$TARGET:$STAGE/libexec/"
+copy "$ROOT/pkg/tproxy-manager/usr/libexec/tproxy-manager/assemble-config" "$TARGET:$STAGE/libexec/"
 # Staged, never run: the suite lifts one function out of it. Executing this file
 # would rewrite the router's own configuration.
 copy "$DEFAULTS_FILE" "$TARGET:$STAGE/uci-defaults"
+# The shipped templates, so a suite checks the working tree's copy rather than
+# whatever /etc happens to hold on this router.
+for shared_file in "$SHARE_DIR"/*; do
+  [ -f "$shared_file" ] || continue
+  copy "$shared_file" "$TARGET:$STAGE/share/"
+done
+copy -r "$SHARE_DIR/config-defaults" "$TARGET:$STAGE/share/"
+# Примеры из документации: набор проверяет их настоящими ядрами, поэтому они
+# должны попадать на устройство вместе с рабочим деревом.
+run "mkdir -p $STAGE/examples/xray $STAGE/examples/mihomo $STAGE/examples/sing-box"
+copy "$EXAMPLES_DIR"/xray/* "$TARGET:$STAGE/examples/xray/"
+copy "$EXAMPLES_DIR"/mihomo/* "$TARGET:$STAGE/examples/mihomo/"
+copy "$EXAMPLES_DIR"/sing-box/* "$TARGET:$STAGE/examples/sing-box/"
 copy "$TESTS_DIR"/*.lua "$TESTS_DIR"/*.sh "$TARGET:$STAGE/tests/"
 # scp does not carry the executable bit unless asked; the suites run these
 # directly.
-run "chmod +x $STAGE/bin/*"
+run "chmod +x $STAGE/bin/* $STAGE/libexec/engine-probe-info $STAGE/libexec/assemble-config"
 echo "ok"
 
 # Staged modules first, system default (";;") after, so luci.sys/nixio still come
@@ -99,7 +116,7 @@ for suite in "$TESTS_DIR"/*.lua "$TESTS_DIR"/*.sh; do
       # libraries rather than the installed ones — otherwise a suite could pass
       # against a release that is already on the router while the change being
       # prepared is untested.
-      if ! run "LUA_PATH='$STAGED_LUA_PATH' TPM_STAGE_BIN=$STAGE/bin TPM_STAGE_LIBEXEC=$STAGE/libexec TPM_STAGE_DEFAULTS=$STAGE/uci-defaults TPM_STAGE_MODULES=$STAGE/lua/luci/model/cbi/tproxy_manager/modules TPM_TEST_BASE=/tmp/tpm-test-run-sh sh $STAGE/tests/$name"; then
+      if ! run "LUA_PATH='$STAGED_LUA_PATH' TPM_STAGE_BIN=$STAGE/bin TPM_STAGE_LIBEXEC=$STAGE/libexec TPM_ASSEMBLE_CONFIG=$STAGE/libexec/assemble-config TPM_STAGE_DEFAULTS=$STAGE/uci-defaults TPM_STAGE_MODULES=$STAGE/lua/luci/model/cbi/tproxy_manager/modules TPM_STAGE_SHARE=$STAGE/share TPM_STAGE_EXAMPLES=$STAGE/examples TPM_TEST_BASE=/tmp/tpm-test-run-sh sh $STAGE/tests/$name"; then
         status=1
       fi
       ;;

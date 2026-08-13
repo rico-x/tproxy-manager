@@ -35,6 +35,8 @@ Main features:
 Low-level TPROXY engine reference: [docs/en/tproxy-doc.md](docs/en/tproxy-doc.md).  
 Built-in link converter reference: [docs/en/vless2json.md](docs/en/vless2json.md).
 
+Engine config directory, roles and ready-made examples: [docs/en/config-layout.md](docs/en/config-layout.md).
+
 ## Installation
 
 Package feeds are published on GitHub Pages:
@@ -260,14 +262,17 @@ The `XRAY` tab provides basic Xray maintenance:
 
 ![MIHOMO](docs/screenshots/placeholder-mihomo.png)
 
-The `MIHOMO` tab works with the Mihomo managed config and YAML files in `/etc/mihomo`.
+The `MIHOMO` tab edits the active profile. A fresh install uses YAML fragments
+under `/etc/mihomo/tproxy-manager.d`; on upgrade an existing monolithic profile
+is preserved and the editor keeps using it under `/etc/mihomo` until an explicit
+migration.
 
 It provides:
 
 - Service controls for `tproxy-manager-mihomo`.
-- YAML editor.
+- YAML editor for `mihomo_profile_config_dir`.
 - File creation and deletion.
-- Syntax validation through the existing `mihomo` binary before saving.
+- Full assembled-profile validation through `assemble-config mihomo --check` before saving.
 - Mihomo version manager through GitHub Releases `MetaCubeX/mihomo`; the release is downloaded and extracted in `/tmp`, only the binary is copied to disk.
 - Managed config generation from the shared Watchdog link list.
 
@@ -275,18 +280,20 @@ It provides:
 
 ![SING-BOX](docs/screenshots/placeholder-singbox.png)
 
-The `SING-BOX` tab works with the sing-box managed config and JSON files in `/etc/sing-box`.
+The `SING-BOX` tab edits the active profile. A fresh install uses JSON fragments
+under `/etc/sing-box/tproxy-manager.d`; on upgrade an existing monolithic profile
+is preserved and the editor keeps using it under `/etc/sing-box` until an
+explicit migration.
 
 It provides:
 
 - Service controls for `tproxy-manager-sing-box`.
 - Shared `logread` viewer.
-- `*.json` editor for `/etc/sing-box`.
+- `*.json` editor for `singbox_profile_config_dir`.
 - File creation and deletion.
-- JSONC editor validation and server-side validation through `sing-box check -c <tempfile>` before saving.
+- JSONC editor validation and server-side validation of a shadow directory through `sing-box check -C` before saving.
 - sing-box version manager through GitHub Releases `SagerNet/sing-box`; the release is downloaded and extracted in `/tmp`, only the binary is copied to disk.
-- Managed runtime config `/etc/sing-box/tproxy-manager.json`.
-- Managed outbounds fragment `/etc/sing-box/tproxy-manager-outbounds.json`.
+- Managed outbounds fragment `/etc/sing-box/tproxy-manager.d/04-outbounds-managed.json`.
 
 ## GEO Updates
 
@@ -438,7 +445,7 @@ The result is displayed as plain text only. It is not added automatically to sub
 
 ![Watchdog links](docs/screenshots/placeholder-watchdog-links.png)
 
-For Xray, `Check all links` uses batch mode: Watchdog creates one temporary test config for a chunk of links. Every link receives a unique outbound tag and a dedicated local SOCKS inbound, then `curl` checks `CHECK_URL` through the corresponding port. For Mihomo and sing-box, the current implementation safely falls back to individual checks.
+`Check all links` uses batch mode on Xray, Mihomo, and sing-box. Watchdog creates one temporary test config for a chunk of links; every link receives its own outbound and local SOCKS inbound, then `curl` checks `CHECK_URL` through the corresponding port.
 
 Per-link state stores:
 
@@ -461,18 +468,18 @@ For `fastest`, enable background link checks or run `Check all links` periodical
 
 ![Watchdog outbounds template](docs/screenshots/placeholder-watchdog-outbounds-template.png)
 
-Watchdog does not embed the outbound JSON in the shell script. It uses external templates:
+The editor exposes six user-owned outbound templates, VLESS and Hysteria 2 for each engine:
 
 - `/etc/tproxy-manager/watchdog-outbound.template.jsonc`
-- `/etc/tproxy-manager/watchdog-test-config.template.jsonc`
-- `/etc/tproxy-manager/watchdog-batch-test-config.template.jsonc`
 - `/etc/tproxy-manager/watchdog-hysteria-outbound.template.jsonc`
-- `/etc/tproxy-manager/watchdog-hysteria-test-config.template.jsonc`
-- `/etc/tproxy-manager/watchdog-hysteria-batch-test-config.template.jsonc`
-- `/etc/tproxy-manager/watchdog-mihomo-test-config.template.yaml`
-- `/etc/tproxy-manager/watchdog-mihomo-batch-test-config.template.yaml`
-- `/etc/tproxy-manager/watchdog-singbox-test-config.template.jsonc`
-- `/etc/tproxy-manager/watchdog-singbox-batch-test-config.template.jsonc`
+- `/etc/tproxy-manager/watchdog-mihomo-vless-outbound.template.yaml`
+- `/etc/tproxy-manager/watchdog-mihomo-hysteria-outbound.template.yaml`
+- `/etc/tproxy-manager/watchdog-singbox-vless-outbound.template.jsonc`
+- `/etc/tproxy-manager/watchdog-singbox-hysteria-outbound.template.jsonc`
+
+The selected outbound template is used for live application, single-link probes,
+and batch probes. Probe-layout and batch-layout templates are package internals
+and are deliberately not editable in the form.
 
 The default converter is:
 
@@ -506,12 +513,11 @@ Template placeholders are documented in [docs/en/vless2json.md](docs/en/vless2js
 | Watchdog shared subscription profile | `/etc/tproxy-manager/watchdog-share.json` |
 | GEO data directory | `/usr/share/tproxy-manager` |
 | Xray configs | `/etc/xray` |
-| Mihomo configs | `/etc/mihomo` |
+| Mihomo config fragments | `/etc/mihomo/tproxy-manager.d` |
 | Mihomo managed config | `/etc/mihomo/tproxy-manager.yaml` |
 | Mihomo managed provider | `/etc/mihomo/tproxy-manager-proxies.yaml` |
-| sing-box configs | `/etc/sing-box` |
-| sing-box managed config | `/etc/sing-box/tproxy-manager.json` |
-| sing-box managed outbounds | `/etc/sing-box/tproxy-manager-outbounds.json` |
+| sing-box config fragments | `/etc/sing-box/tproxy-manager.d` |
+| sing-box managed outbounds | `/etc/sing-box/tproxy-manager.d/04-outbounds-managed.json` |
 
 ## Build
 

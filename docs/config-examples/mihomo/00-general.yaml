@@ -1,0 +1,9 @@
+# Роль: общие параметры движка.
+#
+# geodata-mode заставляет mihomo брать geoip из GeoIP.dat рядом с конфигом, как
+# это делает Xray. Без него GEOIP-правила требуют MMDB и ядро уходит скачивать
+# его из интернета при каждой проверке конфига.
+ipv6: true
+geodata-mode: true
+geodata-loader: standard
+geo-auto-update: false

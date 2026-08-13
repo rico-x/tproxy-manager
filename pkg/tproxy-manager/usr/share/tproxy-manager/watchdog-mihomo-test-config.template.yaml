@@ -1,5 +1,10 @@
-# Reference template for Mihomo one-link probe configs.
-# Current runtime generates this structure through /usr/bin/proxy2mihomo.lua.
+# Layout of the Mihomo one-link probe config. Edited here, it is used as-is:
+# proxy2mihomo.lua fills the placeholders below and emits the rest verbatim.
+# Delete the file to fall back to the converter's built-in layout, which is
+# identical to this one.
+#
+# Do not name a placeholder anywhere else in this file, not even in a comment:
+# substitution is literal and would paste the proxy block into the prose.
 allow-lan: false
 bind-address: 127.0.0.1
 mode: rule

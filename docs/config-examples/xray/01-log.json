@@ -1,0 +1,8 @@
+{
+  // Роль 01 — логирование.
+  "log": {
+    "access": "none",
+    "loglevel": "error",
+    "dnsLog": false
+  }
+}

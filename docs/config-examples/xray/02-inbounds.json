@@ -1,0 +1,34 @@
+{
+  // Роль 02 — входящие подключения.
+  //
+  // Порты соответствуют дефолтам пакета: socks на 10808 (watchdog_proxy_url),
+  // TPROXY на 61219 (tproxy_port). Меняете порт в настройках — меняйте и здесь.
+  "inbounds": [
+    {
+      "tag": "socks",
+      "listen": "127.0.0.1",
+      "port": 10808,
+      "protocol": "socks",
+      "settings": { "auth": "noauth", "udp": true, "userLevel": 8 },
+      "sniffing": { "enabled": true, "destOverride": ["http", "tls", "quic", "fakedns"] }
+    },
+    {
+      "tag": "redirect",
+      "listen": "127.0.0.1",
+      "port": 61219,
+      "protocol": "dokodemo-door",
+      "settings": { "network": "tcp", "followRedirect": true },
+      "streamSettings": { "sockopt": { "tproxy": "tproxy" } },
+      "sniffing": { "enabled": true, "destOverride": ["http", "tls"] }
+    },
+    {
+      "tag": "tproxy",
+      "listen": "127.0.0.1",
+      "port": 61219,
+      "protocol": "dokodemo-door",
+      "settings": { "network": "udp", "followRedirect": true },
+      "streamSettings": { "sockopt": { "tproxy": "tproxy" } },
+      "sniffing": { "enabled": true, "destOverride": ["http", "tls", "quic"] }
+    }
+  ]
+}
