@@ -35,6 +35,8 @@ TPROXY Manager — это LuCI-панель и набор системных с�
 Низкоуровневая документация по TPROXY-движку: [docs/tproxy-doc.md](docs/tproxy-doc.md).  
 Документация по встроенному конвертеру ссылок: [docs/vless2json.md](docs/vless2json.md).
 
+Каталог конфигов ядер, роли и готовые примеры: [docs/config-layout.md](docs/config-layout.md).
+
 ## Установка
 
 Пакеты публикуются на GitHub Pages:
@@ -287,18 +289,21 @@ uci commit xray
 
 ![MIHOMO](docs/screenshots/placeholder-mihomo.png)
 
-Вкладка `MIHOMO` работает с managed-конфигом Mihomo и YAML-файлами в `/etc/mihomo`.
+Вкладка `MIHOMO` редактирует активный профиль. На новой установке это
+YAML-фрагменты в `/etc/mihomo/tproxy-manager.d`; при обновлении существующий
+монолитный профиль сохраняется, и до явной миграции редактор работает с ним в
+`/etc/mihomo`.
 
 Возможности:
 
 - запуск, остановка и автозапуск сервиса `tproxy-manager-mihomo`;
 - просмотр общего `logread`;
-- редактор `*.yaml` в `/etc/mihomo`;
+- редактор `*.yaml` в каталоге `mihomo_profile_config_dir`;
 - создание и удаление YAML-файлов;
-- проверка выбранного конфига через `mihomo -t -f`;
-- серверная валидация перед сохранением.
+- проверка полного собранного профиля через `assemble-config mihomo --check`;
+- серверная валидация всего набора фрагментов перед сохранением;
 - менеджер версии Mihomo через GitHub Releases `MetaCubeX/mihomo`, релиз скачивается и распаковывается во временном каталоге `/tmp`, на диск копируется только бинарник;
-- генерация managed-конфига `/etc/mihomo/tproxy-manager.yaml` из общего списка Watchdog.
+- генерация управляемого provider `/etc/mihomo/tproxy-manager-proxies.yaml` из общего списка Watchdog.
 
 Если проверка YAML не проходит, файл не записывается на диск.
 
@@ -314,18 +319,20 @@ uci commit xray
 
 ![SING-BOX](docs/screenshots/placeholder-singbox.png)
 
-Вкладка `SING-BOX` работает с managed-конфигом sing-box и JSON-файлами в `/etc/sing-box`.
+Вкладка `SING-BOX` редактирует активный профиль. На новой установке это
+JSON-фрагменты в `/etc/sing-box/tproxy-manager.d`; при обновлении существующий
+монолитный профиль сохраняется, и до явной миграции редактор работает с ним в
+`/etc/sing-box`.
 
 Возможности:
 
 - запуск, остановка и автозапуск сервиса `tproxy-manager-sing-box`;
 - просмотр общего `logread`;
-- редактор `*.json` в `/etc/sing-box`;
+- редактор `*.json` в каталоге `singbox_profile_config_dir`;
 - создание и удаление JSON-файлов;
-- JSONC-проверка в редакторе и серверная проверка через `sing-box check -c <tempfile>` перед сохранением;
+- JSONC-проверка в редакторе и серверная проверка всего теневого каталога через `sing-box check -C` перед сохранением;
 - менеджер версии sing-box через GitHub Releases `SagerNet/sing-box`, релиз скачивается и распаковывается во временном каталоге `/tmp`, на диск копируется только бинарник;
-- managed runtime-конфиг `/etc/sing-box/tproxy-manager.json`;
-- managed outbounds-фрагмент `/etc/sing-box/tproxy-manager-outbounds.json`.
+- managed outbounds-фрагмент `/etc/sing-box/tproxy-manager.d/04-outbounds-managed.json`.
 
 Если проверка sing-box завершилась ошибкой, файл не перезаписывается.
 
@@ -408,9 +415,8 @@ Watchdog — это отдельная вкладка и отдельный се
 2. Если используете подписки, настройте их в блоке `Подписки`.
 3. Нажмите `Проверить все ссылки`.
 4. Убедитесь, что хотя бы часть ссылок имеет статус `OK`.
-5. При необходимости настройте outbound-шаблон.
-6. При необходимости настройте test-template или batch-template.
-7. Запустите сервис Watchdog.
+5. При необходимости выберите ядро и протокол в редакторе outbound-шаблонов.
+6. Запустите сервис Watchdog.
 
 ### Подписки
 
@@ -621,7 +627,7 @@ hy2://... # внешний комментарий
 
 ### Массовая проверка ссылок
 
-Для Xray команда `Проверить все ссылки` использует batch-режим: Watchdog формирует один временный test-config на пачку ссылок. Каждая ссылка получает отдельный outbound tag и отдельный локальный SOCKS inbound, после чего curl проверяет `CHECK_URL` через соответствующий порт. Для Mihomo и sing-box текущая реализация безопасно использует fallback на индивидуальные проверки.
+Команда `Проверить все ссылки` использует batch-режим на Xray, Mihomo и sing-box: Watchdog формирует один временный test-config на пачку ссылок. Каждая ссылка получает отдельный outbound и отдельный локальный SOCKS inbound, после чего curl проверяет `CHECK_URL` через соответствующий порт.
 
 Преимущества batch-режима:
 
@@ -639,17 +645,22 @@ watchdog_batch_check_port_start=10882
 
 Если batch-template или test-instance не стартует, Watchdog может выполнить fallback на старую индивидуальную проверку, если включён параметр `watchdog_batch_check_fallback`.
 
-### Outbound-шаблон
+### Outbound-шаблоны
 
 ![Watchdog outbounds template](docs/screenshots/placeholder-watchdog-outbounds-template.png)
 
-Файл по умолчанию:
+В редакторе доступны шесть пользовательских шаблонов — VLESS и Hysteria 2 для каждого ядра:
 
 ```txt
 /etc/tproxy-manager/watchdog-outbound.template.jsonc
+/etc/tproxy-manager/watchdog-hysteria-outbound.template.jsonc
+/etc/tproxy-manager/watchdog-mihomo-vless-outbound.template.yaml
+/etc/tproxy-manager/watchdog-mihomo-hysteria-outbound.template.yaml
+/etc/tproxy-manager/watchdog-singbox-vless-outbound.template.jsonc
+/etc/tproxy-manager/watchdog-singbox-hysteria-outbound.template.jsonc
 ```
 
-Watchdog не хранит outbound внутри shell-скрипта. Шаблон редактируется во вкладке и передаётся встроенному конвертеру. Для Hysteria 2 используются отдельные HY2-шаблоны, которые выбираются автоматически по схеме ссылки:
+Watchdog передаёт выбранный шаблон в генерацию рабочего конфига, одиночной проверки и пакетной проверки. Поэтому пользовательская правка действует одинаково во всех трёх путях. Внутренние макеты test-instance и batch-instance остаются служебными файлами пакета и в форме не редактируются.
 
 ```sh
 vless2json.sh -r LINKS_FILE -t TEMPLATE_FILE
@@ -668,58 +679,7 @@ vless2json.sh -r LINKS_FILE -t TEMPLATE_FILE
 /usr/bin/proxy2singbox.lua
 ```
 
-Дополнительные reference-шаблоны для не-Xray ядер:
-
-```txt
-/etc/tproxy-manager/watchdog-mihomo-test-config.template.yaml
-/etc/tproxy-manager/watchdog-mihomo-batch-test-config.template.yaml
-/etc/tproxy-manager/watchdog-singbox-test-config.template.jsonc
-/etc/tproxy-manager/watchdog-singbox-batch-test-config.template.jsonc
-```
-
 Описание плейсхолдеров VLESS/HY2-шаблонов: [docs/vless2json.md](docs/vless2json.md).
-
-### Test-template
-
-![Watchdog test template](docs/screenshots/placeholder-watchdog-test-template.png)
-
-Для проверки одной ссылки используется отдельный временный конфиг test-instance.
-
-Файл по умолчанию:
-
-```txt
-/etc/tproxy-manager/watchdog-test-config.template.jsonc
-```
-
-Базовые плейсхолдеры:
-
-- `__TEST_PORT__` — локальный порт временного SOCKS inbound;
-- `__OUTBOUNDS__` — массив outbounds, полученный из конвертера;
-- `__OUTBOUND_TAG__` — `tag` первого outbound.
-
-Команда тестового запуска по умолчанию:
-
-```sh
-/usr/bin/xray -c {config}
-```
-
-Если используется не Xray, поменяйте и `TEST_COMMAND`, и test-template.
-
-### Batch-template
-
-Для массовой проверки используется отдельный шаблон:
-
-```txt
-/etc/tproxy-manager/watchdog-batch-test-config.template.jsonc
-```
-
-Batch-template получает три плейсхолдера:
-
-- `__BATCH_INBOUNDS__` — массив SOCKS inbound для проверяемых ссылок;
-- `__BATCH_OUTBOUNDS__` — массив outbound с уникальными тегами;
-- `__BATCH_RULES__` — routing rules `inboundTag -> outboundTag`.
-
-Этот шаблон ориентирован на Xray по умолчанию, но его можно заменить под другой test-runtime, если он поддерживает аналогичную схему маршрутизации.
 
 ![Watchdog settings](docs/screenshots/placeholder-watchdog-settings.png)
 
@@ -777,18 +737,17 @@ Batch-template получает три плейсхолдера:
 | Watchdog subscriptions DB | `/etc/tproxy-manager/watchdog-subscriptions.json` |
 | Профиль расшаривания Watchdog | `/etc/tproxy-manager/watchdog-share.json` |
 | Watchdog links | `/etc/tproxy-manager/watchdog.links` |
-| Watchdog batch-template | `/etc/tproxy-manager/watchdog-batch-test-config.template.jsonc` |
+| Watchdog VLESS outbound-template | `/etc/tproxy-manager/watchdog-outbound.template.jsonc` |
 | Watchdog HY2 outbound-template | `/etc/tproxy-manager/watchdog-hysteria-outbound.template.jsonc` |
-| Watchdog HY2 test-template | `/etc/tproxy-manager/watchdog-hysteria-test-config.template.jsonc` |
-| Watchdog HY2 batch-template | `/etc/tproxy-manager/watchdog-hysteria-batch-test-config.template.jsonc` |
+| Mihomo outbound-templates | `/etc/tproxy-manager/watchdog-mihomo-*-outbound.template.yaml` |
+| sing-box outbound-templates | `/etc/tproxy-manager/watchdog-singbox-*-outbound.template.jsonc` |
 | GEO datadir | `/usr/share/tproxy-manager` |
 | Xray configs | `/etc/xray` |
-| Mihomo configs | `/etc/mihomo` |
+| Mihomo config fragments | `/etc/mihomo/tproxy-manager.d` |
 | Mihomo managed config | `/etc/mihomo/tproxy-manager.yaml` |
 | Mihomo managed provider | `/etc/mihomo/tproxy-manager-proxies.yaml` |
-| sing-box configs | `/etc/sing-box` |
-| sing-box managed config | `/etc/sing-box/tproxy-manager.json` |
-| sing-box managed outbounds | `/etc/sing-box/tproxy-manager-outbounds.json` |
+| sing-box config fragments | `/etc/sing-box/tproxy-manager.d` |
+| sing-box managed outbounds | `/etc/sing-box/tproxy-manager.d/04-outbounds-managed.json` |
 
 ## Сборка
 

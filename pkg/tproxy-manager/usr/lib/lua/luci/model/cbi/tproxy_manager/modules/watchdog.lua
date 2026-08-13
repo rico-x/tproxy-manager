@@ -225,38 +225,46 @@ local TEMPLATE_CHOICES = {
   {
     id = "vless_outbound",
     key = "watchdog_template_file",
-    label = "VLESS outbound template",
-    fallback = "/etc/tproxy-manager/watchdog-outbound.template.jsonc"
-  },
-  {
-    id = "vless_test",
-    key = "watchdog_test_template_file",
-    label = "VLESS test template",
-    fallback = "/etc/tproxy-manager/watchdog-test-config.template.jsonc"
-  },
-  {
-    id = "vless_batch",
-    key = "watchdog_batch_test_template_file",
-    label = "VLESS batch test template",
-    fallback = "/etc/tproxy-manager/watchdog-batch-test-config.template.jsonc"
+    label = "Xray: VLESS outbound template",
+    fallback = "/etc/tproxy-manager/watchdog-outbound.template.jsonc",
+    format = "jsonc"
   },
   {
     id = "hy2_outbound",
     key = "watchdog_hysteria_template_file",
-    label = "Hysteria 2 outbound template",
-    fallback = "/etc/tproxy-manager/watchdog-hysteria-outbound.template.jsonc"
+    label = "Xray: Hysteria 2 outbound template",
+    fallback = "/etc/tproxy-manager/watchdog-hysteria-outbound.template.jsonc",
+    format = "jsonc"
   },
   {
-    id = "hy2_test",
-    key = "watchdog_hysteria_test_template_file",
-    label = "Hysteria 2 test template",
-    fallback = "/etc/tproxy-manager/watchdog-hysteria-test-config.template.jsonc"
+    id = "mihomo_vless_outbound",
+    key = "watchdog_mihomo_vless_outbound_template_file",
+    label = "Mihomo: VLESS outbound template",
+    fallback = "/etc/tproxy-manager/watchdog-mihomo-vless-outbound.template.yaml",
+    format = "yaml",
+    required = { "__NAME__", "__ADDRESS__", "__PORT__", "__UUID__" }
   },
   {
-    id = "hy2_batch",
-    key = "watchdog_hysteria_batch_test_template_file",
-    label = "Hysteria 2 batch test template",
-    fallback = "/etc/tproxy-manager/watchdog-hysteria-batch-test-config.template.jsonc"
+    id = "mihomo_hy2_outbound",
+    key = "watchdog_mihomo_hysteria_outbound_template_file",
+    label = "Mihomo: Hysteria 2 outbound template",
+    fallback = "/etc/tproxy-manager/watchdog-mihomo-hysteria-outbound.template.yaml",
+    format = "yaml",
+    required = { "__NAME__", "__ADDRESS__", "__PORT__", "__PASSWORD__" }
+  },
+  {
+    id = "singbox_vless_outbound",
+    key = "watchdog_singbox_vless_outbound_template_file",
+    label = "sing-box: VLESS outbound template",
+    fallback = "/etc/tproxy-manager/watchdog-singbox-vless-outbound.template.jsonc",
+    format = "jsonc"
+  },
+  {
+    id = "singbox_hy2_outbound",
+    key = "watchdog_singbox_hysteria_outbound_template_file",
+    label = "sing-box: Hysteria 2 outbound template",
+    fallback = "/etc/tproxy-manager/watchdog-singbox-hysteria-outbound.template.jsonc",
+    format = "jsonc"
   }
 }
 
@@ -266,6 +274,24 @@ local function template_choice_by_id(id)
     if choice.id == id then return choice end
   end
   return TEMPLATE_CHOICES[1]
+end
+
+local function validate_outbound_template(choice, text)
+  text = tostring(text or "")
+  if choice.format ~= "yaml" then
+    if helpers.validate_template_jsonc_text(text) then return true end
+    return false, _("Invalid template JSON/JSONC.")
+  end
+  if trim(text) == "" or text:find("\0", 1, true) then
+    return false, _("Invalid YAML template.")
+  end
+  if text:find("__GENERATED_OUTBOUND__", 1, true) then return true end
+  for __, placeholder in ipairs(choice.required or {}) do
+    if not text:find(placeholder, 1, true) then
+      return false, _("Required template placeholder is missing:") .. " " .. placeholder
+    end
+  end
+  return true
 end
 
 local function active_source_text(db, entry)
@@ -1267,36 +1293,21 @@ local function render(ctx)
       set_err(_("Template file path is required."))
     elseif not utils.is_abs_path(path) then
       set_err(_("Template file path must be absolute."))
-    elseif not helpers.validate_template_jsonc_text(text) then
-      set_err(_("Invalid template JSON/JSONC."))
     else
-      -- Uses the same checked transaction as every other editor instead of
-      -- its own hand-rolled copy: the local version treated the writer's
-      -- "permissions" status as "not written" and rolled back a file that
-      -- had in fact already been replaced.
-      local okc, msg = save_uci_and_file(choice.key, path, text,
-        _("Watchdog template saved:").." " .. path)
-      if okc then set_err(nil); set_info(msg) else set_info(nil); set_err(msg) end
-      helpers.redirect_watchdog("watchdog_template_kind=" .. http.urlencode(choice.id))
-      return m
-    end
-  end
-
-  if http.formvalue("_watchdog_save_test_template") == "1" then
-    local choice = template_choice_by_id("vless_test")
-    local path = trim(http.formvalue("watchdog_test_template_file"))
-    local text = http.formvalue("watchdog_test_template_text") or ""
-    if path == "" then
-      set_err(_("Test template file path is required."))
-    elseif not utils.is_abs_path(path) then
-      set_err(_("Test template file path must be absolute."))
-    elseif not helpers.validate_template_jsonc_text(text) then
-      set_err(_("Invalid template JSON/JSONC."))
-    else
-      local okc, msg = save_uci_and_file(choice.key, path, text, _("Test template saved:").." " .. path)
-      if okc then set_err(nil); set_info(msg) else set_info(nil); set_err(msg) end
-      helpers.redirect_watchdog("watchdog_template_kind=" .. http.urlencode(choice.id))
-      return m
+      local valid, validation_err = validate_outbound_template(choice, text)
+      if not valid then
+        set_err(validation_err)
+      else
+        -- Uses the same checked transaction as every other editor instead of
+        -- its own hand-rolled copy: the local version treated the writer's
+        -- "permissions" status as "not written" and rolled back a file that
+        -- had in fact already been replaced.
+        local okc, msg = save_uci_and_file(choice.key, path, text,
+          _("Watchdog template saved:").." " .. path)
+        if okc then set_err(nil); set_info(msg) else set_info(nil); set_err(msg) end
+        helpers.redirect_watchdog("watchdog_template_kind=" .. http.urlencode(choice.id))
+        return m
+      end
     end
   end
 
@@ -1610,6 +1621,11 @@ local function render(ctx)
 .wd-summary .lbl{color:var(--tpm-muted);font-size:var(--tpm-fs-meta)}
 .wd-summary .ok .n{color:var(--tpm-ok)}
 .wd-summary .bad .n{color:var(--tpm-bad)}
+.wd-summary .warn .n{color:var(--tpm-warn)}
+/* Why a link was not measured, under its badge. Same treatment as the cooldown
+   note: own line, wrapping allowed, so the narrow Status column cannot split a
+   protocol name from the engine it is unsupported by. */
+.wd-note{display:block;font-size:var(--tpm-fs-micro);color:var(--tpm-muted);line-height:1.25;margin-top:1px}
 </style>
 ]]
     end
@@ -1931,20 +1947,30 @@ local function render(ctx)
       -- links actually work". The three numbers come from the same per-link state
       -- files the table itself renders, so they cannot disagree with the rows.
       do
-        local n_ok, n_bad, n_excluded = 0, 0, 0
+        local n_ok, n_bad, n_excluded, n_unsupported = 0, 0, 0, 0
         for __, entry in ipairs(links or {}) do
           local st = entry.state and entry.state.LAST_STATUS or ""
           if st == "alive" then n_ok = n_ok + 1
-          elseif st == "dead" then n_bad = n_bad + 1 end
+          elseif st == "dead" then n_bad = n_bad + 1
+          elseif st == "unsupported" then n_unsupported = n_unsupported + 1 end
           if entry.excluded then n_excluded = n_excluded + 1 end
+        end
+        local unsupported_html = ""
+        -- Only shown when it applies: a permanent "0 unsupported" would suggest
+        -- the active engine might be unable to run some protocol when it can.
+        if n_unsupported > 0 then
+          unsupported_html = string.format(
+            [[<span class="warn"><span class="n">%d</span> <span class="lbl">%s</span></span>]],
+            n_unsupported, pcdata(_("Unsupported")))
         end
         rows[#rows + 1] = string.format([[
 <div class="wd-summary">
   <span class="ok"><span class="n">%d</span> <span class="lbl">OK</span></span>
   <span class="bad"><span class="n">%d</span> <span class="lbl">Error</span></span>
+  %s
   <span><span class="n">%d</span> <span class="lbl">%s</span></span>
   <span class="lbl">%s: <span class="n">%d</span></span>
-</div>]], n_ok, n_bad, n_excluded, pcdata(_("Excluded")), pcdata(_("Links total")), #(links or {}))
+</div>]], n_ok, n_bad, unsupported_html, n_excluded, pcdata(_("Excluded")), pcdata(_("Links total")), #(links or {}))
       end
       rows[#rows + 1] = "<div class='tpm-tablewrap'><table class='wd-table tpm-cards'><thead><tr><th style='width:8%'>" .. _("Source") .. "</th><th style='width:6%'>" .. _("Protocol") .. "</th><th style='width:6%'>" .. _("Shared") .. "</th><th style='width:12%'>" .. _("Comment") .. "</th><th style='width:28%'>" .. _("Proxy link") .. "</th><th style='width:8%'>" .. _("Status") .. "</th><th style='width:10%'>" .. _("Last check") .. "</th><th style='width:22%'>" .. _("Action") .. "</th></tr></thead><tbody>"
       if #links == 0 then
@@ -2226,10 +2252,6 @@ local function render(ctx)
       <label>%s</label><input type="text" name="watchdog_service_path" value="%s">
       <label>%s</label><input type="text" value="restart" readonly>
       <label>%s</label><input type="text" name="watchdog_test_command" value="%s">
-      <label>%s</label><input type="text" name="watchdog_hysteria_template_file" value="%s">
-      <label>%s</label><input type="text" name="watchdog_hysteria_test_template_file" value="%s">
-      <label>%s</label><input type="text" name="watchdog_mihomo_test_template_file" value="%s">
-      <label>%s</label><input type="text" name="watchdog_singbox_test_template_file" value="%s">
       <label>%s</label>
       <select name="watchdog_selection_mode">
         <option value="ordered"%s>%s</option>
@@ -2243,10 +2265,6 @@ local function render(ctx)
       <label>%s</label><input type="checkbox" name="watchdog_background_check_enabled" value="1" %s>
       <label>%s</label><input type="number" min="1" name="watchdog_background_check_interval" value="%s">
       <label>%s</label><input type="checkbox" name="watchdog_batch_check_enabled" value="1" %s>
-      <label>%s</label><input type="text" name="watchdog_batch_test_template_file" value="%s">
-      <label>%s</label><input type="text" name="watchdog_hysteria_batch_test_template_file" value="%s">
-      <label>%s</label><input type="text" name="watchdog_mihomo_batch_test_template_file" value="%s">
-      <label>%s</label><input type="text" name="watchdog_singbox_batch_test_template_file" value="%s">
       <label>%s</label><input type="number" min="1" max="65535" name="watchdog_batch_check_port_start" value="%s">
       <label>%s</label><input type="number" min="1" name="watchdog_batch_check_batch_size" value="%s">
       <label>%s</label><input type="number" min="1" name="watchdog_batch_check_concurrency" value="%s">
@@ -2287,14 +2305,6 @@ local function render(ctx)
         pcdata(_("Restart command")),
         pcdata(_("Test command")),
         pcdata(getu("watchdog_test_command", "/usr/bin/xray -c {config}")),
-        pcdata(_("Hysteria outbound template")),
-        pcdata(getu("watchdog_hysteria_template_file", "/etc/tproxy-manager/watchdog-hysteria-outbound.template.jsonc")),
-        pcdata(_("Hysteria test template")),
-        pcdata(getu("watchdog_hysteria_test_template_file", "/etc/tproxy-manager/watchdog-hysteria-test-config.template.jsonc")),
-        pcdata(_("Mihomo test template")),
-        pcdata(getu("watchdog_mihomo_test_template_file", "/etc/tproxy-manager/watchdog-mihomo-test-config.template.yaml")),
-        pcdata(_("sing-box test template")),
-        pcdata(getu("watchdog_singbox_test_template_file", "/etc/tproxy-manager/watchdog-singbox-test-config.template.jsonc")),
         pcdata(_("Selection mode")),
         getu("watchdog_selection_mode", "random") == "ordered" and " selected" or "",
         pcdata(_("ordered")),
@@ -2316,14 +2326,6 @@ local function render(ctx)
         pcdata(getu("watchdog_background_check_interval", "1800")),
         pcdata(_("Batch link check")),
         getu("watchdog_batch_check_enabled", "1") == "1" and "checked" or "",
-        pcdata(_("Batch test template")),
-        pcdata(getu("watchdog_batch_test_template_file", "/etc/tproxy-manager/watchdog-batch-test-config.template.jsonc")),
-        pcdata(_("Hysteria batch test template")),
-        pcdata(getu("watchdog_hysteria_batch_test_template_file", "/etc/tproxy-manager/watchdog-hysteria-batch-test-config.template.jsonc")),
-        pcdata(_("Mihomo batch test template")),
-        pcdata(getu("watchdog_mihomo_batch_test_template_file", "/etc/tproxy-manager/watchdog-mihomo-batch-test-config.template.yaml")),
-        pcdata(_("sing-box batch test template")),
-        pcdata(getu("watchdog_singbox_batch_test_template_file", "/etc/tproxy-manager/watchdog-singbox-batch-test-config.template.jsonc")),
         pcdata(_("Batch start port")),
         pcdata(getu("watchdog_batch_check_port_start", "10882")),
         pcdata(_("Batch size")),
@@ -2357,7 +2359,9 @@ local function render(ctx)
         local path = getu(choice.key, choice.fallback)
         template_data[choice.id] = {
           path = path,
-          text = read_file(path)
+          text = read_file(path),
+          format = choice.format or "jsonc",
+          required = choice.required or {}
         }
         options[#options + 1] = string.format(
           "<option value='%s'%s>%s</option>",
@@ -2377,7 +2381,7 @@ local function render(ctx)
       </select>
       <label>]] .. pcdata(_("Template file")) .. [[</label><input type="text" name="watchdog_template_path" value="]] .. pcdata(current_path) .. [[">
     </div>
-    <div style="margin-bottom:.4rem;color:var(--tpm-muted)">]] .. pcdata(_("Choose a VLESS or Hysteria 2 template, edit it and save it back to its own file. The active path is also stored in UCI settings.")) .. [[</div>
+    <div style="margin-bottom:.4rem;color:var(--tpm-muted)">]] .. pcdata(_("Choose an engine and protocol outbound template, edit it and save it back to its own file. The active path is also stored in UCI settings.")) .. [[</div>
     <textarea class="wd-textarea" name="watchdog_template_text" rows="18" spellcheck="false">]] .. pcdata(template_data[selected.id] and template_data[selected.id].text or "") .. [[</textarea>
     <div style="height:5px"></div>
     <div class="box editor-wrap editor-680" id="watchdog-template-status-box">
@@ -2494,6 +2498,31 @@ local function render(ctx)
     } catch(e) {}
   }
   function validate(){
+    var item = ensureEntry(current);
+    if (item.format === 'yaml') {
+      var text = ta.value || '';
+      if (!text.trim()) {
+        badge.textContent = ']] .. pcdata(_("YAML template is empty")) .. [[';
+        badge.style.color = 'var(--tpm-bad)';
+        return;
+      }
+      var required = item.required || [];
+      if (text.indexOf('__GENERATED_OUTBOUND__') >= 0) {
+        badge.textContent = ']] .. pcdata(_("Mihomo YAML template placeholders are valid")) .. [[';
+        badge.style.color = 'var(--tpm-ok)';
+        return;
+      }
+      for (var i = 0; i < required.length; i++) {
+        if (text.indexOf(required[i]) < 0) {
+          badge.textContent = ']] .. pcdata(_("Required template placeholder is missing:") .. " ") .. [[' + required[i];
+          badge.style.color = 'var(--tpm-bad)';
+          return;
+        }
+      }
+      badge.textContent = ']] .. pcdata(_("Mihomo YAML template placeholders are valid")) .. [[';
+      badge.style.color = 'var(--tpm-ok)';
+      return;
+    }
     try {
       JSON.parse(normalizeTemplateJsonc(stripJsonComments(ta.value)));
       badge.textContent = ']] .. pcdata(_("Template JSONC is valid")) .. [[';

@@ -5,10 +5,23 @@ START=99
 STOP=15
 
 CONFIG_FILE="/etc/mihomo/tproxy-manager.yaml"
+CONFIG_DIR="/etc/mihomo/tproxy-manager.d"
 BIN="/usr/bin/mihomo"
+
+ASSEMBLE="/usr/libexec/tproxy-manager/assemble-config"
 
 start_service() {
   [ -x "$BIN" ] || return 1
+  config_load tproxy-manager
+  config_get CONFIG_FILE main mihomo_profile_assembled_file "/etc/mihomo/tproxy-manager.yaml"
+  config_get CONFIG_DIR main mihomo_profile_config_dir "/etc/mihomo/tproxy-manager.d"
+  # Mihomo не умеет каталог конфигов, поэтому фрагменты по ролям склеиваются в
+  # один файл перед запуском. Если сборка не удалась -- ломается фрагмент или
+  # собранное отвергает само ядро -- запускаемся на прежнем файле, а не падаем:
+  # рабочий прокси важнее свежей правки.
+  if [ -d "$CONFIG_DIR" ] && [ -x "$ASSEMBLE" ]; then
+    "$ASSEMBLE" mihomo || logger -t tproxy-manager-mihomo "fragment assembly failed; retaining previous assembled config"
+  fi
   [ -f "$CONFIG_FILE" ] || return 1
   config_dir="${CONFIG_FILE%/*}"
   procd_open_instance

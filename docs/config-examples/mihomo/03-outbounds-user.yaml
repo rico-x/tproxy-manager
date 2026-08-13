@@ -1,0 +1,22 @@
+# Роль 03 — ваши собственные подключения. Пакет этот файл НЕ ПИШЕТ никогда.
+#
+# Ключ `proxies:` в каталоге принадлежит только этому файлу. Управляемое
+# подключение приходит отдельным механизмом (провайдер, роль 04), поэтому здесь
+# оно не мешает вашим прокси: объяви оба под `proxies:` — при сборке остался бы
+# только последний.
+proxies:
+  - name: proxy-ru
+    type: vless
+    server: 192.0.2.10
+    port: 443
+    uuid: '00000000-0000-0000-0000-000000000000'
+    udp: true
+    network: tcp
+    tls: true
+    flow: xtls-rprx-vision
+    servername: example.com
+    client-fingerprint: chrome
+    reality-opts:
+      # ключ ниже — одноразовый пример, замените своим
+      public-key: 'gkxLlrezdTjW03joL4PVcYM2GSNLrafqUiyyYTPmszU'
+      short-id: '0123456789abcdef'

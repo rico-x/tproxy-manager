@@ -1,3 +1,8 @@
+// Layout of the sing-box batch probe config: one inbound per link, each routed
+// to its own outbound, all in one process. Filled by proxy2singbox.lua --batch.
+//
+// Keep "final" at "direct": a link with no matching rule then fails its probe
+// rather than being measured over a direct connection and reported alive.
 {
   "log": {
     "level": "warn"

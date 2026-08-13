@@ -1,0 +1,3 @@
+rules:
+  - GEOIP,private,DIRECT,no-resolve
+  - MATCH,proxy

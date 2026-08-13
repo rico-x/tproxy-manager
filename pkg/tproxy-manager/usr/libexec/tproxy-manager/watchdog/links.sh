@@ -39,24 +39,42 @@ link_protocol() {
     esac
 }
 
+# The Xray templates below are per PROTOCOL because Xray carries Hysteria 2 as a
+# stream transport, so its outbound looks nothing like a VLESS one. Mihomo and
+# sing-box take both protocols as ordinary outbounds and need one template each,
+# which is what probe_template_for answers.
 outbound_template_for_link() {
     case "$(link_protocol "$1")" in
-        hy2) printf '%s\n' "$HYSTERIA_TEMPLATE_FILE" ;;
+        hy2) printf '%s\n' "$XRAY_HY2_TEMPLATE_FILE" ;;
         *) printf '%s\n' "$TEMPLATE_FILE" ;;
     esac
 }
 
 test_template_for_link() {
     case "$(link_protocol "$1")" in
-        hy2) printf '%s\n' "$HYSTERIA_TEST_TEMPLATE_FILE" ;;
+        hy2) printf '%s\n' "$XRAY_HY2_TEST_TEMPLATE_FILE" ;;
         *) printf '%s\n' "$TEST_TEMPLATE_FILE" ;;
     esac
 }
 
 batch_template_for_protocol() {
     case "$1" in
-        hy2) printf '%s\n' "$HYSTERIA_BATCH_TEST_TEMPLATE_FILE" ;;
+        hy2) printf '%s\n' "$XRAY_HY2_BATCH_TEST_TEMPLATE_FILE" ;;
         *) printf '%s\n' "$BATCH_TEST_TEMPLATE_FILE" ;;
+    esac
+}
+
+# probe_template_for <engine> <single|batch>
+#
+# The override a user can edit for the engines whose probe config is generated.
+# Empty means "no override": the converter's built-in layout is used.
+probe_template_for() {
+    case "$1:$2" in
+        mihomo:single) printf '%s\n' "$MIHOMO_TEST_TEMPLATE_FILE" ;;
+        mihomo:batch) printf '%s\n' "$MIHOMO_BATCH_TEST_TEMPLATE_FILE" ;;
+        singbox:single) printf '%s\n' "$SINGBOX_TEST_TEMPLATE_FILE" ;;
+        singbox:batch) printf '%s\n' "$SINGBOX_BATCH_TEST_TEMPLATE_FILE" ;;
+        *) printf '%s\n' "" ;;
     esac
 }
 
@@ -164,18 +182,21 @@ reorder_fastest() {
 build_candidate_file() {
     temp_file="$1"
     build_links_index > "$temp_file"
-    if [ "$EXCLUDE_DEAD" = "1" ]; then
-        filtered_file="${temp_file}.filtered"
-        : > "$filtered_file"
-        while IFS="$(printf '\t')" read -r hash link comment lineno; do
-            [ -n "$hash" ] || continue
-            if cooldown_active "$hash"; then
-                continue
-            fi
-            printf '%s\t%s\t%s\t%s\n' "$hash" "$link" "$comment" "$lineno" >> "$filtered_file"
-        done < "$temp_file"
-        mv "$filtered_file" "$temp_file"
-    fi
+    filtered_file="${temp_file}.filtered"
+    : > "$filtered_file"
+    while IFS="$(printf '\t')" read -r hash link comment lineno; do
+        [ -n "$hash" ] || continue
+        # Unconditional, unlike the cooldown filter: a protocol the running engine
+        # cannot build is never a candidate, whatever EXCLUDE_DEAD says.
+        if ! engine_supports_protocol "$(link_protocol "$link")"; then
+            continue
+        fi
+        if [ "$EXCLUDE_DEAD" = "1" ] && cooldown_active "$hash"; then
+            continue
+        fi
+        printf '%s\t%s\t%s\t%s\n' "$hash" "$link" "$comment" "$lineno" >> "$filtered_file"
+    done < "$temp_file"
+    mv "$filtered_file" "$temp_file"
 }
 
 rotate_candidates() {

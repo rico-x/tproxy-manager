@@ -1,0 +1,4 @@
+{
+  // User-owned outbound definitions. The package never rewrites this file.
+  "outbounds": []
+}

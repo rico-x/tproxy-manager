@@ -74,16 +74,40 @@ local function list_json(dir)
   return t
 end
 
-local function validate_singbox_text(text)
+local function validate_singbox_text(text, edit_dir, filename)
   if not utils.validate_jsonc_text(text or "") then
     write_file(SINGBOX_TEST_LOG, "JSON parse error\n")
     return false
   end
-  local tmp = string.format("/tmp/tproxy-manager-singbox-check.%d.json", math.random(1, 10^9))
-  write_file(tmp, text or "")
-  local cmd = string.format("%s check -c %q >%s 2>&1", SINGBOX_BIN, tmp, SINGBOX_TEST_LOG)
+  local tmp
+  local shadow
+  local cmd
+  if edit_dir ~= SINGBOX_DIR then
+    shadow = utils.private_dir("/tmp", "tpm-singbox-check")
+    if not shadow then return false end
+    if sys.call(string.format("cp -a %s/. %s/ >/dev/null 2>&1",
+      utils.shellescape(edit_dir), utils.shellescape(shadow))) ~= 0 then
+      sys.call("rm -rf " .. utils.shellescape(shadow) .. " >/dev/null 2>&1")
+      return false
+    end
+    tmp = shadow .. "/" .. filename
+    if not write_file(tmp, text or "") then
+      sys.call("rm -rf " .. utils.shellescape(shadow) .. " >/dev/null 2>&1")
+      return false
+    end
+    cmd = string.format("%s check -C %s >%s 2>&1", SINGBOX_BIN,
+      utils.shellescape(shadow), utils.shellescape(SINGBOX_TEST_LOG))
+  else
+    tmp = string.format("/tmp/tproxy-manager-singbox-check.%d.json", math.random(1, 10^9))
+    if not write_file(tmp, text or "") then return false end
+    cmd = string.format("%s check -c %q >%s 2>&1", SINGBOX_BIN, tmp, SINGBOX_TEST_LOG)
+  end
   local ok = sys.call(cmd) == 0
-  fs.remove(tmp)
+  if shadow then
+    sys.call("rm -rf " .. utils.shellescape(shadow) .. " >/dev/null 2>&1")
+  else
+    fs.remove(tmp)
+  end
   return ok
 end
 
@@ -131,6 +155,11 @@ local function render(ctx)
   local combined_log, set_err, get_err, set_info, get_info =
     ctx.combined_log, ctx.set_err, ctx.get_err, ctx.set_info, ctx.get_info
   local service_block = ctx.service_block
+  local profile_dir = ctx.uci:get(ctx.PKG, "main", "singbox_profile_config_dir")
+    or "/etc/sing-box/tproxy-manager.d"
+  local profile_stat = fs.stat(profile_dir)
+  local edit_dir = profile_stat and (profile_stat.type == "dir" or profile_stat.type == "directory")
+    and profile_dir or SINGBOX_DIR
 
   if http.formvalue("_refreshlog_singbox") then set_err(nil); redirect_here("singbox"); return m end
   if http.formvalue("_clearlog_singbox") then
@@ -144,11 +173,16 @@ local function render(ctx)
     redirect_here("singbox"); return m
   end
   if http.formvalue("_test_singbox") then
-    local default_config = basename(ctx.uci:get(ctx.PKG, "main", "singbox_profile_config_file"), "tproxy-manager.json")
-    local config_file = fval_last("singbox_file_selected")
-    if config_file == "" then config_file = fval_last("singbox_file") end
-    if config_file == "" or config_file:find("[/\\]") then config_file = default_config end
-    sys.call(string.format("%s check -c %q >%s 2>&1", SINGBOX_BIN, SINGBOX_DIR .. "/" .. config_file, SINGBOX_TEST_LOG))
+    if edit_dir ~= SINGBOX_DIR then
+      sys.call(string.format("%s check -C %s >%s 2>&1", SINGBOX_BIN,
+        utils.shellescape(edit_dir), utils.shellescape(SINGBOX_TEST_LOG)))
+    else
+      local default_config = basename(ctx.uci:get(ctx.PKG, "main", "singbox_profile_config_file"), "tproxy-manager.json")
+      local config_file = fval_last("singbox_file_selected")
+      if config_file == "" then config_file = fval_last("singbox_file") end
+      if config_file == "" or config_file:find("[/\\]") then config_file = default_config end
+      sys.call(string.format("%s check -c %q >%s 2>&1", SINGBOX_BIN, SINGBOX_DIR .. "/" .. config_file, SINGBOX_TEST_LOG))
+    end
     set_err(nil); redirect_here("singbox"); return m
   end
   if http.formvalue("_clearlog_singbox_config") then
@@ -273,9 +307,14 @@ local function render(ctx)
   end
 
   do
-    local sx = m:section(SimpleSection, _("sing-box (JSON files in /etc/sing-box)"))
-    local config_files = list_json(SINGBOX_DIR)
-    local default_config = basename(ctx.uci:get(ctx.PKG, "main", "singbox_profile_config_file"), "tproxy-manager.json")
+    local sx = m:section(SimpleSection, _("sing-box configuration files") .. " (" .. edit_dir .. ")")
+    local config_files = list_json(edit_dir)
+    local default_config
+    if edit_dir ~= SINGBOX_DIR then
+      default_config = basename(ctx.uci:get(ctx.PKG, "main", "singbox_profile_user_file"), "03-outbounds-user.json")
+    else
+      default_config = basename(ctx.uci:get(ctx.PKG, "main", "singbox_profile_config_file"), "tproxy-manager.json")
+    end
     local chosen = fval("singbox_file")
     if chosen == "" then chosen = default_config end
     local found = false
@@ -294,7 +333,7 @@ local function render(ctx)
     if http.formvalue("_singbox_create") == "1" then
       local name = (http.formvalue("new_singbox_name") or ""):gsub("^%s+", ""):gsub("%s+$", "")
       if name ~= "" and not name:find("[/\\]") and name:match("%.json$") then
-        local path = SINGBOX_DIR .. "/" .. name
+        local path = edit_dir .. "/" .. name
         if not fs.access(path) then
           -- Creation is checked: redirecting to an editor for a file that
           -- was never created (and clearing the error on the way) left the
@@ -325,7 +364,7 @@ local function render(ctx)
     if http.formvalue("_singbox_delete") == "1" then
       local cf = fval_last("singbox_file") or ""
       if is_known_json_file(cf) then
-        fs.remove(SINGBOX_DIR .. "/" .. cf)
+        fs.remove(edit_dir .. "/" .. cf)
         set_err(nil)
       else
         set_err(_("Invalid file name. Expected *.json without slashes."))
@@ -408,7 +447,7 @@ local function render(ctx)
     if chosen then
       local edit = sx:option(DummyValue, "_singbox_area"); edit.rawhtml = true
       function edit.cfgvalue()
-        local content = read_file(SINGBOX_DIR .. "/" .. chosen)
+        local content = read_file(edit_dir .. "/" .. chosen)
         return [[
 <style>
 #cbi-tproxy_manager .singbox-editor-cbi-full .cbi-value-title{display:none!important}
@@ -527,13 +566,13 @@ local function render(ctx)
         local cf = fval_last("singbox_file_selected")
         if not is_known_json_file(cf) then cf = fval_last("singbox_file") end
         if not is_known_json_file(cf) then cf = chosen end
-        if not validate_singbox_text(new) then
+        if not validate_singbox_text(new, edit_dir, cf) then
           set_err(_("Invalid sing-box configuration. File was not saved."))
           set_info(nil)
           http.redirect(self_url({ tab = "singbox", singbox_file = cf }))
           return
         end
-        local wrote, wwhy = write_file(SINGBOX_DIR .. "/" .. cf, new)
+        local wrote, wwhy = write_file(edit_dir .. "/" .. cf, new)
         if wrote then
           set_err(nil); set_info(_("sing-box config saved:").." " .. cf)
         elseif wwhy == "permissions" then

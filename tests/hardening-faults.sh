@@ -207,8 +207,12 @@ check "the endpoint checks for an explicit 'public', not for 'token'" \
   "$(grep -c 'auth_mode ~= "public"' "$CTRL")" "1"
 check "  and no longer branches on auth_mode == \"token\"" \
   "$(grep -c 'auth_mode == "token"' "$CTRL")" "0"
-# The default shipped by uci-defaults must be the safe one.
-DEFAULTS=/rom/etc/uci-defaults/90_tproxy_manager
+# The default shipped by uci-defaults must be the safe one. The staged working-tree
+# copy comes first: OpenWrt DELETES /etc/uci-defaults/* once it has run them, so on
+# any router that has rebooted since the install this check would quietly skip and
+# the group would lose coverage without anything failing.
+DEFAULTS="${TPM_STAGE_DEFAULTS:-}"
+[ -n "$DEFAULTS" ] && [ -f "$DEFAULTS" ] || DEFAULTS=/rom/etc/uci-defaults/90_tproxy_manager
 [ -f "$DEFAULTS" ] || DEFAULTS=/etc/uci-defaults/90_tproxy_manager
 if [ -f "$DEFAULTS" ]; then
   check "uci-defaults default the auth mode to token" \
@@ -298,20 +302,19 @@ else
 fi
 
 ##########################################################################
-group "MANAGED CONFIG APPLY: a profile we did not write is never lost"
+group "MANAGED CONFIG APPLY: the package writes one file and nothing else"
 ##########################################################################
 # Observed for real: a hand-written /etc/mihomo/tproxy-manager.yaml (providers,
-# sniffer, GEOSITE rules) was replaced by the generated managed config on the
-# first applied link. The `mv` had no copy behind it, so 108 lines of somebody's
-# own configuration were gone with nothing to restore from.
+# sniffer, GEOSITE rules) was replaced by the generated config on the first
+# applied link, and 108 lines of somebody's own configuration were gone.
 #
-# The copy goes to ONE dedicated name, <config>.pre-managed: it must not be
-# suppressed by unrelated .bak.* files sitting in the same directory (there were
-# such files on the router where this happened, so an `ls .bak.*` test would
-# still have lost the profile), and it must not grow a file per applied link.
+# That is now structural rather than guarded: the configuration is a directory of
+# fragments by role, and applying a link rewrites exactly ONE of them -- the
+# managed fragment. Nothing copies anything aside any more, because nothing of the
+# user's is ever written.
 #
-# These cases call the real apply function with stub converters, so the guard is
-# exercised where it lives rather than re-implemented here.
+# These cases call the real apply functions with stub converters, so the invariant
+# is checked where it lives rather than re-implemented here.
 RA="${TPM_STAGE_LIBEXEC:-/usr/libexec/tproxy-manager/watchdog}/render_apply.sh"
 if [ -f "$RA" ]; then
   printf '  (apply path under test: %s)\n' "$RA"
@@ -320,31 +323,54 @@ if [ -f "$RA" ]; then
   cat > "$MW/conv-mihomo" <<'CONV'
 #!/bin/sh
 for a in "$@"; do
-  [ "$a" = "--provider" ] && { printf 'proxies: []\n'; exit 0; }
+  [ "$a" = "--provider" ] && { printf 'proxies:\n  - name: applied\n    type: vless\n'; exit 0; }
 done
-printf 'mixed-port: 7890\nmode: rule\nrules:\n  - MATCH,DIRECT\n'
+exit 1
 CONV
   cat > "$MW/conv-singbox" <<'CONV'
 #!/bin/sh
 for a in "$@"; do
-  [ "$a" = "--outbounds" ] && { printf '[]\n'; exit 0; }
+  [ "$a" = "--outbounds" ] && { printf '[{ "type": "vless", "tag": "proxy" }]\n'; exit 0; }
 done
-printf '{ "log": { "level": "warn" }, "inbounds": [ { "type": "mixed", "tag": "mixed-in", "listen": "127.0.0.1", "listen_port": 10808 } ], "outbounds": [ { "type": "direct", "tag": "direct" } ], "route": { "final": "direct" } }\n'
+exit 1
 CONV
   chmod +x "$MW/conv-mihomo" "$MW/conv-singbox"
   printf '#!/bin/sh\nexit 0\n' > "$MW/svc"
   chmod +x "$MW/svc"
+  mkdir -p "$MW/bin"
+  printf '#!/bin/sh\nexit 0\n' > "$MW/bin/mihomo"
+  printf '#!/bin/sh\nexit 0\n' > "$MW/bin/sing-box"
+  printf '#!/bin/sh\nexit 0\n' > "$MW/assemble"
+  chmod +x "$MW/bin/mihomo" "$MW/bin/sing-box" "$MW/assemble"
 
-  # apply_<engine>_generated in a subshell: only the paths below are touched, and
-  # the service it "restarts" is the no-op stub above.
-  apply_as() { # apply_as <engine> <config_file>
+  # Каталог фрагментов по ролям, как на живой системе. Содержимое ролей, которые
+  # принадлежат пользователю, произвольное: суть в том, что после применения оно
+  # обязано быть байт в байт тем же.
+  D="$MW/conf.d"
+  mkdir -p "$D"
+  printf 'log-level: error\n' > "$D/01-log.yaml"
+  printf 'mixed-port: 10808\ntproxy-port: 61219\n' > "$D/02-inbounds.yaml"
+  printf 'proxies:\n  - name: proxy-ru\n    type: vless\n    server: 192.0.2.10\n' > "$D/03-outbounds-user.yaml"
+  printf 'rules:\n  - MATCH,proxy\n' > "$D/05-routing.yaml"
+  MANAGED="$MW/managed.yaml"
+  printf 'proxies: []\n' > "$MANAGED"
+
+  fingerprint() { cat "$D"/*.yaml | md5sum | cut -d' ' -f1; }
+
+  apply_as() { # apply_as <engine> <managed_file>
     (
       set -u
       LOG_FILE="$MW/log"; OUTBOUND_FILE="$MW/out"; TPROXY_PORT=61219
       SERVICE_PATH="$MW/svc"; RESTART_CMD=restart
       PROXY2MIHOMO="$MW/conv-mihomo"; PROXY2SINGBOX="$MW/conv-singbox"
-      MIHOMO_PROVIDER_FILE="$MW/provider.yaml"; MIHOMO_CONFIG_FILE="$2"
-      SINGBOX_OUTBOUNDS_FILE="$MW/outbounds.json"; SINGBOX_CONFIG_FILE="$2"
+      PATH="$MW/bin:$PATH"; ASSEMBLE_CONFIG="$MW/assemble"
+      MIHOMO_CONFIG_DIR="$D"; SINGBOX_CONFIG_DIR="$D"
+      MIHOMO_VLESS_OUTBOUND_TEMPLATE_FILE="${TPM_STAGE_SHARE:-/usr/share/tproxy-manager}/watchdog-mihomo-vless-outbound.template.yaml"
+      MIHOMO_HY2_OUTBOUND_TEMPLATE_FILE="${TPM_STAGE_SHARE:-/usr/share/tproxy-manager}/watchdog-mihomo-hysteria-outbound.template.yaml"
+      SINGBOX_VLESS_OUTBOUND_TEMPLATE_FILE="${TPM_STAGE_SHARE:-/usr/share/tproxy-manager}/watchdog-singbox-vless-outbound.template.jsonc"
+      SINGBOX_HY2_OUTBOUND_TEMPLATE_FILE="${TPM_STAGE_SHARE:-/usr/share/tproxy-manager}/watchdog-singbox-hysteria-outbound.template.jsonc"
+      MIHOMO_MANAGED_FILE="$2"; SINGBOX_MANAGED_FILE="$2"
+      MIHOMO_PROVIDER_FILE="$2"; SINGBOX_OUTBOUNDS_FILE="$2"
       log_msg() { printf '%s\n' "$*" >> "$MW/log"; }
       # shellcheck source=/dev/null
       . "$RA"
@@ -354,131 +380,44 @@ CONV
     )
   }
 
-  # 1. foreign config, empty slot -> copied aside, then replaced
-  C="$MW/foreign.yaml"
-  printf 'proxy-providers:\n  mine: {}\n# hand written\n' > "$C"
-  ORIG="$(cat "$C")"
-  check "mihomo: apply succeeded" "$(apply_as mihomo "$C")" "0"
-  check "mihomo: the profile was copied aside" "$(cat "$C.pre-managed" 2>/dev/null)" "$ORIG"
-  check "mihomo: the live config was replaced" \
-    "$(grep -c 'mixed-port' "$C")" "1"
+  # 1. Mihomo: пишется только управляемый фрагмент
+  before="$(fingerprint)"
+  user_before="$(cat "$D/03-outbounds-user.yaml")"
+  check "mihomo: apply succeeded" "$(apply_as mihomo "$MANAGED")" "0"
+  check "  the managed fragment holds the applied link" \
+    "$(grep -c 'name: applied' "$MANAGED")" "1"
+  check "  and every other fragment is untouched" "$(fingerprint)" "$before"
+  check "  including the user's own proxies" "$(cat "$D/03-outbounds-user.yaml")" "$user_before"
 
-  # 2. an unrelated .bak.* must not suppress the copy -- the hole that lost the
-  #    real profile, since the directory already had backups from an earlier save
-  C="$MW/with-bak.yaml"
-  printf 'proxy-providers:\n  mine: {}\n' > "$C"
-  ORIG="$(cat "$C")"
-  printf 'unrelated\n' > "$C.bak.20260802-000000"
-  check "mihomo: apply succeeded" "$(apply_as mihomo "$C")" "0"
-  check "mihomo: an old .bak.* does not suppress the copy" \
-    "$(cat "$C.pre-managed" 2>/dev/null)" "$ORIG"
+  # 2. sing-box: тот же инвариант
+  MANAGED_SB="$MW/managed.json"
+  printf '{ "outbounds": [] }\n' > "$MANAGED_SB"
+  before="$(fingerprint)"
+  check "sing-box: apply succeeded" "$(apply_as singbox "$MANAGED_SB")" "0"
+  check "  the managed fragment holds the applied link" \
+    "$(grep -c '"tag": "proxy"' "$MANAGED_SB")" "1"
+  check "  it is an object with an outbounds key, not a bare array" \
+    "$(head -c 1 "$MANAGED_SB")" "{"
+  check "  and every other fragment is untouched" "$(fingerprint)" "$before"
 
-  # 3. the slot is written once: a second apply must not overwrite the original
-  C="$MW/twice.yaml"
-  printf 'first: version\n' > "$C"
-  apply_as mihomo "$C" >/dev/null
-  printf 'second: version\n' > "$C"
-  apply_as mihomo "$C" >/dev/null
-  check "mihomo: the slot still holds the FIRST foreign content" \
-    "$(cat "$C.pre-managed" 2>/dev/null)" "first: version"
+  # 3. Повторное применение не накапливает файлов рядом с управляемым: раньше
+  #    каждая замена оставляла копию, и каталог рос от каждой применённой ссылки.
+  apply_as mihomo "$MANAGED" >/dev/null
+  apply_as mihomo "$MANAGED" >/dev/null
+  check "repeated applies leave no extra files behind" \
+    "$(find "$MW" -maxdepth 1 -name 'managed.yaml*' | wc -l | tr -d ' ')" "1"
 
-  # 4. our own generated config is reproducible, so it is not worth a copy
-  C="$MW/generated.yaml"
-  printf 'mode: rule\nrules:\n  - MATCH,TPROXY-MANAGER\n' > "$C"
-  apply_as mihomo "$C" >/dev/null
-  check "mihomo: a generated config is not copied" \
-    "$([ -e "$C.pre-managed" ] && echo yes || echo no)" "no"
-
-  # 5. sing-box has the same convention-only path. It cannot carry a marker
-  #    (unknown JSON fields are rejected), so the generator's inbound pair is
-  #    what identifies our own output.
-  C="$MW/foreign.json"
-  printf '{ "outbounds": [ { "type": "direct", "tag": "direct" } ], "route": { "final": "direct" } }\n' > "$C"
-  ORIG="$(cat "$C")"
-  check "sing-box: apply succeeded" "$(apply_as singbox "$C")" "0"
-  check "sing-box: the profile was copied aside" "$(cat "$C.pre-managed" 2>/dev/null)" "$ORIG"
-
-  C="$MW/generated.json"
-  printf '{ "inbounds": [ { "type": "mixed", "tag": "mixed-in" }, { "type": "tproxy", "tag": "tproxy-in" } ], "outbounds": [ { "type": "direct", "tag": "direct" } ], "route": { "final": "direct" } }\n' > "$C"
-  apply_as singbox "$C" >/dev/null
-  check "sing-box: a generated config is not copied" \
-    "$([ -e "$C.pre-managed" ] && echo yes || echo no)" "no"
-
-  # 6. ORDERING: a run that generates nothing must not spend the slot. Taking the
-  #    copy before generation meant a failed build burned it on version A; the
-  #    user then fixed their config to version B, the next build succeeded, and B
-  #    was replaced with the slot still holding A.
-  C="$MW/failed-build.yaml"
-  printf 'version: A\n' > "$C"
-  BROKEN="$MW/conv-broken"
-  printf '#!/bin/sh\nexit 1\n' > "$BROKEN"
-  chmod +x "$BROKEN"
-  (
-    set -u
-    LOG_FILE="$MW/log"; OUTBOUND_FILE="$MW/out"; TPROXY_PORT=61219
-    SERVICE_PATH="$MW/svc"; RESTART_CMD=restart
-    PROXY2MIHOMO="$BROKEN"; PROXY2SINGBOX="$BROKEN"
-    MIHOMO_PROVIDER_FILE="$MW/provider.yaml"; MIHOMO_CONFIG_FILE="$C"
-    log_msg() { printf '%s\n' "$*" >> "$MW/log"; }
-    # shellcheck source=/dev/null
-    . "$RA"
-    : > "$MW/links"
-    apply_mihomo_generated "$MW/links" >/dev/null 2>&1
-  )
-  check "mihomo: a failed build does not spend the slot" \
-    "$([ -e "$C.pre-managed" ] && echo yes || echo no)" "no"
-  check "  and the live config is untouched" "$(cat "$C")" "version: A"
-  # The user then edits, and the next successful apply must copy THAT version.
-  printf 'version: B\n' > "$C"
-  apply_as mihomo "$C" >/dev/null
-  check "  the copy holds the version that was actually replaced" \
-    "$(cat "$C.pre-managed" 2>/dev/null)" "version: B"
-
-  # 7. ORDERING: a promotion that fails must release the slot again.
-  #    `mv` is shadowed rather than given a hostile target: `mv file dir` succeeds
-  #    by moving the file INSIDE dir, so a directory injects nothing.
-  C="$MW/failed-promote.yaml"
-  printf 'version: A\n' > "$C"
-  mkdir -p "$MW/failbin"
-  printf '#!/bin/sh\nexit 1\n' > "$MW/failbin/mv"
-  chmod +x "$MW/failbin/mv"
-  (
-    set -u
-    PATH="$MW/failbin:$PATH"
-    LOG_FILE="$MW/log"; OUTBOUND_FILE="$MW/out"; TPROXY_PORT=61219
-    SERVICE_PATH="$MW/svc"; RESTART_CMD=restart
-    PROXY2MIHOMO="$MW/conv-mihomo"; PROXY2SINGBOX="$MW/conv-singbox"
-    MIHOMO_PROVIDER_FILE="$MW/provider.yaml"; MIHOMO_CONFIG_FILE="$C"
-    log_msg() { printf '%s\n' "$*" >> "$MW/log"; }
-    # shellcheck source=/dev/null
-    . "$RA"
-    : > "$MW/links"
-    apply_mihomo_generated "$MW/links" >/dev/null 2>&1
-  )
-  check "mihomo: a failed promotion releases the slot" \
-    "$([ -e "$C.pre-managed" ] && echo yes || echo no)" "no"
-  check "  and leaves the live config alone" "$(cat "$C")" "version: A"
-  check "  and leaves no temp file behind" \
-    "$(find "$MW" -name '*.tmp.*' | wc -l | tr -d ' ')" "0"
-
-  # The LuCI-side builder must take the copy in the same place, between the
-  # validation and the mv, not before the generation.
-  MOD="${TPM_STAGE_MODULES:-/usr/lib/lua/luci/model/cbi/tproxy_manager/modules}/mihomo.lua"
-  if [ -f "$MOD" ]; then
-    BUILDER="$BASE/builder.lua"
-    awk '/^local function build_managed_config/,/^end$/' "$MOD" > "$BUILDER"
-    VALIDATED="$(grep -n 'run_cmd_capture(build)' "$BUILDER" | head -1 | cut -d: -f1)"
-    COPIED="$(grep -n '\.pre-managed' "$BUILDER" | head -1 | cut -d: -f1)"
-    check "the builder validates before it copies" \
-      "$([ -n "$VALIDATED" ] && [ -n "$COPIED" ] && [ "$VALIDATED" -lt "$COPIED" ] && echo yes || echo no)" "yes"
-    check "  and promotes only after copying" \
-      "$([ -n "$COPIED" ] && [ "$COPIED" -lt "$(grep -n 'run_cmd_capture(promote)' "$BUILDER" | head -1 | cut -d: -f1)" ] && echo yes || echo no)" "yes"
-    check "  and releases the slot if the promotion fails" \
-      "$(grep -c 'if backup_created then fs.remove(backup) end' "$BUILDER")" "1"
-  fi
-
+  # 4. Отказ конвертера не должен подменять управляемый фрагмент половиной вывода.
+  printf 'proxies:\n  - name: previous\n' > "$MANAGED"
+  printf '#!/bin/sh\nprintf "proxies:\\n"; exit 1\n' > "$MW/conv-mihomo"
+  chmod +x "$MW/conv-mihomo"
+  check "a converter failure is reported" "$(apply_as mihomo "$MANAGED")" "1"
+  check "  and the previous managed fragment survives" \
+    "$(grep -c 'name: previous' "$MANAGED")" "1"
+  check "  with no temp file left" \
+    "$(find "$MW" -maxdepth 1 -name 'managed.yaml.tmp.*' | wc -l | tr -d ' ')" "0"
 else
-  printf '  (render_apply.sh is not installed on this system; skipped)\n'
+  printf '  SKIP apply path not present at %s\n' "$RA"
 fi
 
 ##########################################################################
@@ -555,7 +494,11 @@ if [ -f "$DEFAULTS" ]; then
   # And the generator itself must no longer emit the broken mode.
   P2M="$BIN_DIR/proxy2mihomo.lua"
   if [ -f "$P2M" ]; then
-    check "the generator emits mode: rule" "$(grep -c '"mode: rule"' "$P2M")" "1"
+    # Every layout the generator can emit -- runtime, probe, batch -- has to carry
+    # rule mode, so this asserts presence rather than a count that grows with each
+    # new layout.
+    check "the generator emits mode: rule" \
+      "$([ "$(grep -c '"mode: rule"' "$P2M")" -ge 1 ] && echo yes || echo no)" "yes"
     check "  and no longer emits mode: global" "$(grep -c '"mode: global"' "$P2M")" "0"
   fi
 else

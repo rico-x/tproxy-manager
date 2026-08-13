@@ -215,6 +215,16 @@ function M.status_label(entry, pcdata)
       end
     end
     return "<span class='svc-badge err'>Error</span>" .. speed .. suffix, checked
+  elseif status == "unsupported" then
+    -- Deliberately not an error: nothing was measured and the server was never
+    -- contacted. The active engine cannot build this outbound, and switching
+    -- engines makes the link usable again with no change to the link itself.
+    local reason = state.LAST_REQUEST_TIME_TEXT or ""
+    local note = ""
+    if reason ~= "" and reason ~= "-" then
+      note = "<span class='wd-note'>" .. pcdata(reason) .. "</span>"
+    end
+    return "<span class='svc-badge warn'>" .. _("Unsupported") .. "</span>" .. note, checked
   end
   return "<span style='color:var(--tpm-muted)'>" .. _("Not checked") .. "</span>", "-"
 end
@@ -286,12 +296,9 @@ function M.save_watchdog_settings(ctx)
   end
   if batch_check_concurrency > batch_check_batch_size then batch_check_concurrency = batch_check_batch_size end
 
-  -- Not every path below has an input in this form. The VLESS outbound and test
-  -- templates are edited through the template selector further down the page
-  -- (watchdog_template_kind + watchdog_template_path), so no field by those
-  -- names is ever submitted — and requiring them here made EVERY settings save
-  -- fail with "Required field is empty: watchdog_template_file", whatever the
-  -- user had actually changed.
+  -- Not every stored path has an input in this form. Outbound templates are
+  -- edited through the dedicated selector; probe-layout templates are internal
+  -- service files. This settings transaction must not take ownership of either.
   --
   -- So the distinction that matters is submitted-and-empty (the user cleared a
   -- box: an error) versus not-submitted-at-all (this form does not own the
@@ -307,20 +314,10 @@ function M.save_watchdog_settings(ctx)
     watchdog_check_url = field("watchdog_check_url"),
     watchdog_proxy_url = field("watchdog_proxy_url"),
     watchdog_links_file = field("watchdog_links_file"),
-    watchdog_template_file = field("watchdog_template_file"),
-    watchdog_test_template_file = field("watchdog_test_template_file"),
-    watchdog_hysteria_template_file = field("watchdog_hysteria_template_file"),
-    watchdog_hysteria_test_template_file = field("watchdog_hysteria_test_template_file"),
     watchdog_outbound_file = field("watchdog_outbound_file"),
     watchdog_vless2json = field("watchdog_vless2json"),
     watchdog_proxy2mihomo = field("watchdog_proxy2mihomo"),
     watchdog_proxy2singbox = field("watchdog_proxy2singbox"),
-    watchdog_batch_test_template_file = field("watchdog_batch_test_template_file"),
-    watchdog_hysteria_batch_test_template_file = field("watchdog_hysteria_batch_test_template_file"),
-    watchdog_mihomo_test_template_file = field("watchdog_mihomo_test_template_file"),
-    watchdog_mihomo_batch_test_template_file = field("watchdog_mihomo_batch_test_template_file"),
-    watchdog_singbox_test_template_file = field("watchdog_singbox_test_template_file"),
-    watchdog_singbox_batch_test_template_file = field("watchdog_singbox_batch_test_template_file"),
     watchdog_subscriptions_file = field("watchdog_subscriptions_file"),
     watchdog_share_file = field("watchdog_share_file"),
     watchdog_happ_capture_log = field("watchdog_happ_capture_log"),
@@ -356,7 +353,14 @@ function M.save_watchdog_settings(ctx)
   S("watchdog_max_time", tostring(max_time))
   S("watchdog_service_path", service_path)
   S("watchdog_restart_cmd", "restart")
-  S("watchdog_test_command", test_command)
+  -- Only when the field was actually edited. This form belongs to the watchdog,
+  -- not to the engine switch, and saving it used to re-assert whatever the input
+  -- happened to be showing -- which is how a command for one engine survived a
+  -- switch to another and then failed every probe.
+  local test_command_edited = (test_command ~= (uci:get(PKG, "main", "watchdog_test_command") or ""))
+  if test_command_edited then
+    S("watchdog_test_command", test_command)
+  end
   S("watchdog_selection_mode", mode)
   S("watchdog_exclude_dead", http.formvalue("watchdog_exclude_dead") and "1" or "0")
   S("watchdog_dead_cooldown_hours", tostring(cooldown_hours))
@@ -375,7 +379,15 @@ function M.save_watchdog_settings(ctx)
     -- The active engine's profile is part of this save: the watchdog service
     -- path and test command it mirrors are set right above. Staging it
     -- silently meant a failure here was committed with everything else.
-    if not ctx.engines.save_legacy_to_profile(uci, PKG, ctx.proxy_engine) then stage_ok = false end
+    --
+    -- Which fields the user actually edited travels with the call. Skipping the
+    -- live write above was not enough on its own: the profile save reads the live
+    -- key too, so an untouched form still copied a stale command -- an Xray one
+    -- while Mihomo was active -- over the correct mihomo_profile_test_command.
+    if not ctx.engines.save_legacy_to_profile(uci, PKG, ctx.proxy_engine,
+      { edited = { watchdog_test_command = test_command_edited } }) then
+      stage_ok = false
+    end
   end
 
   -- Nothing is committed once any part of the set failed to stage: a partial

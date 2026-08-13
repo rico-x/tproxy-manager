@@ -1,0 +1,14 @@
+# Native Mihomo proxy block for one VLESS link. Link-derived values are quoted
+# by proxy2mihomo.lua before literal substitution. Keep the leading two spaces:
+# the rendered block is inserted below the provider's top-level proxies key.
+  - name: __NAME__
+    type: vless
+    server: __ADDRESS__
+    port: __PORT__
+    uuid: __UUID__
+    udp: true
+    network: __NETWORK__
+    tls: __TLS__
+__OPTIONAL__
+__REALITY__
+__TRANSPORT__

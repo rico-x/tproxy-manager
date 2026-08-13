@@ -1,0 +1,13 @@
+proxy-providers:
+  tproxy-manager:
+    type: file
+    path: ./tproxy-manager-proxies.yaml
+    health-check:
+      enable: false
+      interval: 600
+      url: http://cp.cloudflare.com/generate_204
+proxy-groups:
+  - name: proxy
+    type: select
+    use:
+      - tproxy-manager

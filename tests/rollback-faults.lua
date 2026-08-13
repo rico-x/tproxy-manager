@@ -36,6 +36,10 @@ local REAL_PATH = os.getenv("PATH") or "/usr/sbin:/usr/bin:/sbin:/bin"
 utils.ROLLBACK_ROOT = BASE .. "/rollback"
 
 local pass, fail, failures = 0, 0, {}
+-- Counted and printed: a check that quietly leaves the tally looks like coverage
+-- that was never there. One of these skipped on a busy router and the total
+-- dropped from 110 to 107 with nothing failing.
+local skipped = 0
 
 local function check(name, got, want)
   local ok = (got == want)
@@ -493,21 +497,26 @@ do
 
   -- A process whose comm contains ")". busybox is a single binary, so a copy
   -- under an awkward name is a normal process with an awkward comm.
-  local odd = BASE .. "/a)b"
-  sys.call("cp /bin/sleep " .. BASE .. "/'a)b' 2>/dev/null || cp /bin/busybox " .. BASE .. "/'a)b'")
-  sys.call("chmod 0755 " .. BASE .. "/'a)b'")
-  local ph = io.popen(BASE .. "/'a)b' 60 >/dev/null 2>&1 & echo $!")
-  local odd_pid = ph and utils.trim(ph:read("*a") or "") or ""
-  if ph then ph:close() end
-  sys.call("sleep 1")
-
-  local comm = utils.read_file("/proc/" .. odd_pid .. "/stat"):match("%((.-)%)%s+%a") or ""
+  -- Retried: on a busy router a single attempt loses the race between the spawn
+  -- and reading /proc, and the whole group then vanished from the count.
+  local odd_pid, comm = "", ""
+  for _ = 1, 3 do
+    sys.call("cp /bin/sleep " .. BASE .. "/'a)b' 2>/dev/null || cp /bin/busybox " .. BASE .. "/'a)b'")
+    sys.call("chmod 0755 " .. BASE .. "/'a)b'")
+    local ph = io.popen(BASE .. "/'a)b' 60 >/dev/null 2>&1 & echo $!")
+    odd_pid = ph and utils.trim(ph:read("*a") or "") or ""
+    if ph then ph:close() end
+    sys.call("sleep 1")
+    comm = utils.read_file("/proc/" .. odd_pid .. "/stat"):match("%((.-)%)%s+%a") or ""
+    if odd_pid:match("^%d+$") and comm:find(")", 1, true) then break end
+  end
   if odd_pid:match("^%d+$") and comm:find(")", 1, true) then
     check("  the test process really has ')' in its name", comm:find(")", 1, true) ~= nil, true)
     local expected = starttime_via_shell(odd_pid)
     check("  proc_starttime is correct for such a name", utils.proc_starttime(odd_pid), expected)
     check("    and the value is numeric", (utils.proc_starttime(odd_pid) or ""):match("^%d+$") ~= nil, true)
   else
+    skipped = skipped + 3
     print(string.format("  %-54s SKIP  (could not spawn a process with ')' in its name)", "proc_starttime with ')' in the name"))
   end
   sys.call("kill " .. odd_pid .. " 2>/dev/null")
@@ -607,7 +616,7 @@ end)(), false)
 
 --------------------------------------------------------------------------
 reset()
-print(string.format("\n%d passed, %d failed", pass, fail))
+print(string.format("\n%d passed, %d failed, %d skipped", pass, fail, skipped))
 if fail > 0 then
   print("\nfailures:")
   for _, f in ipairs(failures) do print("  " .. f) end

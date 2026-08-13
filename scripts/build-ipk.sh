@@ -22,6 +22,7 @@ IPKG_BUILD="${4:-${IPKG_BUILD:-$ROOT/ipkg-build}}"
 PKG_DIR="$(cd "$PKG_DIR" && pwd)"
 mkdir -p "$OUT_DIR"
 OUT_DIR="$(cd "$OUT_DIR" && pwd)"
+PACKAGE_NAME="$(control_field Package "$PKG_DIR/CONTROL/control")"
 
 WORKDIR="$(mktemp -d)"
 trap 'rm -rf "$WORKDIR"' EXIT
@@ -37,7 +38,7 @@ inject_control_version "$STAGE_DIR/CONTROL/control" "$PKG_VERSION"
 
 "$IPKG_BUILD" "$STAGE_DIR" "$OUT_DIR"
 
-IPK_FILE="$(find "$OUT_DIR" -maxdepth 1 -type f -name '*.ipk' | sort | tail -n 1)"
+IPK_FILE="$(find "$OUT_DIR" -maxdepth 1 -type f -name "${PACKAGE_NAME}_${PKG_VERSION}_*.ipk" | sort | tail -n 1)"
 [ -n "$IPK_FILE" ] && [ -f "$IPK_FILE" ] || {
   echo "ipk package was not created" >&2
   exit 1

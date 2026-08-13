@@ -1,0 +1,7 @@
+{
+  // Роль: общие параметры движка. Аналог mihomo cache.db — запоминает выбор
+  // в селекторе между перезапусками.
+  "experimental": {
+    "cache_file": { "enabled": true, "path": "/etc/sing-box/cache.db" }
+  }
+}

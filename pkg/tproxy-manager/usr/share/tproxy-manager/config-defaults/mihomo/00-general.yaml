@@ -1,0 +1,5 @@
+mode: rule
+ipv6: true
+geodata-mode: true
+geodata-loader: standard
+geo-auto-update: false

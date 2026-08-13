@@ -1,3 +1,9 @@
+// Layout of the sing-box one-link probe config, used as-is when this file is
+// present. proxy2singbox.lua replaces the three placeholders below, quotes
+// included, so the template itself stays valid JSON.
+//
+// Do not name a placeholder anywhere else in this file, not even in a comment:
+// substitution is literal and would paste the outbounds array into the prose.
 {
   "log": {
     "level": "warn"

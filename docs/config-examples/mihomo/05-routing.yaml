@@ -1,0 +1,36 @@
+# Роль 05 — маршрутизация. Порядок правил значим: решает первое совпавшее.
+#
+# Последним обязательно должно идти `MATCH` в управляемую группу, иначе
+# несовпавший трафик пойдёт по умолчанию ядра, а не через прокси.
+#
+# GEOIP-правила требуют `geodata-mode: true` из роли 00 и файла GeoIP.dat в
+# рабочем каталоге ядра. Без этого mihomo уходит скачивать MMDB из интернета.
+rules:
+  # Блокировка — уязвимые UDP-порты
+  - AND,((NETWORK,udp),(DST-PORT,135/137/138/139)),REJECT
+  # Блокировка — реклама и аналитика
+  - GEOSITE,category-ads-all,REJECT
+  - GEOSITE,category-public-tracker,REJECT
+  # Пример: отдельные домены через ваш собственный прокси из роли 03
+  - DOMAIN-SUFFIX,example.ru,proxy-ru
+  # Напрямую — адреса
+  - GEOIP,private,DIRECT,no-resolve
+  - GEOIP,ru,DIRECT
+  - GEOIP,by,DIRECT
+  - GEOIP,cn,DIRECT
+  # Напрямую — доменные зоны и известные сервисы
+  - DOMAIN-REGEX,(^|\.)ru$,DIRECT
+  - DOMAIN-REGEX,(^|\.)su$,DIRECT
+  - DOMAIN-REGEX,(^|\.)by$,DIRECT
+  - DOMAIN-REGEX,(^|\.)xn--p1ai$,DIRECT
+  - GEOSITE,category-gov-ru,DIRECT
+  - GEOSITE,private,DIRECT
+  - GEOSITE,yandex,DIRECT
+  - GEOSITE,vk,DIRECT
+  - GEOSITE,mailru,DIRECT
+  - GEOSITE,steam,DIRECT
+  - GEOSITE,category-games,DIRECT
+  # Напрямую — игровой UDP
+  - AND,((NETWORK,udp),(DST-PORT,3478-3497/4379-4380/27000-27200)),DIRECT
+  # Завершающее правило
+  - MATCH,proxy

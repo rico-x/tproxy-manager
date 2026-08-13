@@ -20,21 +20,35 @@ LINKS_FILE_DEFAULT="/etc/tproxy-manager/watchdog.links"
 TEMPLATE_FILE_DEFAULT="/etc/tproxy-manager/watchdog-outbound.template.jsonc"
 TEST_TEMPLATE_FILE_DEFAULT="/etc/tproxy-manager/watchdog-test-config.template.jsonc"
 BATCH_TEST_TEMPLATE_FILE_DEFAULT="/etc/tproxy-manager/watchdog-batch-test-config.template.jsonc"
-HYSTERIA_TEMPLATE_FILE_DEFAULT="/etc/tproxy-manager/watchdog-hysteria-outbound.template.jsonc"
-HYSTERIA_TEST_TEMPLATE_FILE_DEFAULT="/etc/tproxy-manager/watchdog-hysteria-test-config.template.jsonc"
-HYSTERIA_BATCH_TEST_TEMPLATE_FILE_DEFAULT="/etc/tproxy-manager/watchdog-hysteria-batch-test-config.template.jsonc"
+# Xray-only: Hysteria 2 is a stream transport there, not an outbound protocol.
+# The name says so now -- read as "the hysteria template" these were easy to take
+# for something every engine used.
+XRAY_HY2_TEMPLATE_FILE_DEFAULT="/etc/tproxy-manager/watchdog-hysteria-outbound.template.jsonc"
+XRAY_HY2_TEST_TEMPLATE_FILE_DEFAULT="/etc/tproxy-manager/watchdog-hysteria-test-config.template.jsonc"
+XRAY_HY2_BATCH_TEST_TEMPLATE_FILE_DEFAULT="/etc/tproxy-manager/watchdog-hysteria-batch-test-config.template.jsonc"
+MIHOMO_VLESS_OUTBOUND_TEMPLATE_FILE_DEFAULT="/etc/tproxy-manager/watchdog-mihomo-vless-outbound.template.yaml"
+MIHOMO_HY2_OUTBOUND_TEMPLATE_FILE_DEFAULT="/etc/tproxy-manager/watchdog-mihomo-hysteria-outbound.template.yaml"
+SINGBOX_VLESS_OUTBOUND_TEMPLATE_FILE_DEFAULT="/etc/tproxy-manager/watchdog-singbox-vless-outbound.template.jsonc"
+SINGBOX_HY2_OUTBOUND_TEMPLATE_FILE_DEFAULT="/etc/tproxy-manager/watchdog-singbox-hysteria-outbound.template.jsonc"
+MIHOMO_TEST_TEMPLATE_FILE_DEFAULT="/etc/tproxy-manager/watchdog-mihomo-test-config.template.yaml"
+MIHOMO_BATCH_TEST_TEMPLATE_FILE_DEFAULT="/etc/tproxy-manager/watchdog-mihomo-batch-test-config.template.yaml"
+SINGBOX_TEST_TEMPLATE_FILE_DEFAULT="/etc/tproxy-manager/watchdog-singbox-test-config.template.jsonc"
+SINGBOX_BATCH_TEST_TEMPLATE_FILE_DEFAULT="/etc/tproxy-manager/watchdog-singbox-batch-test-config.template.jsonc"
 OUTBOUND_FILE_DEFAULT="/etc/xray/04_outbounds.json"
 VLESS2JSON_DEFAULT="/usr/bin/vless2json.sh"
 PROXY2MIHOMO_DEFAULT="/usr/bin/proxy2mihomo.lua"
 PROXY2SINGBOX_DEFAULT="/usr/bin/proxy2singbox.lua"
+ENGINE_PROBE_INFO="${ENGINE_PROBE_INFO:-/usr/libexec/tproxy-manager/engine-probe-info}"
 SERVICE_PATH_DEFAULT="/etc/init.d/xray"
 RESTART_CMD_DEFAULT="restart"
 TEST_COMMAND_DEFAULT="/usr/bin/xray -c {config}"
 TPROXY_PORT_DEFAULT="61219"
 MIHOMO_CONFIG_FILE_DEFAULT="/etc/mihomo/tproxy-manager.yaml"
 MIHOMO_PROVIDER_FILE_DEFAULT="/etc/mihomo/tproxy-manager-proxies.yaml"
+MIHOMO_CONFIG_DIR_DEFAULT="/etc/mihomo/tproxy-manager.d"
 SINGBOX_CONFIG_FILE_DEFAULT="/etc/sing-box/tproxy-manager.json"
 SINGBOX_OUTBOUNDS_FILE_DEFAULT="/etc/sing-box/tproxy-manager-outbounds.json"
+SINGBOX_CONFIG_DIR_DEFAULT="/etc/sing-box/tproxy-manager.d"
 SELECTION_MODE_DEFAULT="random"
 EXCLUDE_DEAD_DEFAULT="0"
 COOLDOWN_HOURS_DEFAULT="0"
@@ -128,6 +142,105 @@ uci_get() {
     uci -q get "$PKG.main.$key" 2>/dev/null || true
 }
 
+# Ask the engine definitions how the active engine wants to be probed, instead of
+# guessing from a stored command. tproxy_manager.engines is the only description
+# of an engine in the package; keeping a second copy here is exactly how the
+# probe came to run Xray whatever was active.
+#
+# Sets PROBE_KIND, PROBE_LOG_NAME, PROBE_CONFIG_EXT, PROBE_PROTOCOLS,
+# PROBE_BATCH, PROBE_TEST_COMMAND, PROBE_ENGINE, PROBE_LABEL, PROBE_BINARY, plus
+# PROBE_ENGINE_UNKNOWN when the configured engine is not one we know.
+load_probe_descriptor() {
+    PROBE_ENGINE=""
+    PROBE_LABEL=""
+    PROBE_KIND=""
+    PROBE_LOG_NAME=""
+    PROBE_CONFIG_EXT=""
+    PROBE_PROTOCOLS=""
+    PROBE_BATCH=""
+    PROBE_TEST_COMMAND=""
+    PROBE_BINARY=""
+    PROBE_ENGINE_UNKNOWN=""
+    # Both always defined. A caller may load the descriptor without having read
+    # UCI first -- the suites do exactly that -- and under `set -u` reading an
+    # unset TEST_COMMAND below would kill the shell.
+    TEST_COMMAND="${TEST_COMMAND:-}"
+    TEST_COMMAND_STALE="${TEST_COMMAND_STALE:-}"
+
+    if [ -x "$ENGINE_PROBE_INFO" ]; then
+        probe_info="$("$ENGINE_PROBE_INFO" "$PROXY_ENGINE" 2>/dev/null)"
+        if [ -n "$probe_info" ]; then
+            eval "$probe_info"
+        else
+            PROBE_ENGINE_UNKNOWN="$PROXY_ENGINE"
+        fi
+    fi
+
+    # Without the helper (a partial install, or a stripped image) the watchdog has
+    # to keep working, so the three engines we ship are described here as well.
+    # This is a fallback, not a second source of truth: it only fills in what the
+    # helper did not answer.
+    if [ -z "$PROBE_KIND" ]; then
+        case "$PROXY_ENGINE" in
+            xray)
+                PROBE_KIND="template"; PROBE_LOG_NAME="xray-test.log"; PROBE_CONFIG_EXT="json"
+                PROBE_TEST_COMMAND="${PROBE_TEST_COMMAND:-$TEST_COMMAND_DEFAULT}"
+                ;;
+            mihomo)
+                PROBE_KIND="mihomo"; PROBE_LOG_NAME="mihomo-test.log"; PROBE_CONFIG_EXT="yaml"
+                PROBE_TEST_COMMAND="${PROBE_TEST_COMMAND:-/usr/bin/mihomo -f {config}}"
+                ;;
+            singbox)
+                PROBE_KIND="singbox"; PROBE_LOG_NAME="singbox-test.log"; PROBE_CONFIG_EXT="json"
+                PROBE_TEST_COMMAND="${PROBE_TEST_COMMAND:-/usr/bin/sing-box run -c {config}}"
+                ;;
+            *)
+                # An engine nobody can describe is reported, not quietly turned into
+                # Xray. Probing every link with the wrong engine marks them all dead,
+                # which reads exactly like every server being down.
+                PROBE_ENGINE_UNKNOWN="$PROXY_ENGINE"
+                PROXY_ENGINE="$PROXY_ENGINE_DEFAULT"
+                PROBE_KIND="template"; PROBE_LOG_NAME="xray-test.log"; PROBE_CONFIG_EXT="json"
+                PROBE_TEST_COMMAND="${PROBE_TEST_COMMAND:-$TEST_COMMAND_DEFAULT}"
+                ;;
+        esac
+        PROBE_ENGINE="$PROXY_ENGINE"
+    fi
+    [ -n "$PROBE_LABEL" ] || PROBE_LABEL="$PROBE_ENGINE"
+    # Deliberately outside the fallback: an empty PROBE_PROTOCOLS would make
+    # engine_supports_protocol() refuse every link, and the whole list would come
+    # back "unsupported" from one missing line of helper output.
+    [ -n "$PROBE_PROTOCOLS" ] || PROBE_PROTOCOLS="vless hy2"
+    [ -n "$PROBE_BATCH" ] || PROBE_BATCH="1"
+
+    # The stored command can fall out of step with the active engine: a fresh
+    # install that is not on Xray, a restored backup, a hand edit, or saving the
+    # Watchdog form. Running the wrong binary against a config it cannot read
+    # fails every probe, which is indistinguishable from every server being
+    # down -- so the engine's own profile wins and the disagreement is reported.
+    #
+    # Reconciled HERE, not in load_config, so that this function is the only
+    # thing a caller has to re-run after PROXY_ENGINE changes. With it in the
+    # caller, refreshing the descriptor alone kept the previous engine's command:
+    # a Mihomo YAML config handed to Xray, and every link reported dead.
+    if [ -n "$PROBE_TEST_COMMAND" ]; then
+        if [ -z "$TEST_COMMAND" ] || [ "$TEST_COMMAND" = "$PROBE_TEST_COMMAND" ]; then
+            TEST_COMMAND="$PROBE_TEST_COMMAND"
+            TEST_COMMAND_STALE=""
+        else
+            TEST_COMMAND_STALE="$TEST_COMMAND"
+            TEST_COMMAND="$PROBE_TEST_COMMAND"
+        fi
+    fi
+}
+
+engine_supports_protocol() {
+    for supported in $PROBE_PROTOCOLS; do
+        [ "$supported" = "$1" ] && return 0
+    done
+    return 1
+}
+
 load_config() {
     PROXY_ENGINE="$(uci_get proxy_engine)"
     CHECK_URL="$(uci_get watchdog_check_url)"
@@ -140,9 +253,17 @@ load_config() {
     TEMPLATE_FILE="$(uci_get watchdog_template_file)"
     TEST_TEMPLATE_FILE="$(uci_get watchdog_test_template_file)"
     BATCH_TEST_TEMPLATE_FILE="$(uci_get watchdog_batch_test_template_file)"
-    HYSTERIA_TEMPLATE_FILE="$(uci_get watchdog_hysteria_template_file)"
-    HYSTERIA_TEST_TEMPLATE_FILE="$(uci_get watchdog_hysteria_test_template_file)"
-    HYSTERIA_BATCH_TEST_TEMPLATE_FILE="$(uci_get watchdog_hysteria_batch_test_template_file)"
+    XRAY_HY2_TEMPLATE_FILE="$(uci_get watchdog_hysteria_template_file)"
+    XRAY_HY2_TEST_TEMPLATE_FILE="$(uci_get watchdog_hysteria_test_template_file)"
+    XRAY_HY2_BATCH_TEST_TEMPLATE_FILE="$(uci_get watchdog_hysteria_batch_test_template_file)"
+    MIHOMO_VLESS_OUTBOUND_TEMPLATE_FILE="$(uci_get watchdog_mihomo_vless_outbound_template_file)"
+    MIHOMO_HY2_OUTBOUND_TEMPLATE_FILE="$(uci_get watchdog_mihomo_hysteria_outbound_template_file)"
+    SINGBOX_VLESS_OUTBOUND_TEMPLATE_FILE="$(uci_get watchdog_singbox_vless_outbound_template_file)"
+    SINGBOX_HY2_OUTBOUND_TEMPLATE_FILE="$(uci_get watchdog_singbox_hysteria_outbound_template_file)"
+    MIHOMO_TEST_TEMPLATE_FILE="$(uci_get watchdog_mihomo_test_template_file)"
+    MIHOMO_BATCH_TEST_TEMPLATE_FILE="$(uci_get watchdog_mihomo_batch_test_template_file)"
+    SINGBOX_TEST_TEMPLATE_FILE="$(uci_get watchdog_singbox_test_template_file)"
+    SINGBOX_BATCH_TEST_TEMPLATE_FILE="$(uci_get watchdog_singbox_batch_test_template_file)"
     OUTBOUND_FILE="$(uci_get watchdog_outbound_file)"
     VLESS2JSON="$(uci_get watchdog_vless2json)"
     PROXY2MIHOMO="$(uci_get watchdog_proxy2mihomo)"
@@ -153,8 +274,10 @@ load_config() {
     TPROXY_PORT="$(uci_get tproxy_port)"
     MIHOMO_CONFIG_FILE="$(uci_get mihomo_profile_config_file)"
     MIHOMO_PROVIDER_FILE="$(uci_get mihomo_profile_managed_provider_file)"
+    MIHOMO_CONFIG_DIR="$(uci_get mihomo_profile_config_dir)"
     SINGBOX_CONFIG_FILE="$(uci_get singbox_profile_config_file)"
     SINGBOX_OUTBOUNDS_FILE="$(uci_get singbox_profile_managed_outbounds_file)"
+    SINGBOX_CONFIG_DIR="$(uci_get singbox_profile_config_dir)"
     SELECTION_MODE="$(uci_get watchdog_selection_mode)"
     if [ -n "${WATCHDOG_SELECTION_MODE:-}" ]; then
         SELECTION_MODE="$WATCHDOG_SELECTION_MODE"
@@ -170,23 +293,32 @@ load_config() {
     BATCH_CHECK_BATCH_SIZE="$(uci_get watchdog_batch_check_batch_size)"
     BATCH_CHECK_CONCURRENCY="$(uci_get watchdog_batch_check_concurrency)"
     BATCH_CHECK_FALLBACK="$(uci_get watchdog_batch_check_fallback)"
+    MIHOMO_MANAGED_FILE="$(uci_get mihomo_profile_managed_file)"
+    SINGBOX_MANAGED_FILE="$(uci_get singbox_profile_managed_file)"
     LOG_TAG="$(uci_get watchdog_log_tag)"
 
     [ -n "$PROXY_ENGINE" ] || PROXY_ENGINE="$PROXY_ENGINE_DEFAULT"
     case "$PROXY_ENGINE" in
-        xray|mihomo|singbox) : ;;
         sing-box|sing_box) PROXY_ENGINE="singbox" ;;
-        *) PROXY_ENGINE="$PROXY_ENGINE_DEFAULT" ;;
     esac
+    load_probe_descriptor
     [ -n "$CHECK_URL" ] || CHECK_URL="$CHECK_URL_DEFAULT"
     [ -n "$PROXY_URL" ] || PROXY_URL="$PROXY_URL_DEFAULT"
     [ -n "$LINKS_FILE" ] || LINKS_FILE="$LINKS_FILE_DEFAULT"
     [ -n "$TEMPLATE_FILE" ] || TEMPLATE_FILE="$TEMPLATE_FILE_DEFAULT"
     [ -n "$TEST_TEMPLATE_FILE" ] || TEST_TEMPLATE_FILE="$TEST_TEMPLATE_FILE_DEFAULT"
     [ -n "$BATCH_TEST_TEMPLATE_FILE" ] || BATCH_TEST_TEMPLATE_FILE="$BATCH_TEST_TEMPLATE_FILE_DEFAULT"
-    [ -n "$HYSTERIA_TEMPLATE_FILE" ] || HYSTERIA_TEMPLATE_FILE="$HYSTERIA_TEMPLATE_FILE_DEFAULT"
-    [ -n "$HYSTERIA_TEST_TEMPLATE_FILE" ] || HYSTERIA_TEST_TEMPLATE_FILE="$HYSTERIA_TEST_TEMPLATE_FILE_DEFAULT"
-    [ -n "$HYSTERIA_BATCH_TEST_TEMPLATE_FILE" ] || HYSTERIA_BATCH_TEST_TEMPLATE_FILE="$HYSTERIA_BATCH_TEST_TEMPLATE_FILE_DEFAULT"
+    [ -n "$XRAY_HY2_TEMPLATE_FILE" ] || XRAY_HY2_TEMPLATE_FILE="$XRAY_HY2_TEMPLATE_FILE_DEFAULT"
+    [ -n "$XRAY_HY2_TEST_TEMPLATE_FILE" ] || XRAY_HY2_TEST_TEMPLATE_FILE="$XRAY_HY2_TEST_TEMPLATE_FILE_DEFAULT"
+    [ -n "$XRAY_HY2_BATCH_TEST_TEMPLATE_FILE" ] || XRAY_HY2_BATCH_TEST_TEMPLATE_FILE="$XRAY_HY2_BATCH_TEST_TEMPLATE_FILE_DEFAULT"
+    [ -n "$MIHOMO_VLESS_OUTBOUND_TEMPLATE_FILE" ] || MIHOMO_VLESS_OUTBOUND_TEMPLATE_FILE="$MIHOMO_VLESS_OUTBOUND_TEMPLATE_FILE_DEFAULT"
+    [ -n "$MIHOMO_HY2_OUTBOUND_TEMPLATE_FILE" ] || MIHOMO_HY2_OUTBOUND_TEMPLATE_FILE="$MIHOMO_HY2_OUTBOUND_TEMPLATE_FILE_DEFAULT"
+    [ -n "$SINGBOX_VLESS_OUTBOUND_TEMPLATE_FILE" ] || SINGBOX_VLESS_OUTBOUND_TEMPLATE_FILE="$SINGBOX_VLESS_OUTBOUND_TEMPLATE_FILE_DEFAULT"
+    [ -n "$SINGBOX_HY2_OUTBOUND_TEMPLATE_FILE" ] || SINGBOX_HY2_OUTBOUND_TEMPLATE_FILE="$SINGBOX_HY2_OUTBOUND_TEMPLATE_FILE_DEFAULT"
+    [ -n "$MIHOMO_TEST_TEMPLATE_FILE" ] || MIHOMO_TEST_TEMPLATE_FILE="$MIHOMO_TEST_TEMPLATE_FILE_DEFAULT"
+    [ -n "$MIHOMO_BATCH_TEST_TEMPLATE_FILE" ] || MIHOMO_BATCH_TEST_TEMPLATE_FILE="$MIHOMO_BATCH_TEST_TEMPLATE_FILE_DEFAULT"
+    [ -n "$SINGBOX_TEST_TEMPLATE_FILE" ] || SINGBOX_TEST_TEMPLATE_FILE="$SINGBOX_TEST_TEMPLATE_FILE_DEFAULT"
+    [ -n "$SINGBOX_BATCH_TEST_TEMPLATE_FILE" ] || SINGBOX_BATCH_TEST_TEMPLATE_FILE="$SINGBOX_BATCH_TEST_TEMPLATE_FILE_DEFAULT"
     [ -n "$OUTBOUND_FILE" ] || OUTBOUND_FILE="$OUTBOUND_FILE_DEFAULT"
     [ -n "$VLESS2JSON" ] || VLESS2JSON="$VLESS2JSON_DEFAULT"
     [ -n "$PROXY2MIHOMO" ] || PROXY2MIHOMO="$PROXY2MIHOMO_DEFAULT"
@@ -196,8 +328,14 @@ load_config() {
     [ -n "$TEST_COMMAND" ] || TEST_COMMAND="$TEST_COMMAND_DEFAULT"
     [ -n "$MIHOMO_CONFIG_FILE" ] || MIHOMO_CONFIG_FILE="$MIHOMO_CONFIG_FILE_DEFAULT"
     [ -n "$MIHOMO_PROVIDER_FILE" ] || MIHOMO_PROVIDER_FILE="$MIHOMO_PROVIDER_FILE_DEFAULT"
+    [ -n "$MIHOMO_CONFIG_DIR" ] || MIHOMO_CONFIG_DIR="$MIHOMO_CONFIG_DIR_DEFAULT"
     [ -n "$SINGBOX_CONFIG_FILE" ] || SINGBOX_CONFIG_FILE="$SINGBOX_CONFIG_FILE_DEFAULT"
     [ -n "$SINGBOX_OUTBOUNDS_FILE" ] || SINGBOX_OUTBOUNDS_FILE="$SINGBOX_OUTBOUNDS_FILE_DEFAULT"
+    [ -n "$SINGBOX_CONFIG_DIR" ] || SINGBOX_CONFIG_DIR="$SINGBOX_CONFIG_DIR_DEFAULT"
+    # Единственный файл, который пакет перезаписывает у активного ядра. Остальное
+    # в каталоге конфигов принадлежит пользователю.
+    [ -n "$MIHOMO_MANAGED_FILE" ] || MIHOMO_MANAGED_FILE="$MIHOMO_PROVIDER_FILE"
+    [ -n "$SINGBOX_MANAGED_FILE" ] || SINGBOX_MANAGED_FILE="$SINGBOX_OUTBOUNDS_FILE"
     [ -n "$LOG_TAG" ] || LOG_TAG="$LOG_TAG_DEFAULT"
 
     INTERVAL="$(require_number_or_default "$INTERVAL" "$INTERVAL_DEFAULT")"
@@ -256,6 +394,13 @@ load_config() {
     COOLDOWN_SECONDS=$((COOLDOWN_HOURS * 3600 + COOLDOWN_MINUTES * 60))
 
     ensure_runtime_dirs
+
+    if [ -n "$PROBE_ENGINE_UNKNOWN" ]; then
+        log_msg "внимание: движок '$PROBE_ENGINE_UNKNOWN' неизвестен, проверка идёт через $PROBE_LABEL; исправьте proxy_engine"
+    fi
+    if [ -n "$TEST_COMMAND_STALE" ]; then
+        log_msg "внимание: команда проверки '$TEST_COMMAND_STALE' не соответствует активному ядру $PROBE_LABEL, используется '$TEST_COMMAND'"
+    fi
 }
 
 state_get() {
@@ -430,6 +575,24 @@ mark_link_dead() {
     write_link_state "$hash" "dead" "$code" "$ts" "$human" "$cooldown_ts" "$cooldown_human" "$request_ms" "$request_text"
 }
 
+# A link whose protocol the active engine cannot run. Distinct from dead: nothing
+# was measured, the server was never contacted, and switching engines can make it
+# usable again with no change to the link. It gets no cooldown for the same
+# reason -- there is no failure to back off from.
+mark_link_unsupported() {
+    hash="$1"
+    reason="${2:-unknown}"
+    ts="$(now_ts)"
+    human="$(now_human)"
+    # The converter's wording when it gave one -- it names the transport, not just
+    # the protocol -- otherwise the protocol name is all we have.
+    case "$reason" in
+        *" "*) text="$reason" ;;
+        *) text="$reason не поддерживается ядром ${PROBE_LABEL:-$PROXY_ENGINE}" ;;
+    esac
+    write_link_state "$hash" "unsupported" "000" "$ts" "$human" "0" "-" "0" "$text"
+}
+
 cooldown_active() {
     hash="$1"
     [ "$EXCLUDE_DEAD" = "1" ] || return 1
@@ -437,6 +600,7 @@ cooldown_active() {
     validate_number "$until_ts" || return 1
     [ "$until_ts" -gt "$(now_ts)" ]
 }
+
 
 cleanup_test_instance() {
     if [ -n "$TEST_PID" ]; then

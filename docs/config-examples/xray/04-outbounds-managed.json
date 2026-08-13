@@ -1,0 +1,43 @@
+{
+  // Роль 04 — управляемое подключение. ЭТОТ ФАЙЛ ПЕРЕЗАПИСЫВАЕТ ПАКЕТ.
+  //
+  // Здесь показано, что получается после применения ссылки: тег `proxy` — это
+  // применённая ссылка, `direct` и `block` — служебные outbound, на которые
+  // ссылаются правила роли 05.
+  //
+  // Править вручную не нужно и бесполезно: следующее применение ссылки заменит
+  // файл целиком. Форму этого outbound задаёт шаблон подключения, а свои прокси
+  // добавляйте в роль 03.
+  "outbounds": [
+    {
+      // Значения приходят из применённой ссылки; здесь показаны адреса из
+      // диапазона для документации (RFC 5737), чтобы пример проходил проверку.
+      "tag": "proxy",
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "192.0.2.20",
+            "port": 443,
+            "users": [
+              { "id": "00000000-0000-0000-0000-000000000000", "flow": "xtls-rprx-vision", "encryption": "none" }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "serverName": "example.com",
+          "fingerprint": "chrome",
+          "publicKey": "gkxLlrezdTjW03joL4PVcYM2GSNLrafqUiyyYTPmszU",
+          "shortId": "0123456789abcdef",
+          "spiderX": "/"
+        }
+      }
+    },
+    { "tag": "direct", "protocol": "freedom", "settings": { "domainStrategy": "AsIs" } },
+    { "tag": "block", "protocol": "blackhole", "settings": { "response": { "type": "http" } } }
+  ]
+}

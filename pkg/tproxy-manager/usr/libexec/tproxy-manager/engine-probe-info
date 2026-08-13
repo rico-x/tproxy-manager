@@ -1,0 +1,82 @@
+#!/usr/bin/env lua
+-- Prints, as shell assignments, everything the watchdog needs to probe a link
+-- with a given engine. The shell evals the output.
+--
+-- The point is that there is exactly one description of each engine, in
+-- tproxy_manager.engines. The watchdog used to infer the probe layout from a
+-- separately stored command, which is how it kept reaching for Xray whatever
+-- was actually active.
+--
+-- Usage: engine-probe-info [engine-id]
+--        engine-probe-info --check <engine-id> <command>
+--
+-- Without an id the engine is read from UCI. An unknown id is an error rather
+-- than a silent fall back to Xray: the caller has to be able to tell.
+
+local ok_engines, engines = pcall(require, "tproxy_manager.engines")
+if not ok_engines then
+  ok_engines, engines = pcall(require, "engines")
+end
+if not ok_engines then
+  io.stderr:write("engine-probe-info: cannot load tproxy_manager.engines\n")
+  os.exit(2)
+end
+
+local uci = require("luci.model.uci").cursor()
+local PKG = "tproxy-manager"
+
+local function quote(value)
+  return "'" .. tostring(value or ""):gsub("'", "'\\''") .. "'"
+end
+
+-- The aliases the rest of the package accepts, resolved WITHOUT the fall back
+-- to xray that engines.normalize() applies.
+local function resolve(raw)
+  local id = tostring(raw or ""):gsub("^%s+", ""):gsub("%s+$", ""):lower()
+  if id == "sing-box" or id == "sing_box" then id = "singbox" end
+  if id == "" then return nil, "" end
+  return engines.DEFS[id] and id or nil, id
+end
+
+local args = { ... }
+
+-- --check tells the caller whether a stored test command still belongs to the
+-- engine that is active. A mismatch means the watchdog would start the wrong
+-- binary and mark every link dead.
+if args[1] == "--check" then
+  local id = resolve(args[2])
+  if not id then os.exit(2) end
+  local want = engines.profile_value(uci, PKG, id, "test_command")
+  local have = tostring(args[3] or ""):gsub("^%s+", ""):gsub("%s+$", "")
+  os.exit(have == want and 0 or 1)
+end
+
+local id, raw = resolve(args[1] ~= nil and args[1] or uci:get(PKG, "main", "proxy_engine"))
+if not id then
+  io.stderr:write(string.format("engine-probe-info: unknown engine %q\n", raw))
+  os.exit(2)
+end
+
+local def = engines.def(id)
+local out = {
+  PROBE_ENGINE = id,
+  PROBE_LABEL = def.label,
+  PROBE_KIND = def.probe_kind or "template",
+  PROBE_LOG_NAME = def.probe_log or "engine-test.log",
+  PROBE_CONFIG_EXT = def.probe_ext or "json",
+  PROBE_PROTOCOLS = table.concat(def.protocols or { "vless" }, " "),
+  PROBE_BATCH = def.probe_batch and "1" or "0",
+  -- The profile is what the user may have edited, so it wins over the built-in
+  -- default -- but it is still this engine's profile, never another's.
+  PROBE_TEST_COMMAND = engines.profile_value(uci, PKG, id, "test_command"),
+  PROBE_BINARY = engines.binary_path(id),
+}
+
+local order = {
+  "PROBE_ENGINE", "PROBE_LABEL", "PROBE_KIND", "PROBE_LOG_NAME",
+  "PROBE_CONFIG_EXT", "PROBE_PROTOCOLS", "PROBE_BATCH",
+  "PROBE_TEST_COMMAND", "PROBE_BINARY",
+}
+for _, key in ipairs(order) do
+  io.write(key, "=", quote(out[key]), "\n")
+end

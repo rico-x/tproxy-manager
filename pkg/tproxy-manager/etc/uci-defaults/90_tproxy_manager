@@ -8,6 +8,37 @@ mkdir -p /etc/tproxy-manager
 mkdir -p /usr/share/tproxy-manager
 mkdir -p /etc/mihomo
 mkdir -p /etc/sing-box
+
+# A new install starts on the role-fragment layout. An upgrade that already has
+# a monolithic profile stays on that exact profile: deciding that a config is
+# "ours" from a couple of tags is not strong enough evidence to replace its
+# listener ports, routing or active outbound with package defaults. The init
+# scripts and Watchdog deliberately retain their legacy path while the target
+# directory is absent, so compatibility does not cost any outbound-template
+# functionality.
+#
+# This runs BEFORE the bootstrap monoliths below are created; after that point a
+# fresh install and an upgrade would be indistinguishable.
+seed_profile_dir_if_no_legacy() {
+  _legacy="$1"
+  _engine="$2"
+  _target="$3"
+  _source="${4:-/usr/share/tproxy-manager/config-defaults/$_engine}"
+  { [ ! -e "$_legacy" ] && [ ! -L "$_legacy" ]; } || return 0
+  [ ! -e "$_target" ] || return 0
+  [ -d "$_source" ] || return 0
+  _tmp="${_target}.tmp.$$"
+  rm -rf "$_tmp"
+  mkdir -p "$_tmp" || return 1
+  cp -p "$_source"/* "$_tmp"/ || { rm -rf "$_tmp"; return 1; }
+  mv "$_tmp" "$_target" || { rm -rf "$_tmp"; return 1; }
+}
+
+seed_profile_dir_if_no_legacy \
+  /etc/mihomo/tproxy-manager.yaml mihomo /etc/mihomo/tproxy-manager.d
+seed_profile_dir_if_no_legacy \
+  /etc/sing-box/tproxy-manager.json sing-box /etc/sing-box/tproxy-manager.d
+
 for f in \
   /etc/tproxy-manager/tproxy-manager.ports \
   /etc/tproxy-manager/tproxy-manager.v4 \
@@ -114,7 +145,9 @@ migrate_mihomo_mode
 
 if [ ! -s /etc/mihomo/tproxy-manager-proxies.yaml ]; then
   cat > /etc/mihomo/tproxy-manager-proxies.yaml <<'EOF'
-proxies: []
+proxies:
+  - name: bootstrap-direct
+    type: direct
 EOF
 fi
 
@@ -202,6 +235,17 @@ if [ ! -e /etc/tproxy-manager/watchdog-singbox-batch-test-config.template.jsonc 
   cp /usr/share/tproxy-manager/watchdog-singbox-batch-test-config.template.jsonc /etc/tproxy-manager/watchdog-singbox-batch-test-config.template.jsonc
 fi
 
+for _outbound_template in \
+  watchdog-mihomo-vless-outbound.template.yaml \
+  watchdog-mihomo-hysteria-outbound.template.yaml \
+  watchdog-singbox-vless-outbound.template.jsonc \
+  watchdog-singbox-hysteria-outbound.template.jsonc
+do
+  if [ ! -e "/etc/tproxy-manager/$_outbound_template" ] && [ -f "/usr/share/tproxy-manager/$_outbound_template" ]; then
+    cp "/usr/share/tproxy-manager/$_outbound_template" "/etc/tproxy-manager/$_outbound_template"
+  fi
+done
+
 # --- UCI доступен? ---
 command -v uci >/dev/null 2>&1 || exit 0
 
@@ -278,6 +322,10 @@ set_default tproxy-manager main watchdog_batch_check_concurrency '8'
 set_default tproxy-manager main watchdog_batch_check_fallback '1'
 set_default tproxy-manager main watchdog_batch_test_template_file '/etc/tproxy-manager/watchdog-batch-test-config.template.jsonc'
 set_default tproxy-manager main watchdog_hysteria_batch_test_template_file '/etc/tproxy-manager/watchdog-hysteria-batch-test-config.template.jsonc'
+set_default tproxy-manager main watchdog_mihomo_vless_outbound_template_file '/etc/tproxy-manager/watchdog-mihomo-vless-outbound.template.yaml'
+set_default tproxy-manager main watchdog_mihomo_hysteria_outbound_template_file '/etc/tproxy-manager/watchdog-mihomo-hysteria-outbound.template.yaml'
+set_default tproxy-manager main watchdog_singbox_vless_outbound_template_file '/etc/tproxy-manager/watchdog-singbox-vless-outbound.template.jsonc'
+set_default tproxy-manager main watchdog_singbox_hysteria_outbound_template_file '/etc/tproxy-manager/watchdog-singbox-hysteria-outbound.template.jsonc'
 set_default tproxy-manager main watchdog_mihomo_test_template_file '/etc/tproxy-manager/watchdog-mihomo-test-config.template.yaml'
 set_default tproxy-manager main watchdog_mihomo_batch_test_template_file '/etc/tproxy-manager/watchdog-mihomo-batch-test-config.template.yaml'
 set_default tproxy-manager main watchdog_singbox_test_template_file '/etc/tproxy-manager/watchdog-singbox-test-config.template.jsonc'
@@ -314,6 +362,20 @@ set_default tproxy-manager main singbox_profile_managed_outbounds_file '/etc/sin
 set_default tproxy-manager main singbox_profile_controller 'http://127.0.0.1:9091'
 set_default tproxy-manager main singbox_profile_tproxy_port '61219'
 set_default tproxy-manager main singbox_profile_proxy_url 'socks5h://127.0.0.1:10808'
+
+# Каталог конфигов, одинаковая модель у всех трёх ядер: фрагменты по ролям, из
+# которых пакет перезаписывает ровно один. Имена ключей одинаковы для всех ядер,
+# различаются только значения.
+set_default tproxy-manager main xray_profile_config_dir '/etc/xray'
+set_default tproxy-manager main xray_profile_managed_file '/etc/xray/04_outbounds.json'
+set_default tproxy-manager main xray_profile_user_file '/etc/xray/03_outbounds_user.json'
+set_default tproxy-manager main mihomo_profile_config_dir '/etc/mihomo/tproxy-manager.d'
+set_default tproxy-manager main mihomo_profile_assembled_file '/etc/mihomo/tproxy-manager.yaml'
+set_default tproxy-manager main mihomo_profile_managed_file '/etc/mihomo/tproxy-manager-proxies.yaml'
+set_default tproxy-manager main mihomo_profile_user_file '/etc/mihomo/tproxy-manager.d/03-proxies-user.yaml'
+set_default tproxy-manager main singbox_profile_config_dir '/etc/sing-box/tproxy-manager.d'
+set_default tproxy-manager main singbox_profile_managed_file '/etc/sing-box/tproxy-manager.d/04-outbounds-managed.json'
+set_default tproxy-manager main singbox_profile_user_file '/etc/sing-box/tproxy-manager.d/03-outbounds-user.json'
 # --- Миграция: расшаренная подписка не должна остаться публичной ---
 # Опция watchdog_share_auth_mode появилась позже самой функции, и endpoint
 # раньше требовал токен ТОЛЬКО при значении "token": конфиг без этой опции

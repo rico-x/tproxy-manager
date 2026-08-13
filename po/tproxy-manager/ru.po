@@ -1756,6 +1756,45 @@ msgstr "Автозапуск оставлен только у %s."
 msgid "Could not change autostart for: %s"
 msgstr "Не удалось изменить автозапуск для: %s"
 
+msgid "The watchdog check command (%s) does not belong to the active engine %s. Links are being checked with %s."
+msgstr "Команда проверки watchdog (%s) не принадлежит активному ядру %s. Ссылки проверяются командой %s."
+
+msgid "Use the active engine's command"
+msgstr "Использовать команду активного ядра"
+
+msgid "The active engine has no check command of its own."
+msgstr "У активного ядра нет собственной команды проверки."
+
+msgid "Check command set to %s."
+msgstr "Команда проверки установлена: %s."
+
+msgid "Could not save the check command."
+msgstr "Не удалось сохранить команду проверки."
+
+msgid "Xray: VLESS outbound template"
+msgstr "Xray: шаблон outbound VLESS"
+
+msgid "Xray: VLESS test template"
+msgstr "Xray: шаблон теста VLESS"
+
+msgid "Xray: VLESS batch test template"
+msgstr "Xray: шаблон пакетного теста VLESS"
+
+msgid "Xray: Hysteria 2 outbound template"
+msgstr "Xray: шаблон outbound Hysteria 2"
+
+msgid "Xray: Hysteria 2 test template"
+msgstr "Xray: шаблон теста Hysteria 2"
+
+msgid "Xray: Hysteria 2 batch test template"
+msgstr "Xray: шаблон пакетного теста Hysteria 2"
+
+msgid "Xray batch test template"
+msgstr "Xray: шаблон пакетного теста"
+
+msgid "Unsupported"
+msgstr "Не поддерж."
+
 msgid "autostart could not be restored for %s: the next reboot may start the wrong engine"
 msgstr "не удалось восстановить автозапуск для %s: следующая перезагрузка может поднять не то ядро"
 
@@ -1764,3 +1803,54 @@ msgstr "Не удалось сохранить копию текущего ко�
 
 msgid "Could not put the generated Mihomo config in place."
 msgstr "Не удалось применить сгенерированный конфиг Mihomo."
+
+msgid "There is no executable init script at %s."
+msgstr "По пути %s нет исполняемого init-скрипта."
+
+msgid "%s ran but started nothing: that service is disabled in its own configuration. Point the engine at the init script shipped with this package, or enable the service."
+msgstr "%s отработал, но ничего не запустил: этот сервис выключен в собственной конфигурации. Укажите ядру init-скрипт из состава пакета либо включите сервис."
+
+msgid "The start command %s returned an error."
+msgstr "Команда запуска %s завершилась с ошибкой."
+
+msgid "Could not assemble the Mihomo config directory."
+msgstr "Не удалось собрать каталог конфигов Mihomo."
+
+msgid "Mihomo: VLESS outbound template"
+msgstr "Mihomo: шаблон outbound VLESS"
+
+msgid "Mihomo: Hysteria 2 outbound template"
+msgstr "Mihomo: шаблон outbound Hysteria 2"
+
+msgid "sing-box: VLESS outbound template"
+msgstr "sing-box: шаблон outbound VLESS"
+
+msgid "sing-box: Hysteria 2 outbound template"
+msgstr "sing-box: шаблон outbound Hysteria 2"
+
+msgid "Choose an engine and protocol outbound template, edit it and save it back to its own file. The active path is also stored in UCI settings."
+msgstr "Выберите ядро и протокол outbound-шаблона, отредактируйте его и сохраните в собственный файл. Активный путь также хранится в настройках UCI."
+
+msgid "Invalid YAML template."
+msgstr "Некорректный YAML-шаблон."
+
+msgid "Required template placeholder is missing:"
+msgstr "В шаблоне отсутствует обязательный плейсхолдер:"
+
+msgid "YAML template is empty"
+msgstr "YAML-шаблон пуст"
+
+msgid "Mihomo YAML template placeholders are valid"
+msgstr "Плейсхолдеры YAML-шаблона Mihomo корректны"
+
+msgid "Mihomo configuration files"
+msgstr "Файлы конфигурации Mihomo"
+
+msgid "sing-box configuration files"
+msgstr "Файлы конфигурации sing-box"
+
+msgid "Generated Mihomo config failed validation."
+msgstr "Сгенерированный конфиг Mihomo не прошёл проверку."
+
+msgid "Could not preserve the current Mihomo managed config."
+msgstr "Не удалось сохранить текущий управляемый конфиг Mihomo."

@@ -1,0 +1,61 @@
+{
+  // Роль: маршрутизация. Порядок правил повторяет xray 05_routing.json —
+  // он значим: решает первое совпавшее.
+  //
+  // geoip и geosite как поля правил удалены в sing-box 1.12, поэтому те же
+  // списки подключаются готовыми наборами из /etc/sing-box/rule-sets.
+  "route": {
+    "rule_set": [
+      { "type": "local", "tag": "geoip-ru", "format": "binary", "path": "/etc/sing-box/rule-sets/geoip-ru.srs" },
+      { "type": "local", "tag": "geoip-by", "format": "binary", "path": "/etc/sing-box/rule-sets/geoip-by.srs" },
+      { "type": "local", "tag": "geoip-cn", "format": "binary", "path": "/etc/sing-box/rule-sets/geoip-cn.srs" },
+      { "type": "local", "tag": "ads", "format": "binary", "path": "/etc/sing-box/rule-sets/geosite-category-ads-all.srs" },
+      { "type": "local", "tag": "trackers", "format": "binary", "path": "/etc/sing-box/rule-sets/geosite-category-public-tracker.srs" },
+      { "type": "local", "tag": "gov-ru", "format": "binary", "path": "/etc/sing-box/rule-sets/geosite-category-gov-ru.srs" },
+      { "type": "local", "tag": "games", "format": "binary", "path": "/etc/sing-box/rule-sets/geosite-category-games.srs" },
+      { "type": "local", "tag": "site-private", "format": "binary", "path": "/etc/sing-box/rule-sets/geosite-private.srs" },
+      { "type": "local", "tag": "yandex", "format": "binary", "path": "/etc/sing-box/rule-sets/geosite-yandex.srs" },
+      { "type": "local", "tag": "steam", "format": "binary", "path": "/etc/sing-box/rule-sets/geosite-steam.srs" },
+      { "type": "local", "tag": "mailru", "format": "binary", "path": "/etc/sing-box/rule-sets/geosite-mailru.srs" },
+      { "type": "local", "tag": "vk", "format": "binary", "path": "/etc/sing-box/rule-sets/geosite-vk.srs" }
+    ],
+    "rules": [
+      // Блокировка | уязвимые UDP порты
+      { "network": "udp", "port": [135, 137, 138, 139], "action": "reject" },
+      // Блокировка | реклама и аналитика
+      { "rule_set": ["ads", "trackers"], "action": "reject" },
+      {
+        "domain_keyword": ["google-analytics", "analytics.yandex", "appcenter.ms",
+                           "app-measurement.com", "firebase.io", "crashlytics.com"],
+        "action": "reject"
+      },
+      // Ozon через российский прокси
+      {
+        "domain_suffix": ["ozon.ru", "ozone.ru", "o3.ru", "o3cdn.ru", "ozonusercontent.com",
+                          "ozon-st.cdn.ngenix.net", "ozon-dostavka.ru", "ozon-bank.ru",
+                          "ozon.travel", "ozon.com"],
+        "outbound": "proxy-ru"
+      },
+      // Прямые подключения | адреса
+      { "ip_is_private": true, "outbound": "direct" },
+      { "rule_set": ["geoip-ru", "geoip-by", "geoip-cn"], "outbound": "direct" },
+      // Прямые подключения | доменные зоны
+      {
+        "domain_regex": ["(^|\\.)kct\\.me$", "(^|\\.)by$", "(^|\\.)cn$", "(^|\\.)ru$",
+                         "(^|\\.)su$", "(^|\\.)xn--p1ai$", "(^|\\.)xn--p1acf$",
+                         "(^|\\.)xn--80asehdb$", "(^|\\.)xn--c1avg$", "(^|\\.)xn--80aswg$",
+                         "(^|\\.)xn--80adxhks$", "(^|\\.)moscow$", "(^|\\.)xn--d1acj3b$"],
+        "outbound": "direct"
+      },
+      // Прямые подключения | отдельные ресурсы
+      { "domain_keyword": [".ixbt.", ".mygames.", "games.tools", "reddit.com"], "outbound": "direct" },
+      { "domain_suffix": ["boosty.to"], "outbound": "direct" },
+      { "rule_set": ["gov-ru", "site-private", "yandex", "steam", "games", "mailru", "vk"], "outbound": "direct" },
+      // Прямое подключение | торрент
+      { "protocol": "bittorrent", "outbound": "direct" },
+      // Прямое подключение | игровой UDP
+      { "network": "udp", "port_range": ["3478:3497", "4379:4380", "27000:27200"], "outbound": "direct" }
+    ],
+    "final": "proxy"
+  }
+}

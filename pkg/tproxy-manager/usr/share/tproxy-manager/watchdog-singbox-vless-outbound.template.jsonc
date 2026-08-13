@@ -1,0 +1,5 @@
+{
+  // This JSONC object is recursively merged into every generated sing-box
+  // VLESS outbound. Add native sing-box fields here; arrays replace the
+  // generated array, objects merge, and values in this file take precedence.
+}

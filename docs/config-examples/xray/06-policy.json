@@ -1,0 +1,11 @@
+{
+  // Роль 06 — политики и статистика. Необязательная роль, есть только у Xray.
+  "policy": {
+    "levels": {
+      "0": { "connIdle": 300 },
+      "8": { "connIdle": 300, "handshake": 4, "uplinkOnly": 1, "downlinkOnly": 1 }
+    },
+    "system": { "statsOutboundUplink": true, "statsOutboundDownlink": true }
+  },
+  "stats": {}
+}
